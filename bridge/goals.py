@@ -26,6 +26,10 @@ def _per_min(p: dict, item: str) -> int:
     return int((((p.get("production") or {}).get("items") or {}).get(item) or {}).get("per_min", 0))
 
 
+def _miners(p: dict, resource: str) -> int:
+    return int(((p.get("factory") or {}).get("miners_by_resource") or {}).get(resource, 0))
+
+
 def _tech(p: dict, name: str) -> bool:
     return name in ((p.get("research") or {}).get("done") or [])
 
@@ -44,16 +48,15 @@ class Milestone:
 LADDER: list[Milestone] = [
     Milestone(
         "bootstrap", "Burner mining and smelting",
-        lambda p: _by_type(p, "burner-mining-drill") >= 4 and _by_type(p, "stone-furnace") >= 2
+        lambda p: _miners(p, "coal") >= 1 and _miners(p, "iron-ore") >= 2 and _miners(p, "copper-ore") >= 1
                   and _per_min(p, "iron-plate") >= 10,
-        lambda p: (f"{_by_type(p, 'burner-mining-drill')} burner drill(s) (want 4), "
-                   f"{_by_type(p, 'stone-furnace')} stone furnace(s) (want 2), "
-                   f"iron {_per_min(p, 'iron-plate')}/min (want 10)"),
+        lambda p: (f"drills on coal {_miners(p, 'coal')}/1, iron {_miners(p, 'iron-ore')}/2, "
+                   f"copper {_miners(p, 'copper-ore')}/1; iron {_per_min(p, 'iron-plate')}/min (want 10)"),
         "In this order: build_miner resource=coal output=chest (fuel for everything), then "
-        "build_miner resource=iron-ore output=furnace (2-3 times), then build_miner resource=copper-ore "
-        "output=furnace and resource=stone output=chest. Out of drills/furnaces → gather stone/iron and "
-        "craft_for burner-mining-drill or stone-furnace. Every few turns: fuel_all, and loot_chests to "
-        "collect coal and plates from the chests/furnaces. Go to landmarks for ore that isn't nearby.",
+        "build_miner resource=iron-ore output=furnace (twice), then build_miner resource=copper-ore "
+        "output=furnace. Out of drills → craft_for burner-mining-drill (its reply says which plates/stone "
+        "are missing). Run tend to collect plates, refuel and fix drills spilling ore on the ground "
+        "(needs.outputs_full with drop=ground). Go to landmarks for ore that isn't nearby.",
         ["mining", "smelting"]),
     Milestone(
         "power", "Steam power",

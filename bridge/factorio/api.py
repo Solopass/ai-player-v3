@@ -47,6 +47,7 @@ SKILLS: dict[str, list[str]] = {
     "build_miner":   [],
     "build_smelter": [],
     "fuel_all":      [],
+    "tend":          [],
     "loot_chests":   [],
     "deposit_to_chest": [],
     "return_home":   [],

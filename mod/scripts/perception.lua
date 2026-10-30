@@ -312,6 +312,7 @@ local function gather_factory(surface, force, cpos)
   -- the same set.
   local machines = AIRegistry.machines()
   local by_type, by_status, attention = {}, {}, {}
+  local miners, labs = {}, {count = 0, without_packs = 0}
   local needs = {burners_low_fuel = {}, machines_no_recipe = {},
                  machines_no_input = {}, outputs_full = {}}
   local total = 0
@@ -320,7 +321,25 @@ local function gather_factory(surface, force, cpos)
     if e.valid then
       total = total + 1
       by_type[e.name] = (by_type[e.name] or 0) + 1
+      if e.type == "mining-drill" then
+        local res = AISkills.drill_resource(e)
+        if res then miners[res] = (miners[res] or 0) + 1 end
+      elseif e.type == "lab" then
+        labs.count = labs.count + 1
+        local li = e.get_inventory(defines.inventory.lab_input)
+        if li and li.is_empty() then labs.without_packs = labs.without_packs + 1 end
+      end
       local st = status_string(e)
+      -- "Output full" is normal for boilers/engines with no power load and for
+      -- drills feeding coal into another burner's full fuel slot; reporting
+      -- those sends the model chasing a problem that isn't one.
+      if st == "output_full" then
+        local tgt = e.type == "mining-drill" and e.drop_target
+        if e.type == "boiler" or e.type == "generator"
+           or (tgt and tgt.type ~= "container" and tgt.type ~= "furnace") then
+          st = "working"
+        end
+      end
       if st then by_status[st] = (by_status[st] or 0) + 1 end
       if st and PROBLEM_STATUS[st] then
         local epos = {x = math.floor(e.position.x), y = math.floor(e.position.y)}
@@ -330,7 +349,11 @@ local function gather_factory(surface, force, cpos)
         if     st == "no_fuel"        then table.insert(needs.burners_low_fuel,  {name = e.name, position = epos})
         elseif st == "no_recipe"      then table.insert(needs.machines_no_recipe, {name = e.name, position = epos})
         elseif st == "no_ingredients" then table.insert(needs.machines_no_input,  {name = e.name, position = epos})
-        elseif st == "output_full"    then table.insert(needs.outputs_full,       {name = e.name, position = epos}) end
+        elseif st == "output_full"    then
+          local tgt = e.type == "mining-drill" and e.drop_target
+          table.insert(needs.outputs_full, {name = e.name, position = epos,
+            drop = e.type == "mining-drill" and (tgt and tgt.type or "ground") or nil})
+        end
       end
     end
   end
@@ -338,7 +361,8 @@ local function gather_factory(surface, force, cpos)
   table.sort(attention, function(a, b) return a.distance < b.distance end)
   while #attention > ATTENTION_LIMIT do table.remove(attention) end
 
-  local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention}
+  local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention,
+                   miners_by_resource = miners, labs = labs}
 
   -- Small base: include the full per-machine roster (lightweight). Second pass
   -- only runs when total is small, so it's cheap.
@@ -663,6 +687,24 @@ function AIPerception.gather(character)
     current  = cur and cur.name or nil,
     progress = cur and force.research_progress or 0,
   }
+  -- Techs unlocked by DOING something (2.x early game: craft a lab, mine coal...)
+  -- rather than by research. Only those whose prerequisites are done.
+  local triggers = {}
+  for _, t in pairs(force.technologies) do
+    if #triggers >= 5 then break end
+    if t.enabled and not t.researched then
+      local info = AISkills.trigger_info(t)
+      if info and info.type ~= "scripted" and info.type ~= "create-space-platform"
+         and info.type ~= "send-item-to-orbit" then
+        local ready = true
+        for _, pre in pairs(t.prerequisites) do
+          if not pre.researched then ready = false; break end
+        end
+        if ready then triggers[#triggers + 1] = info end
+      end
+    end
+  end
+  perception.research.triggers = triggers
 
   -- Whole-base machine view (scale-aware) + factory-wide maintenance needs.
   -- factory.summary scales to hundreds of machines (aggregate counts +

@@ -144,6 +144,7 @@ function AIBrain.request_decision(character, user_message)
     user_directive      = mem.user_directive,
     force_skill         = mem.force_skill,
     last_action_results = mem.last_action_results,
+    last_results_req_id = mem.last_results_req_id,
   }
 
   local req_id = tostring(game.tick) .. "_" .. tostring(math.random(10000, 99999))
@@ -202,7 +203,7 @@ function AIBrain.handle_response(req_id, actions_json)
 
   -- Entries may be skills {skill=...} or primitives {action=...}; the unified
   -- executor dispatches each and records E1 results.
-  AISkills.execute(storage.ai_player.character, entries)
+  AISkills.execute(storage.ai_player.character, entries, req_id)
 end
 
 -- -------------------------------------------------------------------------

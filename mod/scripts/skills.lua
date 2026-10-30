@@ -115,16 +115,44 @@ end
 -- -------------------------------------------------------------------------
 local OUTPUT_ITEM = {chest = "iron-chest", furnace = "stone-furnace", belt = "transport-belt"}
 
+-- The collector to put at a drill's drop position. A chest is a wooden-chest
+-- when there's one (or wood for one), so early iron goes into drills/furnaces.
+-- Returns the item name the AI has now, or nil + the item it's crafting/missing.
+local function ready_collector(character, out_kind)
+  local inv = inv_of(character)
+  local wanted = out_kind == "chest" and {"wooden-chest", "iron-chest"} or {OUTPUT_ITEM[out_kind] or "iron-chest"}
+  for _, name in ipairs(wanted) do
+    if inv.get_item_count(name) > 0 then return name end
+  end
+  for _, name in ipairs(wanted) do
+    local r = character.force.recipes[name]
+    if r and r.enabled and character.get_craftable_count(r) > 0 then
+      character.begin_crafting{recipe = r, count = 1, silent = true}
+      return nil, name, true
+    end
+  end
+  return nil, wanted[1], false
+end
+
 local function skill_build_miner(character, p)
   local resource = p.resource or p.item or "iron-ore"
   local out_kind = (p.output or "chest"):lower()
-  local out_item = OUTPUT_ITEM[out_kind] or "iron-chest"
   local surface = character.surface
   local inv = inv_of(character)
 
   if inv.get_item_count("burner-mining-drill") == 0 then
     character.begin_crafting{recipe = "burner-mining-drill", count = 1}
     return false, "build_miner: no burner-mining-drill in inventory — crafting one, retry next turn"
+  end
+  -- A drill with nothing at its drop position spills onto the ground and
+  -- stalls, so don't place one until its collector is in hand.
+  local out_item, want, crafting = ready_collector(character, out_kind)
+  if not out_item then
+    if crafting then
+      return false, "build_miner: crafting a " .. want .. " for the drill's output — retry next turn"
+    end
+    return false, "build_miner: need a " .. want .. " for the drill's output (craft_for " .. want
+      .. ", or output=chest with a wooden-chest)"
   end
 
   -- nearest patch of the resource
@@ -166,19 +194,16 @@ local function skill_build_miner(character, p)
   -- place the collector at the drill's drop_position
   local drop = drill.drop_position
   local detail = "placed burner-mining-drill on " .. resource
-  if inv.get_item_count(out_item) > 0 then
-    if AIActions.run(character, {action = "place", item = out_item, position = drop}) then
-      detail = detail .. " + " .. out_item .. " at drop position"
-      if out_item == "stone-furnace" and inv.get_item_count("coal") > 0 then
-        AIActions.run(character, {action = "insert", item = "coal", count = 5,
-                                  position = drop, inventory = "fuel"})
-      end
-    else
-      detail = detail .. string.format(" (couldn't place %s at drop {%d,%d})",
-        out_item, math.floor(drop.x), math.floor(drop.y))
+  if AIActions.run(character, {action = "place", item = out_item, position = drop}) then
+    detail = detail .. " + " .. out_item .. " at drop position"
+    if out_item == "stone-furnace" and inv.get_item_count("coal") > 0 then
+      AIActions.run(character, {action = "insert", item = "coal", count = 5,
+                                position = drop, inventory = "fuel"})
     end
+  elseif drill.drop_target then
+    detail = detail .. " (drops into the existing " .. drill.drop_target.name .. ")"
   else
-    detail = detail .. string.format(" — no %s to collect output; place one at {%d,%d}",
+    return false, detail .. string.format(" but couldn't place %s at its drop {%d,%d} — run tend to fix it",
       out_item, math.floor(drop.x), math.floor(drop.y))
   end
   return true, detail
@@ -207,7 +232,7 @@ local function skill_fuel_all(character, _)
       end
     end
   end
-  if fueled == 0 then return false, "fuel_all: nothing nearby needed fuel" end
+  if fueled == 0 then return true, "fuel_all: every nearby burner already has fuel" end
   return true, string.format("fueled %d burner(s)", fueled)
 end
 
@@ -490,6 +515,33 @@ local function try_queue(force, tech)
   return force.add_research(tech)
 end
 
+-- "craft 1 lab" etc. for a tech whose research_trigger unlocks it; nil when it
+-- has none. Trigger targets may be names or {name, quality} filters.
+function AISkills.trigger_info(tech)
+  local trig = tech.prototype.research_trigger
+  if not trig then return nil end
+  local function nm(v) return type(v) == "table" and v.name or v end
+  local target = nm(trig.item) or trig.fluid or nm(trig.entity)
+              or (trig.entities and table.concat(trig.entities, "/"))
+  return {tech = tech.name, type = trig.type, target = target,
+          count = trig.count or trig.amount or 1}
+end
+
+local TRIGGER_VERB = {
+  ["craft-item"] = "hand-craft", ["mine-entity"] = "mine", ["build-entity"] = "build",
+  ["craft-fluid"] = "produce", ["send-item-to-orbit"] = "launch",
+  ["capture-spawner"] = "capture", ["create-space-platform"] = "create a space platform",
+}
+
+local function trigger_text(tech)
+  local t = AISkills.trigger_info(tech)
+  if not t then return nil end
+  if t.type == "scripted" then return "tech " .. t.tech .. " is unlocked by a scripted event" end
+  return string.format("tech %s unlocks when you %s %s%s", t.tech, TRIGGER_VERB[t.type] or t.type,
+                       t.target and (t.count .. "x " .. t.target) or "",
+                       t.type == "craft-item" and " (crafting NEW ones counts; ones you already hold don't)" or "")
+end
+
 local function skill_research(character, p)
   local force = character.force
 
@@ -513,8 +565,8 @@ local function skill_research(character, p)
   -- bootstraps via crafting, not queuing). Tell the model to craft the science.
   for _, t in pairs(force.technologies) do
     if t.enabled and not t.researched and prereqs_met(t) and t.prototype.research_trigger ~= nil then
-      return false, "research: '" .. t.name .. "' is unlocked by CRAFTING, not queuing — hand-craft "
-        .. "automation-science-pack (1 copper-plate + 1 iron-gear-wheel) to trigger it; then more tech becomes queueable"
+      return false, "research: nothing can be queued yet — " .. trigger_text(t)
+        .. " (see research.triggers); research then opens up"
     end
   end
   return false, "research: nothing to queue right now"
@@ -598,13 +650,7 @@ local function unlock_hint(force, recipe_name)
     if not tech.researched then
       for _, eff in ipairs(tech.prototype.effects or {}) do
         if eff.type == "unlock-recipe" and eff.recipe == recipe_name then
-          local trig = tech.prototype.research_trigger
-          if not trig then return "unlocked by researching " .. name .. " (research skill)" end
-          local what = trig.item or trig.fluid or trig.entity
-                    or (trig.entities and table.concat(trig.entities, "/"))
-          if type(what) == "table" then what = what.name end
-          return string.format("unlocked by tech %s, which triggers on %s %s%s", name, trig.type,
-                               tostring(what or "?"), trig.count and (" x" .. trig.count) or "")
+          return trigger_text(tech) or ("unlocked by researching " .. name .. " (research skill)")
         end
       end
     end
@@ -740,6 +786,160 @@ local function skill_connect_belt(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- tend() — look after the AI's own burner base near home in one call:
+-- collect plates/ore from its furnaces and chests, refuel its burners, feed
+-- ore into idle furnaces, and give drills that spill onto the ground a
+-- collector. Only touches entities the AI placed (create_entity leaves
+-- last_user nil; anything the human builds has them as last_user), so in
+-- co-op it never empties the player's machines.
+-- -------------------------------------------------------------------------
+local SMELTS = {["iron-ore"] = "iron-plate", ["copper-ore"] = "copper-plate", ["stone"] = "stone-brick"}
+local TEND_RADIUS = 64
+
+local function ai_owned(e) return e.valid and e.last_user == nil end
+
+local function take_all(from, inv, got)
+  if not (from and from.valid) then return end
+  for _, it in ipairs(from.get_contents()) do
+    local n = inv.insert{name = it.name, count = it.count, quality = it.quality}
+    if n > 0 then
+      from.remove{name = it.name, count = n, quality = it.quality}
+      got[it.name] = (got[it.name] or 0) + n
+    end
+  end
+end
+
+-- What a drill mines: its current target, else the ore under it.
+function AISkills.drill_resource(drill)
+  local t = drill.mining_target
+  if t and t.valid then return t.name end
+  local under = drill.surface.find_entities_filtered{type = "resource", position = drill.position, radius = 1, limit = 1}[1]
+  return under and under.name or nil
+end
+
+local function skill_tend(character, _)
+  local surface = character.surface
+  local inv = inv_of(character)
+  local center = AICharacter.get_home(surface) or character.position
+  local got, fueled, fed, fixed, notes = {}, 0, 0, 0, {}
+
+  -- Around home AND around the AI (it builds at distant ore patches too).
+  local own, seen = {}, {}
+  for _, at in ipairs({center, character.position}) do
+    for _, e in ipairs(surface.find_entities_filtered{force = character.force, position = at,
+                       radius = TEND_RADIUS, type = {"mining-drill", "furnace", "container", "boiler"}}) do
+      if ai_owned(e) and not seen[e.unit_number] then
+        seen[e.unit_number] = true
+        own[#own + 1] = e
+      end
+    end
+  end
+  if #own == 0 then
+    return true, "tend: no AI-built drills/furnaces/chests within " .. TEND_RADIUS .. " tiles of home yet"
+  end
+
+  -- 1. collect output: furnace results, and chests a drill fills (other chests
+  -- may be storage the AI deposited into on purpose)
+  for _, e in ipairs(own) do
+    if e.type == "furnace" then
+      take_all(e.get_inventory(defines.inventory.crafter_output), inv, got)
+    elseif e.type == "mining-drill" and e.drop_target and e.drop_target.type == "container" then
+      take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
+    end
+  end
+
+  -- 2. drills spilling onto the ground: pick the spill up, place a collector
+  for _, d in ipairs(own) do
+    if d.valid and d.type == "mining-drill" and not d.drop_target then
+      local drop = d.drop_position
+      for _, ie in ipairs(surface.find_entities_filtered{type = "item-entity", position = drop, radius = 1.5}) do
+        local st = ie.stack
+        if st and st.valid_for_read then
+          local name, n = st.name, inv.insert(st)
+          if n > 0 then
+            got[name] = (got[name] or 0) + n
+            if n >= st.count then ie.destroy() else st.count = st.count - n end
+          end
+        end
+      end
+      local res = AISkills.drill_resource(d)
+      local want = (res and SMELTS[res] and res ~= "stone") and {"stone-furnace"} or {"wooden-chest", "iron-chest"}
+      local placed
+      for _, item in ipairs(want) do
+        if inv.get_item_count(item) > 0 and AIActions.run(character, {action = "place", item = item, position = drop}) then
+          placed = item
+          break
+        end
+      end
+      if placed then
+        fixed = fixed + 1
+      else
+        notes[#notes + 1] = string.format("drill on %s at {%d,%d} needs a %s at its drop {%d,%d}",
+          res or "?", math.floor(d.position.x), math.floor(d.position.y), want[1], math.floor(drop.x), math.floor(drop.y))
+      end
+    end
+  end
+
+  -- 3. refuel (furnaces placed in step 2 included)
+  for _, e in ipairs(own) do
+    local fb = e.valid and e.get_fuel_inventory and e.get_fuel_inventory()
+    if fb and fb.valid and fb.get_item_count("coal") < 5 then
+      local n = math.min(10, inv.get_item_count("coal"))
+      if n > 0 then
+        local ins = fb.insert{name = "coal", count = n}
+        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
+      end
+    end
+  end
+  for _, d in ipairs(own) do
+    local tgt = d.valid and d.type == "mining-drill" and d.drop_target
+    if tgt and tgt.type == "furnace" then
+      local fb = tgt.get_fuel_inventory()
+      if fb and fb.get_item_count("coal") < 5 and inv.get_item_count("coal") > 0 then
+        local ins = fb.insert{name = "coal", count = math.min(10, inv.get_item_count("coal"))}
+        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
+      end
+    end
+  end
+
+  -- 4. feed idle furnaces with matching ore (never mix: output must be empty or
+  -- the same plate). Furnaces a drill feeds are left to the drill.
+  local drill_fed = {}
+  for _, d in ipairs(own) do
+    local tgt = d.valid and d.type == "mining-drill" and d.drop_target
+    if tgt and tgt.unit_number then drill_fed[tgt.unit_number] = true end
+  end
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "furnace" and not drill_fed[e.unit_number] then
+      local src = e.get_inventory(defines.inventory.crafter_input)
+      local out = e.get_inventory(defines.inventory.crafter_output)
+      if src and src.is_empty() then
+        local made = out and not out.is_empty() and out[1].valid_for_read and out[1].name or nil
+        for ore, plate in pairs(SMELTS) do
+          -- stone stays in the inventory: drills and furnaces are built from it
+          if ore ~= "stone" and (made == nil or made == plate) and inv.get_item_count(ore) > 0 then
+            local ins = src.insert{name = ore, count = math.min(20, inv.get_item_count(ore))}
+            if ins > 0 then inv.remove{name = ore, count = ins}; fed = fed + 1; break end
+          end
+        end
+      end
+    end
+  end
+
+  local parts = {}
+  for name, n in pairs(got) do parts[#parts + 1] = n .. "x " .. name end
+  table.sort(parts)
+  local idle = #parts == 0 and fueled == 0 and fed == 0 and fixed == 0
+  local detail = string.format("tend: collected %s; refueled %d, fed %d furnace(s), fixed %d spilling drill(s)",
+    #parts > 0 and table.concat(parts, ", ") or "nothing", fueled, fed, fixed)
+  if inv.get_item_count("coal") == 0 then detail = detail .. "; OUT OF COAL — gather coal or build_miner coal" end
+  if #notes > 0 then detail = detail .. "; " .. table.concat(notes, "; ", 1, math.min(#notes, 3)) end
+  -- Nothing done = not useful this turn; the bridge doesn't count it as a
+  -- failure, but the model should move on.
+  return not idle, detail
+end
+
+-- -------------------------------------------------------------------------
 -- Registry + required params (mirrored in the bridge router prompt/validation)
 -- -------------------------------------------------------------------------
 AISkills.REGISTRY = {
@@ -749,6 +949,7 @@ AISkills.REGISTRY = {
   build_miner      = skill_build_miner,
   build_smelter    = skill_build_smelter,
   fuel_all         = skill_fuel_all,
+  tend             = skill_tend,
   loot_chests      = skill_loot_chests,
   deposit_to_chest = skill_deposit_to_chest,
   return_home      = skill_return_home,
@@ -794,14 +995,27 @@ local function run_entry(character, entry)
   return (ok ~= false), detail, label
 end
 
-function AISkills.execute(character, entries)
+-- Params copied into each result so the bridge can tell "the same move failed
+-- again" (craft_for lab vs craft_for gear) without guessing.
+local RESULT_KEYS = {"item", "tech", "resource", "recipe", "name", "ore", "output", "count"}
+
+-- source_id: the request id this turn answers. The bridge counts a batch of
+-- results once per id; manual runs (/ai-do) pass nil so they aren't counted.
+function AISkills.execute(character, entries, source_id)
   if not character or not character.valid then return end
   local results = {}
   for _, entry in ipairs(entries) do
     local ok, detail, label = run_entry(character, entry)
-    results[#results + 1] = {action = label, ok = ok, detail = detail}
+    local r = {action = label, ok = ok, detail = detail}
+    for _, k in ipairs(RESULT_KEYS) do
+      local v = entry[k]
+      if type(v) == "string" or type(v) == "number" then r[k] = v end
+    end
+    results[#results + 1] = r
   end
-  storage.ai_player.memory.last_action_results = results
+  local mem = storage.ai_player.memory
+  mem.last_action_results = results
+  mem.last_results_req_id = source_id
 end
 
 -- Single-entry runner for external (RCON/remote) callers. Same dispatch and

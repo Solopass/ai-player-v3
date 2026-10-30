@@ -24,11 +24,12 @@ Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no 
 - {"skill":"build_miner","resource":"iron-ore","output":"chest"}   Place a burner-mining-drill ON the nearest patch of resource, fuel it, and put a collector (output = chest | furnace | belt) at its drop position. Use this to AUTOMATE mining (iron-ore, copper-ore, coal, stone). Needs a burner-mining-drill in inventory.
 - {"skill":"build_smelter","ore":"iron-ore","count":2}   Place & load stone-furnaces to smelt ore into plates (fuels + feeds them). Needs the ore in inventory first (gather it).
 - {"skill":"fuel_all"}                Top up every nearby burner that's low on fuel (uses your coal).
+- {"skill":"tend"}                    Look after YOUR burner base near home in one go: collect plates/ore/coal from your furnaces and chests, refuel, feed ore into idle furnaces, and put a furnace/chest under drills that spill onto the ground. Run it when needs[] lists anything, and every few turns while you have burner drills.
 - {"skill":"research"[,"tech":"automation"]}   Queue a technology on your force (picks one if you omit tech). REQUIRED before any research can progress — a lab does NOTHING until research is queued.
 - {"skill":"return_home"}             Walk back to your base anchor (use if you've wandered far).
 - {"skill":"goto","position":{"x":N,"y":N}}   Teleport to any map coordinate. Use to reach a distant location (e.g. an oil outpost) before acting. build_ghosts auto-travels to ghost clusters, so only use goto for manual positioning.
 - {"skill":"place_blueprint","name":"<library name>"[,"position":{"x":N,"y":N}]}   Stamp a proven build from the blueprint library as ghosts; the spot (clear ground, ore patch or shoreline) is found for you. Then build_ghosts builds it. Prefer this over placing buildings one by one.
-- {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) up to count; tells you which raw materials are still missing. Plates and steel can't be hand-crafted — smelt them.
+- {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) until you HOLD count in total; tells you which raw materials are still missing. Plates and steel can't be hand-crafted — smelt them. To craft NEW ones when you already hold some (e.g. a research trigger), set count = what you hold + how many more.
 - {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner's output to a smelter's input.
 
 === PRIMITIVE ACTIONS (fallback only) ===
@@ -40,7 +41,9 @@ move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,
 - Else if deconstruction.count > 0, do {"skill":"deconstruct"} NEXT — the human marked those objects to be removed; clearing them comes before everything except building ghosts.
 - Don't only smelt. To AUTOMATE mining use build_miner. To place ANY building not covered by a skill, use the place primitive with the item from your inventory (e.g. {"action":"place","item":"lab","position":{...}}). perception.inventory lists EVERYTHING you have — trust it for what's available.
 - React to "Results of your last actions": never repeat a FAILED entry unchanged. If a skill says it needs an item, gather/craft it, then retry.
-- Use needs[] to pick maintenance: burners_low_fuel → fuel_all; etc.
+- Use needs[] to pick maintenance: anything in burners_low_fuel or outputs_full → tend. outputs_full entries with drop="ground" are drills with nothing under their output — tend places a collector.
+- research.triggers lists techs unlocked by DOING something, not by research (2.x early game), e.g. {"type":"craft-item","target":"lab","count":1} = hand-craft 1 NEW lab. Do that to open up research.
+- A SUGGESTED NEXT STEP is a safe default from the build order — use it when you have nothing better. Never send a BLOCKED move.
 - perception.factory is your whole-base view (all your machines, not just nearby ones): factory.summary.by_type/by_status are counts; factory.total is how many machines you have; factory.attention lists the machines that need action (nearest first) — fix those. factory.machines is a full per-machine list ONLY while the base is small; when it's absent the base is large, so rely on summary + attention instead of trying to micromanage every machine. perception.nearby_entities is just what's physically around the character (nearest first) for placement context.
 - RESEARCH = your main progress marker (perception.game_phase tracks it). If perception.research.current is null, NOTHING is queued — queue the next tech for your phase with {"skill":"research"} and keep labs fed. ONLY in phase 0 (no red science yet) do you BOOTSTRAP: hand-craft automation-science-pack (1 copper-plate + 1 iron-gear-wheel; gear = 2 iron-plate) to auto-trigger the first tech, then place a lab and feed it. Past phase 0 do NOT hand-craft red science to "restart" — just queue research.
 - POWER: perception.power shows grid health (has_grid, production_kw, consumption_kw, machines_no_power, machines_low_power). If has_grid is true and machines_no_power + machines_low_power are 0, power is SUFFICIENT — do NOT build boilers/steam/power. Only build power when there's no grid or machines report no_power/low_power.
@@ -74,16 +77,18 @@ def _failed_detail(results, name: str) -> str | None:
     for r in results or []:
         if not isinstance(r, dict) or r.get("ok"):
             continue
-        label = r.get("skill") or r.get("action") or ""
+        label = str(r.get("skill") or r.get("action") or "").removeprefix("skill:")
         detail = str(r.get("detail") or "")
         if label == name or detail.startswith(name):
             return detail or label
     return None
 
 
-def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "") -> list[dict]:
+def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "",
+                   coach_text: str = "") -> list[dict]:
     """goal_text: the goal-ladder section from bridge/goals.py. When given it
-    replaces the coarser per-phase hint."""
+    replaces the coarser per-phase hint. coach_text: recent turns, blocked
+    moves and the planner's next step (bridge/coach.py)."""
     system = SYSTEM_PROMPT
     if system_prefix:
         system = system_prefix.strip() + "\n\n" + system
@@ -117,6 +122,9 @@ def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "") 
     if goal_text:
         parts.append(goal_text + ("\n(The player directive above comes first; work on the goal "
                                   "when it's done.)" if mem.get("user_directive") else ""))
+
+    if coach_text:
+        parts.append(coach_text)
 
     user_message = payload.get("user_message")
     if user_message:
