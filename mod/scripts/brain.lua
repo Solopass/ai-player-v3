@@ -61,7 +61,7 @@ function AIBrain.write_bridge_config()
     tonumber(setting("ai-player-rcon-port")) or 27015,
     json_escape(setting("ai-player-rcon-password") or "")
   )
-  helpers.write_file("ai-player/config.json", content, false)
+  helpers.write_file("ai-player/config.json", content, false, 0)
 end
 
 -- -------------------------------------------------------------------------
@@ -155,7 +155,7 @@ function AIBrain.request_decision(character, user_message)
     user_message = user_message or nil,
   })
 
-  helpers.write_file("ai-player/request_" .. req_id .. ".json", body, false)
+  helpers.write_file("ai-player/request_" .. req_id .. ".json", body, false, 0)
 
   storage.ai_player.pending_requests[req_id] = {
     timestamp    = game.tick,

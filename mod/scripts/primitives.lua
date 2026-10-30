@@ -7,7 +7,7 @@ local LOG_FILE = "ai-player/errors.log"
 
 local function log_error(msg)
   local line = string.format("[tick=%d] %s\n", game.tick, msg)
-  helpers.write_file(LOG_FILE, line, true)
+  helpers.write_file(LOG_FILE, line, true, 0)
   if settings.global["ai-player-debug-chat"] and settings.global["ai-player-debug-chat"].value then
     game.print("[AI Error] " .. msg, {r=1, g=0.3, b=0.3})
   end

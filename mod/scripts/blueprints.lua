@@ -513,7 +513,7 @@ function AIBlueprints.export_held(player, name, category)
   if not str or str == "" then return false, "could not export the held blueprint" end
   name = AIBlueprints.safe_name(name or label) or ("bp-" .. game.tick)
   local body = helpers.table_to_json({name = name, string = str, category = category})
-  helpers.write_file("ai-player/blueprints/" .. name .. ".json", body, false)
+  helpers.write_file("ai-player/blueprints/" .. name .. ".json", body, false, 0)
   return true, name
 end
 

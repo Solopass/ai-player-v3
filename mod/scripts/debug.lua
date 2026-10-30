@@ -68,7 +68,7 @@ function AIDebug.event(kind, fields)
     local ok, line = pcall(helpers.table_to_json, e)
     -- No for_player, like the request files: written wherever the mod runs
     -- (also in single-player).
-    if ok then helpers.write_file(LOG_FILE, line .. "\n", true) end
+    if ok then helpers.write_file(LOG_FILE, line .. "\n", true, 0) end
   end
 end
 

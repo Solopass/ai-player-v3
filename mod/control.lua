@@ -931,7 +931,7 @@ add_admin_command("ai-bp",
       if not n then return say("not a valid blueprint name") end
       AIBlueprints.remove(n)
       helpers.write_file("ai-player/blueprints/remove_" .. n .. ".json",
-                         helpers.table_to_json({remove = n}), false)
+                         helpers.table_to_json({remove = n}), false, 0)
       say("removed '" .. n .. "' (the bridge deletes it from blueprints/local too)")
     elseif sub == "test" and a ~= "" then
       if not player then return say("run this in game") end
