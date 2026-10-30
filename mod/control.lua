@@ -3,6 +3,7 @@
 -- Logic delegates to scripts/*: character, perception, primitives (Tier-0
 -- actions), skills (Tier-1 loops + unified executor), brain (request lifecycle).
 
+require("scripts.debug")
 require("scripts.character")
 require("scripts.registry")
 require("scripts.perception")
@@ -11,6 +12,7 @@ require("scripts.queries")
 require("scripts.brain")
 require("scripts.blueprints")
 require("scripts.skills")
+require("scripts.gui")
 
 -- -------------------------------------------------------------------------
 -- Remote interface — lets an external MCP/RCON client invoke a skill against
@@ -34,6 +36,51 @@ remote.add_interface("ai_player", {
   bp_hashes = function()
     if not storage.ai_player then return {} end
     return AIBlueprints.hashes()
+  end,
+
+  -- Bridge -> mod after each decision: current goal, model, timings. Shown in
+  -- the in-game panel. status_json is a JSON object string.
+  set_status = function(status_json)
+    if not storage.ai_player then return end
+    local ok, t = pcall(helpers.json_to_table, status_json)
+    if ok and type(t) == "table" then
+      t.tick = game.tick
+      storage.ai_player.bridge_status = t
+    end
+  end,
+
+  -- Everything needed to see what's going on, in one call (bridge/diag.py).
+  diag = function()
+    local ap = storage.ai_player
+    if not ap then return { ok = false, detail = "mod not initialised" } end
+    local c = ap.character
+    local char = { valid = c ~= nil and c.valid }
+    if char.valid then
+      char.surface = c.surface.name
+      char.position = { x = math.floor(c.position.x), y = math.floor(c.position.y) }
+      char.health = math.floor(c.health)
+      char.home = AICharacter.get_home(c.surface)
+    end
+    local pending = {}
+    for id, req in pairs(ap.pending_requests or {}) do
+      pending[id] = math.floor((game.tick - req.timestamp) / 60)
+    end
+    local lib, locked = 0, 0
+    for _ in pairs(ap.blueprints or {}) do lib = lib + 1 end
+    for _ in pairs(ap.bp_geo or {}) do locked = locked + 1 end
+    local mem = ap.memory or {}
+    return {
+      ok = true, tick = game.tick, character = char,
+      autonomy = ap.autonomy_enabled ~= false, coop = ap.force_name == "player",
+      force = ap.force_name, respawn_tick = ap.respawn_tick,
+      pending = pending, request_timeout_s = math.floor((ap.request_timeout_ticks or 0) / 60),
+      tick_interval = settings.global["ai-player-tick-interval"].value,
+      directive = mem.user_directive, last_summary = mem.previous_summary,
+      last_results = mem.last_action_results, notes = #(mem.notes or {}),
+      blueprints = lib, blueprints_measured = locked,
+      placed = ap.placed_blueprints and { table.unpack(ap.placed_blueprints, math.max(1, #ap.placed_blueprints - 4)) } or {},
+      bridge_status = ap.bridge_status, events = ap.events or {},
+    }
   end,
 
   -- skill: registry name; params: table of skill params (item/count/ore/...).
@@ -310,12 +357,17 @@ script.on_init(function()
   init_storage()
   AICharacter.create_force()
   AIBrain.write_bridge_config()
-  game.print("[AI Player v3] Initialised — use /spawn-ai-player to start", {r=0, g=1, b=1})
+  for _, p in pairs(game.players) do AIGui.ensure_button(p) end
+  game.print("[AI Player v3] Initialised — open the AI panel (top-left button or Ctrl+Shift+A)", {r=0, g=1, b=1})
 end)
 
 script.on_configuration_changed(function()
   init_storage()
   AICharacter.create_force()
+  -- A mod update may change the panel layout: close open panels so stored
+  -- element refs never point at an old layout.
+  AIGui.reset_all()
+  for _, p in pairs(game.players) do AIGui.ensure_button(p) end
   storage.ai_player.pending_requests = {}
   reconcile_character()
   -- Give an already-spawned character a home anchor if it lacks one (e.g. after
@@ -486,26 +538,8 @@ local function log_chat(player_name, message, tick)
   while #log > 100 do table.remove(log, 1) end
 end
 
-script.on_event(defines.events.on_console_chat, function(event)
-  if not storage.ai_player then return end
-  if not event.message then return end
-
-  local msg = event.message
-  -- Log EVERY console chat line (not just AI directives) so an external
-  -- harness (pi-factorio RCON bridge) can poll the full conversation via
-  -- remote.call('ai_player','get_chat', {since = <tick>}).
-  local pname = (event.player_index and game.players[event.player_index])
-    and game.players[event.player_index].name or ""
-  log_chat(pname, msg, event.tick)
-
-  -- Prefixes: "ai: <text>", "ai, <text>", "!ai <text>" (any case, space after
-  -- ":"/"," optional). A bare "ai <text>" no longer counts — ordinary chat
-  -- like "ai is stuck" was being taken as an order.
-  local directive = msg:match("^%s*[Aa][Ii]%s*[:,]%s*(.-)%s*$")
-                 or msg:match("^%s*![Aa][Ii]%s+(.-)%s*$")
-
-  if not directive or directive == "" then return end
-
+-- A player order for the AI (chat "ai: ..." or the panel's Tell box).
+local function give_directive(directive)
   local mem = storage.ai_player.memory
   -- Skip if already responded to this exact message
   if mem.last_responded_to_message == directive then return end
@@ -525,6 +559,28 @@ script.on_event(defines.events.on_console_chat, function(event)
   else
     game.print("[AI] (no character spawned — use /spawn-ai-player)", {r=1, g=0.6, b=0})
   end
+end
+
+script.on_event(defines.events.on_console_chat, function(event)
+  if not storage.ai_player then return end
+  if not event.message then return end
+
+  local msg = event.message
+  -- Log EVERY console chat line (not just AI directives) so an external
+  -- harness (pi-factorio RCON bridge) can poll the full conversation via
+  -- remote.call('ai_player','get_chat', {since = <tick>}).
+  local pname = (event.player_index and game.players[event.player_index])
+    and game.players[event.player_index].name or ""
+  log_chat(pname, msg, event.tick)
+
+  -- Prefixes: "ai: <text>", "ai, <text>", "!ai <text>" (any case, space after
+  -- ":"/"," optional). A bare "ai <text>" no longer counts — ordinary chat
+  -- like "ai is stuck" was being taken as an order.
+  local directive = msg:match("^%s*[Aa][Ii]%s*[:,]%s*(.-)%s*$")
+                 or msg:match("^%s*![Aa][Ii]%s+(.-)%s*$")
+
+  if not directive or directive == "" then return end
+  give_directive(directive)
 end)
 
 -- -------------------------------------------------------------------------
@@ -626,19 +682,22 @@ add_admin_command("ai-coop",
   end
 )
 
+local function bring_ai_to(player)
+  local character = AICharacter.get_character()
+  if not character then
+    game.print("[AI] No character active", {r=1,g=0,b=0}); return
+  end
+  if player and player.character then
+    local ps = player.character.surface
+    character.teleport(position_beside(ps, player.character.position), ps)
+    game.print("[AI] Coming to you", {r=0,g=1,b=1})
+  end
+end
+
 commands.add_command("ai-come", "Bring the AI character to you",
   function(cmd)
     if not storage.ai_player then return end
-    local character = AICharacter.get_character()
-    if not character then
-      game.print("[AI] No character active", {r=1,g=0,b=0}); return
-    end
-    local player = game.get_player(cmd.player_index)
-    if player and player.character then
-      local ps = player.character.surface
-      character.teleport(position_beside(ps, player.character.position), ps)
-      game.print("[AI] Coming to you", {r=0,g=1,b=1})
-    end
+    bring_ai_to(game.get_player(cmd.player_index))
   end
 )
 
@@ -679,6 +738,34 @@ add_admin_command("ai-collect",
   end
 )
 
+-- Run one skill from text args, as /ai-do and the panel's Run button do, and
+-- print the result. arg1 maps to item/resource/ore/tech so one token works
+-- across gather/miner/smelter/research; arg2 = count or output.
+-- place_blueprint takes <name> [resource]; connect_belt is LLM-only.
+local function run_skill_text(character, skill, rest)
+  local tokens = {}
+  for tok in (rest or ""):gmatch("%S+") do tokens[#tokens + 1] = tok end
+  local entry = {skill = skill}
+  if skill == "place_blueprint" then
+    entry.name = tokens[1]; entry.resource = tokens[2]
+    tokens = {}
+  elseif tokens[1] then
+    entry.item = tokens[1]; entry.resource = tokens[1]; entry.ore = tokens[1]; entry.tech = tokens[1]
+  end
+  if tokens[2] then
+    local n = tonumber(tokens[2])
+    if n then entry.count = n else entry.output = tokens[2] end
+  end
+  AISkills.execute(character, {entry})
+  local r = storage.ai_player.memory.last_action_results
+  r = r and r[1]
+  if r then
+    game.print("[AI /ai-do] " .. (r.ok and "OK: " or "FAILED: ") .. (r.detail or ""),
+      r.ok and {r=0.6,g=1,b=0.6} or {r=1,g=0.6,b=0.4})
+  end
+  return r
+end
+
 add_admin_command("ai-do",
   "Force-run a skill deterministically (bypasses the LLM): /ai-do <skill> [arg] [count|output]",
   function(cmd)
@@ -700,29 +787,7 @@ add_admin_command("ai-do",
       game.print("[AI] unknown skill '" .. skill .. "'. Known: " .. table.concat(names, ", "), {r=1,g=0.6,b=0.3})
       return
     end
-    -- arg maps to item/resource/ore so one token works across gather/miner/smelter.
-    -- Tokenise (robust to extra/trailing spaces); arg1 = thing, arg2 = count|output.
-    local tokens = {}
-    for tok in rest:gmatch("%S+") do tokens[#tokens + 1] = tok end
-    local entry = {skill = skill}
-    if skill == "place_blueprint" then
-      -- /ai-do place_blueprint <name> [resource]
-      entry.name = tokens[1]; entry.resource = tokens[2]
-      tokens = {}
-    elseif tokens[1] then
-      entry.item = tokens[1]; entry.resource = tokens[1]; entry.ore = tokens[1]; entry.tech = tokens[1]
-    end
-    if tokens[2] then
-      local n = tonumber(tokens[2])
-      if n then entry.count = n else entry.output = tokens[2] end
-    end
-    AISkills.execute(character, {entry})
-    local r = storage.ai_player.memory.last_action_results
-    r = r and r[1]
-    if r then
-      game.print("[AI /ai-do] " .. (r.ok and "OK: " or "FAILED: ") .. (r.detail or ""),
-        r.ok and {r=0.6,g=1,b=0.6} or {r=1,g=0.6,b=0.4})
-    end
+    run_skill_text(character, skill, rest)
   end
 )
 
@@ -821,7 +886,7 @@ add_admin_command("ai-bp",
       if not n then return say("not a valid blueprint name") end
       AIBlueprints.remove(n)
       helpers.write_file("ai-player/blueprints/remove_" .. n .. ".json",
-                         helpers.table_to_json({remove = n}), false, 0)
+                         helpers.table_to_json({remove = n}), false)
       say("removed '" .. n .. "' (the bridge deletes it from blueprints/local too)")
     elseif sub == "test" and a ~= "" then
       if not player then return say("run this in game") end
@@ -896,3 +961,10 @@ commands.add_command("ai-memory",
     end
   end
 )
+
+-- The panel's buttons run the same functions as the console commands.
+AIGui.set_actions({
+  give_directive = give_directive,
+  bring_ai_to = bring_ai_to,
+  run_skill_text = run_skill_text,
+})

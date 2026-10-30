@@ -659,10 +659,11 @@ function AIActions.run(character, action)
   if not handler then
     return false, "unknown action '" .. tostring(action.action) .. "'"
   end
-  local call_ok, ok, detail = pcall(handler, character, action)
+  local call_ok, ok, detail = AIDebug.xpcall(handler, character, action)
   if not call_ok then
     log_error(string.format("Action '%s': %s", tostring(action.action), tostring(ok)))
-    return false, "error: " .. tostring(ok)
+    AIDebug.event("error", {action = action.action, error = tostring(ok), entry = action})
+    return false, "error: " .. tostring(ok):match("^[^\n]*")
   end
   if ok == nil then ok = true end
   if ok == false and detail then debug_print(detail) end

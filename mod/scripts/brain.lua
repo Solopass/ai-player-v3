@@ -159,6 +159,7 @@ function AIBrain.request_decision(character, user_message)
     timestamp    = game.tick,
     user_message = user_message,
   }
+  AIDebug.event("request", {req_id = req_id, user_message = user_message, bytes = #body})
 
   if setting("ai-player-debug-chat") then
     game.print("[AI Brain] Request " .. req_id .. " written")
@@ -173,8 +174,11 @@ function AIBrain.handle_response(req_id, actions_json)
   local pending = storage.ai_player.pending_requests[req_id]
   if not pending then
     game.print("[AI Brain] Unknown request id: " .. req_id, {r=1, g=0.5, b=0})
+    AIDebug.event("response", {req_id = req_id, ok = false, detail = "unknown request id (timed out?)"})
     return
   end
+  AIDebug.event("response", {req_id = req_id, seconds = (game.tick - pending.timestamp) / 60,
+                             reply = actions_json})
 
   storage.ai_player.pending_requests[req_id] = nil
 
@@ -190,6 +194,7 @@ function AIBrain.handle_response(req_id, actions_json)
   local entries = AIBrain.parse_actions(actions_json)
   if not entries or #entries == 0 then
     game.print("[AI Brain] No valid skill/action entries parsed from response", {r=1, g=0.5, b=0})
+    AIDebug.event("response", {req_id = req_id, ok = false, detail = "no valid entries parsed"})
     return
   end
 
@@ -211,6 +216,7 @@ function AIBrain.process_pending(current_tick)
           math.floor(limit / 60)),
         {r=1, g=0.5, b=0}
       )
+      AIDebug.event("timeout", {req_id = req_id, seconds = math.floor(limit / 60)})
       storage.ai_player.pending_requests[req_id] = nil
     end
   end

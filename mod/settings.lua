@@ -115,5 +115,14 @@ data:extend({
     default_value = false,
     order = "n"
   },
+  {
+    -- script-output/ai-player/debug.jsonl (scripts/debug.lua); read with
+    -- `python -m bridge.diag`
+    type = "bool-setting",
+    name = "ai-player-debug-log",
+    setting_type = "runtime-global",
+    default_value = true,
+    order = "o"
+  },
 
 })

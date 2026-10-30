@@ -37,6 +37,7 @@ class Agent:
         complete = get_provider(provider_cfg)
 
         payload = req.payload
+        self.status = None      # set below once the model has been asked
         if "perception" not in payload:
             log.error("Request %s: no 'perception' in payload — fallback", req.req_id)
             return _fallback("internal error: request had no perception")
@@ -65,6 +66,13 @@ class Agent:
         t0 = time.monotonic()
         content = complete(messages, provider_cfg)
         elapsed = time.monotonic() - t0
+        # For the in-game panel (main.py pushes it with set_status).
+        self.status = {
+            "goal": goal_text.split("\n", 1)[0].removeprefix("CURRENT GOAL ").strip() or "(goal ladder off)",
+            "model": provider_cfg.model,
+            "seconds": round(elapsed, 1),
+            "answered": content is not None,
+        }
 
         if content is None:
             log.error("Request %s: no response after %.1fs (timeout=%.0fs) — fallback. "

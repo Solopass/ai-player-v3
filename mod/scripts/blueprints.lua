@@ -216,7 +216,13 @@ local function get_geometry(name, entry, stack, force)
   local cache = geo_cache()
   if cache[name] and cache[name].required then return cache[name] end
   local geo, err = measure(stack, force)
-  if geo then cache[name] = geo end
+  if geo then
+    cache[name] = geo
+    local d = geo.dirs[defines.direction.north]
+    AIDebug.event("measure", {name = name, ok = true, required = geo.required,
+                              size = d and {w = d.r - d.l, h = d.b - d.t},
+                              anchor = d and d.anchor and d.anchor.name})
+  end
   return geo, err
 end
 
@@ -237,11 +243,12 @@ local function generated(surface, a)
   return true
 end
 
+-- Returns ok, reason (reason names the check that failed, for the debug log).
 local function spot_ok(surface, force, p, g, placement, resource)
   local a = area_at(p, g, 1)
-  if not generated(surface, a) then return false end
+  if not generated(surface, a) then return false, "ungenerated" end
   if surface.count_entities_filtered{area = a, type = NON_BLOCKING, invert = true} > 0 then
-    return false
+    return false, "buildings"
   end
   local water = surface.count_tiles_filtered{area = a, collision_mask = "water_tile"}
   if placement == "near_water" and g.anchor then
@@ -249,17 +256,19 @@ local function spot_ok(surface, force, p, g, placement, resource)
     local ax, ay = p.x + g.anchor.x, p.y + g.anchor.y
     local near = surface.count_tiles_filtered{area = {{ax - 1.5, ay - 1.5}, {ax + 1.5, ay + 1.5}},
                                               collision_mask = "water_tile"}
-    return water - near == 0
+    if water - near == 0 then return true end
+    return false, "water"
   end
-  if water > 0 then return false end
+  if water > 0 then return false, "water" end
   if placement == "on_ore" then
     local ore = surface.count_entities_filtered{area = a, type = "resource", name = resource}
     -- Oil is a few scattered wells, not a dense patch.
-    if resource == "crude-oil" then return ore >= 1 end
+    if resource == "crude-oil" then return ore >= 1, "no_ore" end
     local tiles = (a[2][1] - a[1][1]) * (a[2][2] - a[1][2])
-    return ore >= tiles * 0.4
+    return ore >= tiles * 0.4, "thin_ore"
   end
-  return surface.count_entities_filtered{area = a, type = "resource"} == 0
+  if surface.count_entities_filtered{area = a, type = "resource"} > 0 then return false, "ore" end
+  return true
 end
 
 -- Candidate origins, nearest to `center` first.
@@ -387,12 +396,21 @@ function AIBlueprints.place(character, name, opts)
 
   return with_stack(entry.string, function(stack)
     local geo, err = get_geometry(name, entry, stack, force)
-    if not geo then return false, "place_blueprint: " .. err end
+    if not geo then
+      AIDebug.event("measure", {name = name, ok = false, error = err})
+      return false, "place_blueprint: " .. err
+    end
 
+    -- Why spots were turned down, for the debug log and the failure message.
+    local rejected, partial = {}, {}
+    local cands = candidates(surface, home, geo, placement, resource, opts.position)
     local tries = 0
-    for _, c in ipairs(candidates(surface, home, geo, placement, resource, opts.position)) do
+    for _, c in ipairs(cands) do
       local g = geo.dirs[c.d]
-      if g and spot_ok(surface, force, c.p, g, placement, resource) then
+      local fits, why = false, "no_geometry"
+      if g then fits, why = spot_ok(surface, force, c.p, g, placement, resource) end
+      if not fits then rejected[why or "?"] = (rejected[why or "?"] or 0) + 1 end
+      if fits then
         tries = tries + 1
         local built = stack.build_blueprint{surface = surface, force = force, position = c.p,
                                             direction = c.d, build_mode = defines.build_mode.forced}
@@ -414,9 +432,13 @@ function AIBlueprints.place(character, name, opts)
           else
             detail = detail .. "; you have everything — " .. next_step
           end
+          AIDebug.event("place", {name = name, ok = true, position = c.p, direction = c.d, ghosts = n,
+                                  required = geo.required, candidates = #cands, tries = tries,
+                                  rejected = rejected, partial = partial, marked = marked})
           return true, detail
         end
         -- Partial fit: undo the ghosts and any tree/rock marks, try the next spot.
+        partial[#partial + 1] = n
         for _, e in ipairs(built or {}) do if e.valid then e.destroy() end end
         surface.cancel_deconstruct_area{area = area_at(c.p, g, 1), force = force}
         if tries >= MAX_BUILD_TRIES then break end
@@ -425,8 +447,17 @@ function AIBlueprints.place(character, name, opts)
     local where = placement == "near_water" and "on a shoreline"
                or placement == "on_ore" and ("on a " .. resource .. " patch")
                or "in a clear area"
-    return false, string.format("place_blueprint: no spot found for '%s' %s within reach of home (%d tries)",
-                                name, where, tries)
+    local why = {}
+    for k, v in pairs(rejected) do why[#why + 1] = v .. " " .. k end
+    table.sort(why)
+    AIDebug.event("place", {name = name, ok = false, placement = placement, resource = resource,
+                            home = home, candidates = #cands, tries = tries, rejected = rejected,
+                            partial = partial, required = geo.required})
+    return false, string.format(
+      "place_blueprint: no spot found for '%s' %s near home (%d candidate(s), %d build tries%s%s)",
+      name, where, #cands, tries,
+      #why > 0 and ("; rejected: " .. table.concat(why, ", ")) or "",
+      #partial > 0 and ("; best partial " .. math.max(table.unpack(partial)) .. "/" .. geo.required .. " ghosts") or "")
   end)
 end
 
@@ -477,7 +508,7 @@ function AIBlueprints.export_held(player, name, category)
   if not str or str == "" then return false, "could not export the held blueprint" end
   name = AIBlueprints.safe_name(name or label) or ("bp-" .. game.tick)
   local body = helpers.table_to_json({name = name, string = str, category = category})
-  helpers.write_file("ai-player/blueprints/" .. name .. ".json", body, false, 0)
+  helpers.write_file("ai-player/blueprints/" .. name .. ".json", body, false)
   return true, name
 end
 

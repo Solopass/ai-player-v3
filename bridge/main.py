@@ -16,12 +16,13 @@ Startup sequence:
        - hand new requests to Agent, send responses via RCON
 """
 
+import json
 import logging
 import sys
 import time
 from pathlib import Path
 
-from . import blueprints
+from . import blueprints, diag
 from .agent import Agent
 from .config import ConfigLoader
 from .factorio.rcon import RCONGateway
@@ -119,6 +120,7 @@ def main() -> None:
     last_bp_sync = 0.0
 
     def sync_blueprints():
+        diag.rotate_logs(cfg.output_dir)
         try:
             added = blueprints.ingest_from_game(cfg.output_dir)
             if added:
@@ -154,6 +156,10 @@ def main() -> None:
                 actions = agent.decide(req, cfg)
 
                 sent = rcon.send_ai_response(req.req_id, actions)
+                status = getattr(agent, "status", None)
+                if sent and status:
+                    rcon.query_lua("remote.call('ai_player','set_status',"
+                                   f"{blueprints._lua_str(json.dumps(status))})")
                 if sent:
                     watcher.ack(req.req_id)
                 else:

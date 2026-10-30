@@ -772,8 +772,12 @@ local function run_entry(character, entry)
     label = "skill:" .. tostring(entry.skill)
     local handler = AISkills.REGISTRY[entry.skill]
     if handler then
-      local call_ok, rok, rdetail = pcall(handler, character, entry)
-      if not call_ok then ok, detail = false, "error: " .. tostring(rok)
+      local call_ok, rok, rdetail = AIDebug.xpcall(handler, character, entry)
+      if not call_ok then
+        -- rok is the traceback; keep the first line for the model, all of it
+        -- for the debug log.
+        ok, detail = false, "error: " .. tostring(rok):match("^[^\n]*")
+        AIDebug.event("error", {skill = entry.skill, error = tostring(rok), entry = entry})
       else ok, detail = (rok ~= false), rdetail end
     else
       ok, detail = false, "unknown skill '" .. tostring(entry.skill) .. "'"
@@ -785,6 +789,8 @@ local function run_entry(character, entry)
     label = "?"
     ok, detail = false, "entry has neither 'skill' nor 'action'"
   end
+  AIDebug.event(entry.skill and "skill" or "action",
+                {skill = entry.skill, action = entry.action, ok = (ok ~= false), detail = detail, entry = entry})
   return (ok ~= false), detail, label
 end
 
