@@ -11,6 +11,7 @@ require("scripts.primitives")
 require("scripts.queries")
 require("scripts.brain")
 require("scripts.blueprints")
+require("scripts.layout")
 require("scripts.skills")
 require("scripts.gui")
 
@@ -505,6 +506,9 @@ script.on_event(defines.events.on_tick, function(event)
     if not AICharacter.get_home(surface) then AICharacter.set_home(surface, ai_char.position) end
     AIRegistry.reconcile(surface, game.forces[storage.ai_player.force_name])
   end
+
+  -- Run the next move of the current turn (moves wait for hand-crafting).
+  AISkills.step_turn(tick)
 
   -- Expire stale pending requests
   AIBrain.process_pending(tick)

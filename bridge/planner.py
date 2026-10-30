@@ -3,9 +3,10 @@ Next-step planner: a fixed early-game build order turned into ONE concrete
 skill entry, so a small model has a sensible move to copy (or the coach has
 one to fall back on when the model loops).
 
-next_step(perception, blocked) -> (entry, reason) | None. Rules run in
-priority order and skip entries whose key is blocked (bridge/coach.py), so a
-step that keeps failing gives way to the next useful one.
+next_steps(perception, blocked) -> up to 4 (entry, reason) moves for one turn
+(the mod runs them in order and waits for hand-crafting in between). Rules run
+in priority order and skip entries whose key is blocked (bridge/coach.py), so a
+move that keeps failing gives way to the next useful one.
 """
 
 from __future__ import annotations
@@ -30,6 +31,9 @@ def entry_key(d: dict) -> str:
         name = str(d.get("action") or "?")
     parts = [name]
     for k in ("item", "tech", "resource", "recipe", "name", "ore", "output", "count"):
+        # build_miner's count shrinks as drills get built; the move is the same.
+        if k == "count" and name == "skill:build_miner":
+            continue
         if d.get(k) is not None:
             parts.append(f"{k}={d[k]}")
     return "|".join(parts)
@@ -98,15 +102,17 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str]]:
             if lm and lm.get("distance", 0) > FAR:
                 yield ({"skill": "goto", "position": {"x": lm["x"], "y": lm["y"]}},
                        f"nearest {resource} is {lm['distance']} tiles away")
+            missing = want - miners.get(resource, 0)
             if inv.get("burner-mining-drill", 0) == 0:
-                yield ({"skill": "craft_for", "item": "burner-mining-drill", "count": 1},
-                       f"need a drill for {resource}")
+                # One turn: collect plates, craft drills, build once they're done.
                 yield {"skill": "tend"}, "collect plates for crafting drills"
+                yield ({"skill": "craft_for", "item": "burner-mining-drill", "count": missing},
+                       f"need {missing} drill(s) for {resource}")
+            yield ({"skill": "build_miner", "resource": resource, "output": output, "count": missing},
+                   f"{miners.get(resource, 0)}/{want} drill(s) on {resource}")
+            if inv.get("burner-mining-drill", 0) == 0:
                 yield ({"skill": "gather", "item": "stone", "count": 20},
                        "drills and furnaces need stone")
-            else:
-                yield ({"skill": "build_miner", "resource": resource, "output": output},
-                       f"{miners.get(resource, 0)}/{want} drill(s) on {resource}")
         yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up"
 
     # 3. Techs unlocked by doing something (2.x early game).
@@ -140,8 +146,24 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str]]:
                    "labs need science packs")
 
 
-def next_step(p: dict, blocked: frozenset[str] | set[str] = frozenset()) -> tuple[dict, str] | None:
+MAX_MOVES = 4  # the schema allows 4 entries per reply
+
+
+def next_steps(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
+               limit: int = MAX_MOVES) -> list[tuple[dict, str]]:
+    """The first `limit` distinct, unblocked moves, in order."""
+    out, keys = [], set()
     for entry, reason in _candidates(p):
-        if entry_key(entry) not in blocked:
-            return entry, reason
-    return None
+        k = entry_key(entry)
+        if k in blocked or k in keys:
+            continue
+        keys.add(k)
+        out.append((entry, reason))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def next_step(p: dict, blocked: frozenset[str] | set[str] = frozenset()) -> tuple[dict, str] | None:
+    steps = next_steps(p, blocked, 1)
+    return steps[0] if steps else None

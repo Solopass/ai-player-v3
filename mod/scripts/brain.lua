@@ -115,6 +115,8 @@ end
 -- Make a decision request
 -- -------------------------------------------------------------------------
 
+AI_CRAFT_SPEED_BONUS = 4   -- +400% = 5x hand-crafting speed (also set in character.lua at spawn)
+
 function AIBrain.request_decision(character, user_message)
   local mem = storage.ai_player.memory
 
@@ -122,7 +124,12 @@ function AIBrain.request_decision(character, user_message)
   -- it still reaches the bridge as a user_message (and gets a chat reply).
   user_message = user_message or mem.pending_user_message
 
-  -- Only one pending request at a time. Keep the queued message for next time.
+  -- Only one pending request at a time, and none while the last turn's moves
+  -- are still running. Keep the queued message for next time.
+  if storage.ai_player.turn then
+    if not user_message then return end
+    AISkills.cancel_turn("the player gave a new order")
+  end
   if next(storage.ai_player.pending_requests) ~= nil then
     if setting("ai-player-debug-chat") then
       game.print("[AI Brain] Skipping — pending request in flight")
@@ -132,6 +139,12 @@ function AIBrain.request_decision(character, user_message)
 
   -- We are committing to a request now — consume the queued message.
   mem.pending_user_message = nil
+
+  -- The AI hand-crafts 5x faster than a player (its own character only), so
+  -- a turn like "craft a drill, then place it" doesn't stall.
+  if character.character_crafting_speed_modifier < AI_CRAFT_SPEED_BONUS then
+    character.character_crafting_speed_modifier = AI_CRAFT_SPEED_BONUS
+  end
 
   local perception = AIPerception.gather(character)
 
@@ -203,7 +216,7 @@ function AIBrain.handle_response(req_id, actions_json)
 
   -- Entries may be skills {skill=...} or primitives {action=...}; the unified
   -- executor dispatches each and records E1 results.
-  AISkills.execute(storage.ai_player.character, entries, req_id)
+  AISkills.queue_turn(storage.ai_player.character, entries, req_id)
 end
 
 -- -------------------------------------------------------------------------

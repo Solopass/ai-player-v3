@@ -63,10 +63,10 @@ class Agent:
             except Exception as e:      # a goal bug must never stop the AI
                 log.warning("Goal ladder failed: %s", e)
         # Coach/planner bugs must never stop the AI: on error, play without them.
-        suggestion, coach_text = None, ""
+        suggestion, coach_text = [], ""
         try:
             self.coach.observe(payload)
-            suggestion = planner.next_step(perception, self.coach.blocked())
+            suggestion = planner.next_steps(perception, self.coach.blocked())
             coach_text = self.coach.prompt_text(suggestion)
         except Exception:
             log.exception("Coach/planner failed — continuing without them")

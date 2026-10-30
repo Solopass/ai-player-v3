@@ -56,7 +56,23 @@ def payload(p: dict, results=None, rid=None, **mem) -> dict:
 
 def test_spawn_builds_coal_first():
     entry, _ = planner.next_step(spawn())
-    assert entry == {"skill": "build_miner", "resource": "coal", "output": "chest"}
+    assert entry == {"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1}
+
+
+def test_spawn_turn_is_several_moves():
+    moves = [e for e, _ in planner.next_steps(spawn())]
+    assert len(moves) == 4
+    assert moves[0]["resource"] == "coal"
+
+
+def test_no_drills_chains_tend_craft_build():
+    p = spawn()
+    p["inventory"] = [i for i in p["inventory"] if i["name"] != "burner-mining-drill"]
+    p["landmarks"]["resources"][0]["distance"] = 10
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert moves[:3] == [{"skill": "tend"},
+                     {"skill": "craft_for", "item": "burner-mining-drill", "count": 1},
+                     {"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1}]
 
 
 def test_stuck_state_tends_the_spilling_drill():
@@ -85,7 +101,7 @@ def test_far_ore_goes_to_landmark_first():
 
 def test_planner_skips_blocked_steps():
     p = spawn()
-    blocked = {planner.entry_key({"skill": "build_miner", "resource": "coal", "output": "chest"})}
+    blocked = {planner.entry_key({"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1})}
     entry, _ = planner.next_step(p, blocked)
     assert entry["skill"] in ("goto", "build_miner") and entry.get("resource") != "coal"
 
@@ -103,8 +119,8 @@ def test_blocks_after_two_failures_and_substitutes_planner_step():
     key = planner.entry_key({"skill": "craft_for", "item": "lab", "count": 1})
     assert key in c.blocked()
     out, why = c.guard([{"skill": "craft_for", "item": "lab", "count": 1}], payload(p),
-                       planner.next_step(p, c.blocked()))
-    assert out == [{"skill": "craft_for", "item": "lab", "count": 2}]
+                       planner.next_steps(p, c.blocked()))
+    assert out[0] == {"skill": "craft_for", "item": "lab", "count": 2}
     assert "dropped" in why
 
 
@@ -132,7 +148,7 @@ def test_never_returns_a_blocked_step():
     bad = {"action": "skill:build_miner", "resource": "coal", "output": "chest", "ok": False, "detail": "no"}
     c.observe(payload(p, [bad], "r1"))
     c.observe(payload(p, [bad], "r2"))
-    out, _ = c.guard([step[0]], payload(p), step)
+    out, _ = c.guard([step[0]], payload(p), [step])
     assert out == [{"action": "wait"}]
 
 
@@ -141,7 +157,7 @@ def test_directive_suppresses_substitution():
     c.observe(payload(p, [FAIL], "r1", user_directive="build a wall"))
     c.observe(payload(p, [FAIL], "r2", user_directive="build a wall"))
     out, _ = c.guard([{"skill": "craft_for", "item": "lab", "count": 1}],
-                     payload(p, user_directive="build a wall"), planner.next_step(p, c.blocked()))
+                     payload(p, user_directive="build a wall"), planner.next_steps(p, c.blocked()))
     assert out == [{"action": "wait"}]
 
 
@@ -183,3 +199,42 @@ def test_counts_only_changes_dont_unblock():
     more["inventory"][0]["count"] += 7
     c.observe(payload(more, [], "r3"))
     assert c.blocked()
+
+
+def _fail(key_entry: dict) -> dict:
+    return {**{k: v for k, v in key_entry.items() if k != "skill"},
+            "action": "skill:" + key_entry["skill"], "ok": False, "detail": "nope"}
+
+
+def test_blocks_escalate_so_cycles_cant_outlast_them():
+    c, p = Coach(), lab_trigger()
+    move = {"skill": "craft_for", "item": "copper-plate", "count": 40}
+    rid = iter(range(1000))
+    durations = []
+    for _ in range(3):
+        c.observe(payload(p, [_fail(move)], f"r{next(rid)}"))
+        c.observe(payload(p, [_fail(move)], f"r{next(rid)}"))
+        b = c.blocks[planner.entry_key(move)]
+        durations.append(b["until"] - c.turn)
+        while planner.entry_key(move) in c.blocked():      # let it expire
+            c.observe(payload(p, [], f"r{next(rid)}"))
+    assert durations == [6, 12, 24]
+
+
+def test_stuck_ai_gets_the_planners_moves():
+    c, p = Coach(), spawn()
+    bad = {"skill": "craft_for", "item": "iron-plate", "count": 91}
+    for i in range(13):
+        c.observe(payload(p, [_fail(bad)] if i % 2 else [], f"r{i}"))
+    assert c.stuck()
+    out, why = c.guard([{"skill": "gather", "item": "wood", "count": 10}], payload(p), planner.next_steps(p))
+    assert out[0]["skill"] == "build_miner" and "no progress" in why
+
+
+def test_new_drill_counts_as_progress():
+    c, p = Coach(), spawn()
+    c.observe(payload(p, [], "r1"))
+    more = copy.deepcopy(p)
+    more["factory"]["miners_by_resource"] = {"coal": 1}
+    c.observe(payload(more, [], "r2"))
+    assert c.sig_since == 2

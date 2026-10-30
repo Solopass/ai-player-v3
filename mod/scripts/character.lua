@@ -144,6 +144,7 @@ function AICharacter.spawn_ai_player(surface)
 
   AICharacter.give_starting_items(character)
   storage.ai_player.character = character
+  character.character_crafting_speed_modifier = AI_CRAFT_SPEED_BONUS or 4
   AICharacter.remember_surface(surface)
 
   -- Anchor the home/base location on first spawn on this surface so the AI can
