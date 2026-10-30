@@ -1,4 +1,14 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.0
+Date: 2026-10-30
+  Features:
+    - Factorio 2.1 support (crafter inventories, fluid box API, build modes).
+    - Multi-planet: per-planet home, machine list and respawn.
+    - Blueprint library synced from the bridge; place_blueprint, craft_for and connect_belt skills.
+    - In-game AI panel (top-left button or Ctrl+Shift+A) and a debug event log.
+  Changes:
+    - State-changing commands are admin-only; chat orders need ai:, ai, or !ai.
+---------------------------------------------------------------------------------------------------
 Version: 0.4.2
 Date: 2026-08-29
   Features:
