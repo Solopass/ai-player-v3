@@ -511,11 +511,60 @@ local function action_summary(character, action)
   debug_print("Summary: " .. action.text:sub(1, 80))
 end
 
+-- Notes and todo lists are sent with every request, so they are capped to keep
+-- the prompt inside the model's context window over a long session.
+local MAX_NOTES       = 20
+local MAX_NOTE_CHARS  = 200
+local MAX_TODO_LISTS  = 10
+local MAX_TODO_ITEMS  = 20
+
 local function action_add_note(character, action)
   if not action.text then return end
   local notes = storage.ai_player.memory.notes
-  table.insert(notes, {tick=game.tick, text=action.text})
+  table.insert(notes, {tick=game.tick, text=action.text:sub(1, MAX_NOTE_CHARS)})
+  while #notes > MAX_NOTES do table.remove(notes, 1) end
   debug_print("Note added: " .. action.text:sub(1, 60))
+end
+
+-- Make room for a new todo list: drop fully completed lists first, then the
+-- oldest by creation order.
+local function make_room_for_todo(mem)
+  local todos = mem.todo_lists
+  -- Bring todo_order in line with todo_lists: drop titles that no longer
+  -- exist, and append lists from saves made before todo_order existed.
+  local order, seen = {}, {}
+  for _, t in ipairs(mem.todo_order or {}) do
+    if todos[t] and not seen[t] then order[#order + 1] = t; seen[t] = true end
+  end
+  local untracked = {}
+  for title in pairs(todos) do
+    if not seen[title] then untracked[#untracked + 1] = title end
+  end
+  table.sort(untracked)
+  for _, t in ipairs(untracked) do order[#order + 1] = t end
+  mem.todo_order = order
+
+  local count = #order
+  if count < MAX_TODO_LISTS then return end
+  -- Completed lists go first, oldest first.
+  for i = #order, 1, -1 do
+    local title = order[i]
+    local done = true
+    for _, it in ipairs(todos[title]) do if not it.completed then done = false; break end end
+    if done then todos[title] = nil; table.remove(order, i); count = count - 1 end
+  end
+  while count >= MAX_TODO_LISTS and #order > 0 do
+    local oldest = table.remove(order, 1)
+    todos[oldest] = nil; count = count - 1
+  end
+end
+
+local function track_todo(mem, title)
+  mem.todo_order = mem.todo_order or {}
+  for i, t in ipairs(mem.todo_order) do
+    if t == title then table.remove(mem.todo_order, i); break end
+  end
+  table.insert(mem.todo_order, title)
 end
 
 local function action_view_notes(character, action)
@@ -528,9 +577,13 @@ end
 
 local function action_create_todo(character, action)
   if not action.title or not action.items then return end
-  local todos = storage.ai_player.memory.todo_lists
+  local mem = storage.ai_player.memory
+  local todos = mem.todo_lists
+  if not todos[action.title] then make_room_for_todo(mem) end
   todos[action.title] = {}
-  for _, text in ipairs(action.items) do
+  track_todo(mem, action.title)
+  for i, text in ipairs(action.items) do
+    if i > MAX_TODO_ITEMS then break end
     table.insert(todos[action.title], {text=text, completed=false})
   end
   debug_print("Todo list '" .. action.title .. "' created (" .. #action.items .. " items)")
@@ -538,9 +591,16 @@ end
 
 local function action_add_todo(character, action)
   if not action.title or not action.text then return end
-  local todos = storage.ai_player.memory.todo_lists
-  if not todos[action.title] then todos[action.title] = {} end
-  table.insert(todos[action.title], {text=action.text, completed=false})
+  local mem = storage.ai_player.memory
+  local todos = mem.todo_lists
+  if not todos[action.title] then
+    make_room_for_todo(mem)
+    todos[action.title] = {}
+    track_todo(mem, action.title)
+  end
+  local list = todos[action.title]
+  if #list >= MAX_TODO_ITEMS then return end
+  table.insert(list, {text=action.text, completed=false})
 end
 
 local function action_complete_todo(character, action)

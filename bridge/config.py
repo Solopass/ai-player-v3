@@ -105,6 +105,18 @@ class BridgeConfig:
     # directives without editing code, e.g. "detailed thinking off" disables
     # reasoning on Nemotron models (big latency win). Empty by default.
     system_prefix: str = ""
+    # Reasoning effort for models that support it (gpt-oss: low | medium | high).
+    # Sent as reasoning_effort + chat_template_kwargs. Empty = server default.
+    reasoning_effort: str = ""
+    # Thinking on/off for templates that read enable_thinking (Gemma 4, Qwen3.5).
+    # None = template default. Gemma 4 thinks by default and can burn the whole
+    # max_tokens budget before answering, so set AI_ENABLE_THINKING=false for it.
+    enable_thinking: bool | None = None
+    # Constrain replies to the skill/action JSON schema (bridge/schema.py).
+    # Needs a server with response_format json_schema support (llama.cpp does).
+    json_schema: bool = False
+    # Goal ladder (bridge/goals.py): add the current milestone to every prompt.
+    goals: bool = True
 
     # RCON
     rcon: RCONConfig = field(default_factory=RCONConfig)
@@ -141,6 +153,9 @@ class BridgeConfig:
             timeout=self.timeout,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
+            enable_thinking=self.enable_thinking,
+            json_schema=self.json_schema,
         )
 
 
@@ -203,6 +218,14 @@ class ConfigLoader:
             except ValueError:
                 pass
         cfg.system_prefix = self._e("AI_SYSTEM_PREFIX", cfg.system_prefix)
+        cfg.reasoning_effort = self._e("AI_REASONING_EFFORT", cfg.reasoning_effort)
+        thinking = self._e("AI_ENABLE_THINKING").lower()
+        if thinking in ("true", "1", "on"):
+            cfg.enable_thinking = True
+        elif thinking in ("false", "0", "off"):
+            cfg.enable_thinking = False
+        cfg.json_schema = self._e("AI_JSON_SCHEMA").lower() in ("true", "1", "on")
+        cfg.goals = self._e("AI_GOALS", "true").lower() not in ("false", "0", "off")
         cfg.rcon.host     = self._e("FACTORIO_RCON_HOST", cfg.rcon.host)
         port = self._e("FACTORIO_RCON_PORT")
         if port:
@@ -250,7 +273,10 @@ class ConfigLoader:
             cfg.provider = str(raw.get("provider", cfg.provider)).lower()
         if "AI_MODEL" not in self._env:
             cfg.model = raw.get("model_name", cfg.model)
-        cfg.lm_studio_url   = raw.get("lm_studio_url", cfg.lm_studio_url)
+        # Same rule for LM_STUDIO_URL: the mod's default (localhost:1234) would
+        # otherwise override a non-default local server set in .env.
+        if "LM_STUDIO_URL" not in self._env:
+            cfg.lm_studio_url = raw.get("lm_studio_url", cfg.lm_studio_url)
         cfg.openai_api_key  = raw.get("openai_api_key") or cfg.openai_api_key
         cfg.openai_api_base = raw.get("openai_api_base", cfg.openai_api_base)
         cfg.custom_url      = raw.get("custom_url", cfg.custom_url)

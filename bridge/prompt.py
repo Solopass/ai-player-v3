@@ -27,6 +27,9 @@ Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no 
 - {"skill":"research"[,"tech":"automation"]}   Queue a technology on your force (picks one if you omit tech). REQUIRED before any research can progress — a lab does NOTHING until research is queued.
 - {"skill":"return_home"}             Walk back to your base anchor (use if you've wandered far).
 - {"skill":"goto","position":{"x":N,"y":N}}   Teleport to any map coordinate. Use to reach a distant location (e.g. an oil outpost) before acting. build_ghosts auto-travels to ghost clusters, so only use goto for manual positioning.
+- {"skill":"place_blueprint","name":"<library name>"[,"position":{"x":N,"y":N}]}   Stamp a proven build from the blueprint library as ghosts; the spot (clear ground, ore patch or shoreline) is found for you. Then build_ghosts builds it. Prefer this over placing buildings one by one.
+- {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) up to count; tells you which raw materials are still missing. Plates and steel can't be hand-crafted — smelt them.
+- {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner's output to a smelter's input.
 
 === PRIMITIVE ACTIONS (fallback only) ===
 move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,direction]}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}.
@@ -43,6 +46,7 @@ move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,
 - POWER: perception.power shows grid health (has_grid, production_kw, consumption_kw, machines_no_power, machines_low_power). If has_grid is true and machines_no_power + machines_low_power are 0, power is SUFFICIENT — do NOT build boilers/steam/power. Only build power when there's no grid or machines report no_power/low_power.
 - COOP: perception.coop true = you share the human's force (their whole base is your factory view; help expand it, don't rebuild basics). false = solo on your own force.
 - STAY NEAR HOME (perception.home.distance). If far with no reason, {"skill":"return_home"}.
+- PLANET: perception.surface.name is the planet (or space platform) you are on. Home, factory and nearby_* cover only this surface; each planet has its own home and base. Use what this planet offers (e.g. no trees or coal on some planets) — check nearby_resources before gathering.
 - When the player sends a message, reply with a chat action first, then act.
 - Keep it to 1–3 entries per turn. Don't stack many actions blindly.
 
@@ -76,7 +80,9 @@ def _failed_detail(results, name: str) -> str | None:
     return None
 
 
-def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
+def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "") -> list[dict]:
+    """goal_text: the goal-ladder section from bridge/goals.py. When given it
+    replaces the coarser per-phase hint."""
     system = SYSTEM_PROMPT
     if system_prefix:
         system = system_prefix.strip() + "\n\n" + system
@@ -84,9 +90,13 @@ def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
     parts: list[str] = []
     perception = payload.get("perception") or {}
     if perception:
-        parts.append("Game state:\n" + json.dumps(perception, indent=1))
+        # The goal section already names the blueprints that matter; the full
+        # library / locked lists would only cost tokens.
+        drop = {"blueprint_locked"} | ({"blueprint_library"} if goal_text else set())
+        shown = {k: v for k, v in perception.items() if k not in drop}
+        parts.append("Game state:\n" + json.dumps(shown, indent=1))
         phase = perception.get("game_phase")
-        if phase in PHASE_HINT:
+        if phase in PHASE_HINT and not goal_text:
             parts.append(PHASE_HINT[phase])
 
     mem = payload.get("memory") or {}
@@ -103,6 +113,9 @@ def build_messages(payload: dict, system_prefix: str = "") -> list[dict]:
         parts.append("Notes: " + " | ".join(notes))
     if mem.get("user_directive"):
         parts.append("Player directive (keep following): " + str(mem["user_directive"]))
+    if goal_text:
+        parts.append(goal_text + ("\n(The player directive above comes first; work on the goal "
+                                  "when it's done.)" if mem.get("user_directive") else ""))
 
     user_message = payload.get("user_message")
     if user_message:

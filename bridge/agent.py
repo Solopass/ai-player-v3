@@ -9,7 +9,9 @@ api.ACTIONS (see factorio/api.py). Stateless between calls.
 
 import logging
 import time
+from dataclasses import replace
 
+from . import blueprints, goals
 from .config import BridgeConfig
 from .factorio.api import parse_response
 from .factorio.watcher import PendingRequest
@@ -39,7 +41,24 @@ class Agent:
             log.error("Request %s: no 'perception' in payload — fallback", req.req_id)
             return _fallback("internal error: request had no perception")
 
-        messages = build_messages(payload, config.system_prefix)
+        perception = payload["perception"]
+        # Blueprints for the planet the AI is on (planet builds are tagged by name).
+        try:
+            usable = blueprints.for_surface(blueprints.load_library(), perception)
+        except Exception as e:
+            log.warning("Blueprint library failed to load: %s", e)
+            usable = {}
+        goal_text = ""
+        if config.goals:
+            try:
+                goal_text = goals.describe(perception, usable)
+            except Exception as e:      # a goal bug must never stop the AI
+                log.warning("Goal ladder failed: %s", e)
+        messages = build_messages(payload, config.system_prefix, goal_text)
+        # place_blueprint may only name blueprints the mod holds and that fit
+        # this planet.
+        in_mod = set(perception.get("blueprint_library") or [])
+        provider_cfg = replace(provider_cfg, blueprint_names=sorted(in_mod & set(usable)))
 
         log.info("Routing request %s via %s (model=%s)",
                  req.req_id, provider_cfg.provider, provider_cfg.model)

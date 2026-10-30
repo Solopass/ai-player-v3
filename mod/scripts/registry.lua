@@ -59,22 +59,32 @@ function AIRegistry.remove(unit_number)
   if unit_number then store()[unit_number] = nil end
 end
 
--- Per-tick read path: valid tracked machines as a plain array, pruning invalid
--- refs as we go. No surface query.
+-- Per-tick read path: valid tracked machines on the AI's current surface as a
+-- plain array, pruning invalid refs as we go. No surface query. Build events
+-- add machines from every surface, so filter to the planet the AI is on.
+local function current_surface_index()
+  local s = AICharacter.get_surface()
+  return s and s.index
+end
+
 function AIRegistry.machines()
   local m = store()
+  local si = current_surface_index()
   local out = {}
   for un, e in pairs(m) do
-    if e.valid then out[#out + 1] = e else m[un] = nil end
+    if not e.valid then m[un] = nil
+    elseif e.surface_index == si then out[#out + 1] = e end
   end
   return out
 end
 
 function AIRegistry.count()
   local m = store()
+  local si = current_surface_index()
   local n = 0
   for un, e in pairs(m) do
-    if e.valid then n = n + 1 else m[un] = nil end
+    if not e.valid then m[un] = nil
+    elseif e.surface_index == si then n = n + 1 end
   end
   return n
 end

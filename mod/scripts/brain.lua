@@ -218,11 +218,21 @@ end
 
 -- -------------------------------------------------------------------------
 -- JSON action parser
--- Custom regex-based parser — Lua has no JSON library at runtime.
--- Parses a flat array of action objects with string/number/position fields.
+-- Primary path: helpers.json_to_table (the bridge always sends json.dumps
+-- output). The regex parser below is the fallback for malformed input; it
+-- matches braces without knowing about strings, so a "}" or "]" inside a chat
+-- message used to cut the action list short.
 -- -------------------------------------------------------------------------
 
-function AIBrain.parse_actions(json_str)
+local STRING_FIELDS = {"action","skill","direction","item","name","type","recipe",
+                       "ore","output","message","text","title","inventory","slot",
+                       "tech","resource"}
+-- tech/resource/keep are read by skills.lua (research, build_miner, deposit)
+-- but were missing here, so the model's choice was silently dropped.
+local NUMBER_FIELDS = {"count","radius","distance","index","keep"}
+local POSITION_FIELDS = {"position","from","to"}
+
+local function parse_actions_legacy(json_str)
   if not json_str or json_str == "" then return {} end
 
   -- Strip reasoning tags from models that emit <think>…</think>
@@ -311,25 +321,26 @@ function AIBrain.parse_action_object(obj_str)
   local action = {}
 
   -- String fields (primitive + skill params)
-  for _, field in ipairs({"action","skill","direction","item","name","type","recipe",
-                           "ore","output","message","text","title","inventory","slot"}) do
+  for _, field in ipairs(STRING_FIELDS) do
     local val = json_extract_string(obj_str, field)
     if val then action[field] = val end
   end
 
   -- Number fields
-  for _, field in ipairs({"count","radius","distance","index"}) do
+  for _, field in ipairs(NUMBER_FIELDS) do
     local val = obj_str:match('"' .. field .. '":%s*([%-]?%d+%.?%d*)')
     if val then action[field] = tonumber(val) end
   end
 
-  -- Position object {x:N, y:N}
-  local pos_str = obj_str:match('"position"%s*:%s*({[^}]*})')
-  if pos_str then
-    local px = pos_str:match('"?x"?%s*:%s*([%-]?%d+%.?%d*)')
-    local py = pos_str:match('"?y"?%s*:%s*([%-]?%d+%.?%d*)')
-    if px and py then
-      action.position = {x = tonumber(px), y = tonumber(py)}
+  -- Position objects {x:N, y:N} (position; from/to for connect_belt)
+  for _, field in ipairs(POSITION_FIELDS) do
+    local pos_str = obj_str:match('"' .. field .. '"%s*:%s*({[^}]*})')
+    if pos_str then
+      local px = pos_str:match('"?x"?%s*:%s*([%-]?%d+%.?%d*)')
+      local py = pos_str:match('"?y"?%s*:%s*([%-]?%d+%.?%d*)')
+      if px and py then
+        action[field] = {x = tonumber(px), y = tonumber(py)}
+      end
     end
   end
 
@@ -344,6 +355,59 @@ function AIBrain.parse_action_object(obj_str)
   end
 
   return action
+end
+
+-- Same whitelist and clean-up as parse_action_object, applied to an already
+-- decoded table: strings flattened to one line, numbers coerced, position
+-- reduced to {x, y}, items kept as a list of strings.
+local function normalize_action(obj)
+  local action = {}
+  for _, field in ipairs(STRING_FIELDS) do
+    local v = obj[field]
+    if type(v) == "string" then
+      action[field] = v:gsub("\r", ""):gsub("[\n\t]", " ")
+    end
+  end
+  for _, field in ipairs(NUMBER_FIELDS) do
+    local v = tonumber(obj[field])
+    if v then action[field] = v end
+  end
+  for _, field in ipairs(POSITION_FIELDS) do
+    local p = obj[field]
+    if type(p) == "table" then
+      local px, py = tonumber(p.x), tonumber(p.y)
+      if px and py then action[field] = {x = px, y = py} end
+    end
+  end
+  -- items: a list for create_todo, a comma-separated string for loot_chests.
+  if type(obj.items) == "string" then
+    action.items = obj.items
+  elseif type(obj.items) == "table" then
+    local items = {}
+    for _, item in ipairs(obj.items) do
+      if type(item) == "string" then items[#items+1] = item end
+    end
+    action.items = items
+  end
+  return action
+end
+
+function AIBrain.parse_actions(json_str)
+  if not json_str or json_str == "" then return {} end
+  local ok, decoded = pcall(helpers.json_to_table, json_str)
+  if not ok or type(decoded) ~= "table" then
+    return parse_actions_legacy(json_str)
+  end
+  -- A single object instead of an array
+  if decoded.action or decoded.skill then decoded = {decoded} end
+  local actions = {}
+  for _, obj in ipairs(decoded) do
+    if type(obj) == "table" then
+      local action = normalize_action(obj)
+      if action.action or action.skill then actions[#actions+1] = action end
+    end
+  end
+  return actions
 end
 
 -- -------------------------------------------------------------------------

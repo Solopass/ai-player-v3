@@ -23,6 +23,12 @@ class ProviderConfig:
     timeout: float = 120.0
     max_tokens: int = 8192
     temperature: float = 0.7
+    reasoning_effort: str = ""
+    enable_thinking: bool | None = None
+    json_schema: bool = False
+    # Set per request by the agent: library blueprints the mod holds, used as
+    # the place_blueprint name enum in the schema.
+    blueprint_names: list[str] = field(default_factory=list)
 
 
 def get_provider(config: ProviderConfig):

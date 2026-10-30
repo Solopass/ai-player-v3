@@ -3,7 +3,9 @@
 AICharacter = {}
 
 local FORCE_NAME = "ai_player_force"
-local SURFACE_NAME = "nauvis"
+-- Where the AI starts when it has never been anywhere else. After that it
+-- follows its character: whatever surface (planet) the character is on.
+local DEFAULT_SURFACE = "nauvis"
 
 local STARTING_ITEMS = {
   {name = "wood",                count = 50},
@@ -63,18 +65,70 @@ function AICharacter.set_coop(enabled)
   end
   -- Re-scope the registry to the new force so the factory view updates now.
   if force then
-    AIRegistry.reconcile(game.surfaces[SURFACE_NAME], force)
+    AIRegistry.reconcile(AICharacter.get_surface(), force)
   end
   return { coop = (target == "player"), force = target }
 end
 
-function AICharacter.spawn_ai_player()
+-- The surface the AI lives on: its character's surface, else the last surface
+-- it was seen on (kept across death/respawn), else Nauvis.
+function AICharacter.get_surface()
+  local ap = storage.ai_player
+  local c = ap and ap.character
+  if c and c.valid then return c.surface end
+  local name = ap and ap.surface_name
+  return (name and game.surfaces[name]) or game.surfaces[DEFAULT_SURFACE]
+end
+
+function AICharacter.remember_surface(surface)
+  if storage.ai_player and surface and surface.valid then
+    storage.ai_player.surface_name = surface.name
+  end
+end
+
+-- One home anchor per surface. Saves from before multi-planet support stored a
+-- single anchor in home_position; it is treated as the Nauvis home.
+function AICharacter.get_home(surface)
+  local ap = storage.ai_player
+  if not ap then return nil end
+  surface = surface or AICharacter.get_surface()
+  if not surface then return nil end
+  if ap.homes and ap.homes[surface.name] then return ap.homes[surface.name] end
+  if surface.name == DEFAULT_SURFACE then return ap.home_position end
+  return nil
+end
+
+function AICharacter.set_home(surface, pos)
+  local ap = storage.ai_player
+  ap.homes = ap.homes or {}
+  local home = {x = math.floor(pos.x), y = math.floor(pos.y)}
+  ap.homes[surface.name] = home
+  if surface.name == DEFAULT_SURFACE then ap.home_position = home end
+end
+
+-- Every AI character (no controlling/associated player) on the force, across
+-- all surfaces.
+function AICharacter.find_all_ai_characters(force)
+  local out = {}
+  for _, s in pairs(game.surfaces) do
+    for _, c in ipairs(s.find_entities_filtered{type = "character", force = force}) do
+      if c.valid and c.player == nil and c.associated_player == nil then
+        out[#out + 1] = c
+      end
+    end
+  end
+  return out
+end
+
+-- surface: where to spawn (e.g. the surface of the player who ran the
+-- command). Defaults to the AI's current/last surface.
+function AICharacter.spawn_ai_player(surface)
   if storage.ai_player.character and storage.ai_player.character.valid then
     storage.ai_player.character.destroy()
   end
 
   local force = AICharacter.get_force()
-  local surface = game.surfaces[SURFACE_NAME]
+  surface = surface or AICharacter.get_surface()
   local pos = AICharacter.find_spawn_position(surface)
 
   local character = surface.create_entity{
@@ -90,11 +144,13 @@ function AICharacter.spawn_ai_player()
 
   AICharacter.give_starting_items(character)
   storage.ai_player.character = character
+  AICharacter.remember_surface(surface)
 
-  -- Anchor the home/base location on first spawn so the AI can navigate back and
-  -- avoid wandering. Persists across respawns (only set when missing).
-  if not storage.ai_player.home_position then
-    storage.ai_player.home_position = {x = math.floor(pos.x), y = math.floor(pos.y)}
+  -- Anchor the home/base location on first spawn on this surface so the AI can
+  -- navigate back and avoid wandering. Persists across respawns (only set when
+  -- missing).
+  if not AICharacter.get_home(surface) then
+    AICharacter.set_home(surface, pos)
   end
 
   game.print(string.format("[AI] Spawned at {%.1f, %.1f}", pos.x, pos.y), {r=0, g=1, b=0})
@@ -105,7 +161,8 @@ function AICharacter.find_spawn_position(surface)
   -- Try near the lowest-index connected player first
   local candidates = {}
   for _, player in ipairs(game.connected_players) do
-    if player.valid and player.character and player.character.valid then
+    if player.valid and player.character and player.character.valid
+       and player.character.surface == surface then
       table.insert(candidates, player)
     end
   end

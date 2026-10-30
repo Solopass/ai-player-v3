@@ -274,7 +274,7 @@ REGISTRY.get_character_state = function(ctx, p)
     end
   end
 
-  local home = storage.ai_player and storage.ai_player.home_position
+  local home = AICharacter.get_home()
   return {
     position   = {x = round1(c.position.x), y = round1(c.position.y)},
     surface    = c.surface.name,
@@ -316,7 +316,7 @@ function AIQueries.run(name, params)
   local ctx = {
     character = character,
     force     = AICharacter.get_force() or game.forces.player,
-    surface   = (character and character.surface) or game.surfaces["nauvis"],
+    surface   = (character and character.surface) or AICharacter.get_surface(),
   }
   local ok, result = pcall(fn, ctx, params or {})
   if not ok then return {error = tostring(result)} end

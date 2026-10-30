@@ -223,11 +223,15 @@ local function skill_loot_chests(character, p)
   local inv     = inv_of(character)
 
   local filter = nil
-  if p.items and p.items ~= "" then
+  -- items: "iron-plate,coal" or ["iron-plate","coal"]
+  if type(p.items) == "string" and p.items ~= "" then
     filter = {}
     for name in p.items:gmatch("[^,]+") do
       filter[name:match("^%s*(.-)%s*$")] = true
     end
+  elseif type(p.items) == "table" and #p.items > 0 then
+    filter = {}
+    for _, name in ipairs(p.items) do filter[name] = true end
   end
 
   local chests = surface.find_entities_filtered{
@@ -451,7 +455,7 @@ end
 -- return_home() — walk back to the home anchor.
 -- -------------------------------------------------------------------------
 local function skill_return_home(character, _)
-  local home = storage.ai_player and storage.ai_player.home_position
+  local home = AICharacter.get_home()
   if not home then return false, "return_home: no home anchor set" end
   local surface = character.surface
   local sp = surface.find_non_colliding_position("character", {x = home.x, y = home.y}, 8, 0.5)
@@ -534,6 +538,208 @@ local function skill_goto(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- place_blueprint(name[, position, resource]) — stamp a library blueprint down
+-- as ghosts at a suitable spot (clear ground / ore patch / shoreline, from the
+-- blueprint's placement type). build_ghosts then builds it.
+-- -------------------------------------------------------------------------
+local function skill_place_blueprint(character, p)
+  if not p.name then return false, "place_blueprint: 'name' is required" end
+  return AIBlueprints.place(character, p.name, {position = p.position, resource = p.resource})
+end
+
+-- -------------------------------------------------------------------------
+-- craft_for(item[, count]) — hand-craft `item` up to `count` in inventory,
+-- including intermediates, and report the raw materials still missing.
+-- Smelted items (plates, steel) can't be hand-crafted; they are reported as
+-- raw so the model knows to smelt or gather them.
+-- -------------------------------------------------------------------------
+local function handcraftable(character, recipe)
+  local cats = character.prototype.crafting_categories or {}
+  for _, c in ipairs(recipe.categories or {}) do
+    if cats[c] then return true end
+  end
+  return false
+end
+
+local function product_amount(recipe, item)
+  for _, pr in ipairs(recipe.products) do
+    if pr.name == item then return pr.amount or pr.amount_min or 1 end
+  end
+  return 1
+end
+
+-- Walk the recipe tree for `amount` of `item`, consuming `have` (a mutable
+-- copy of the inventory) and adding anything not hand-craftable to `out`.
+local function raw_shortfall(character, item, amount, have, out, depth, visiting)
+  local avail = have[item] or 0
+  if avail >= amount then have[item] = avail - amount; return end
+  local need = amount - avail
+  have[item] = 0
+  local r = character.force.recipes[item]
+  if depth < 6 and r and r.enabled and handcraftable(character, r) and not visiting[item] then
+    visiting[item] = true
+    local crafts = math.ceil(need / product_amount(r, item))
+    for _, ing in ipairs(r.ingredients) do
+      if ing.type == "item" then
+        raw_shortfall(character, ing.name, ing.amount * crafts, have, out, depth + 1, visiting)
+      end
+    end
+    visiting[item] = nil
+  else
+    out[item] = (out[item] or 0) + need
+  end
+end
+
+-- How a locked recipe gets unlocked. In 2.x some early techs (steam-power,
+-- electronics, automation-science-pack, ...) unlock by a trigger — crafting
+-- or mining something — not by research.
+local function unlock_hint(force, recipe_name)
+  for name, tech in pairs(force.technologies) do
+    if not tech.researched then
+      for _, eff in ipairs(tech.prototype.effects or {}) do
+        if eff.type == "unlock-recipe" and eff.recipe == recipe_name then
+          local trig = tech.prototype.research_trigger
+          if not trig then return "unlocked by researching " .. name .. " (research skill)" end
+          local what = trig.item or trig.fluid or trig.entity
+                    or (trig.entities and table.concat(trig.entities, "/"))
+          if type(what) == "table" then what = what.name end
+          return string.format("unlocked by tech %s, which triggers on %s %s%s", name, trig.type,
+                               tostring(what or "?"), trig.count and (" x" .. trig.count) or "")
+        end
+      end
+    end
+  end
+  return "not unlocked by any remaining tech"
+end
+
+local function skill_craft_for(character, p)
+  local item = p.item
+  if not item then return false, "craft_for: 'item' is required" end
+  local count = math.max(tonumber(p.count) or 1, 1)
+  local inv = inv_of(character)
+  local have_now = inv.get_item_count(item)
+  if have_now >= count then
+    return true, string.format("craft_for: already have %d %s", have_now, item)
+  end
+  local r = character.force.recipes[item]
+  if not r then return false, "craft_for: no recipe makes " .. item .. " — gather it instead" end
+  if not r.enabled then
+    return false, "craft_for: " .. item .. " is locked — " .. unlock_hint(character.force, r.name)
+  end
+  if not handcraftable(character, r) then
+    return false, "craft_for: " .. item .. " can't be hand-crafted (needs a "
+      .. table.concat(r.categories or {}, "/") .. " machine) — build one or smelt it"
+  end
+
+  local crafts = math.ceil((count - have_now) / product_amount(r, item))
+  local can = character.get_craftable_count(r)
+  local queued = 0
+  if can > 0 then
+    queued = character.begin_crafting{recipe = r, count = math.min(crafts, can), silent = true}
+  end
+  local detail = string.format("craft_for: queued %d craft(s) of %s", queued, item)
+  if queued < crafts then
+    local have = {}
+    for _, it in ipairs(inv.get_contents()) do have[it.name] = (have[it.name] or 0) + it.count end
+    local out = {}
+    for _, ing in ipairs(r.ingredients) do
+      if ing.type == "item" then
+        raw_shortfall(character, ing.name, ing.amount * (crafts - queued), have, out, 1, {[item] = true})
+      end
+    end
+    local parts = {}
+    for name, n in pairs(out) do parts[#parts + 1] = n .. "x " .. name end
+    table.sort(parts)
+    if #parts > 0 then
+      detail = detail .. string.format("; for the other %d still missing raw: %s (gather/smelt them)",
+                                       crafts - queued, table.concat(parts, ", "))
+    end
+  end
+  return queued > 0, detail
+end
+
+-- -------------------------------------------------------------------------
+-- connect_belt(from, to) — lay transport-belt ghosts along an L-shaped path
+-- (tries horizontal-first, then vertical-first). Trees/rocks on the path are
+-- marked for deconstruction. build_ghosts then builds the belt.
+-- -------------------------------------------------------------------------
+local MAX_BELT = 300
+
+local function step_dir(dx, dy)
+  if dx > 0 then return defines.direction.east end
+  if dx < 0 then return defines.direction.west end
+  if dy > 0 then return defines.direction.south end
+  return defines.direction.north
+end
+
+local function belt_path(a, b, horizontal_first)
+  local ax, ay = math.floor(a.x) + 0.5, math.floor(a.y) + 0.5
+  local bx, by = math.floor(b.x) + 0.5, math.floor(b.y) + 0.5
+  local pts = {{x = ax, y = ay}}
+  local function walk_to(tx, ty)
+    local cur = pts[#pts]
+    local dx = (tx > cur.x and 1) or (tx < cur.x and -1) or 0
+    local dy = (ty > cur.y and 1) or (ty < cur.y and -1) or 0
+    while (cur.x ~= tx or cur.y ~= ty) and #pts <= MAX_BELT do
+      cur = {x = cur.x + dx, y = cur.y + dy}
+      pts[#pts + 1] = cur
+    end
+  end
+  if horizontal_first then walk_to(bx, ay); walk_to(bx, by)
+  else walk_to(ax, by); walk_to(bx, by) end
+  local tiles = {}
+  for i, pt in ipairs(pts) do
+    local nxt = pts[i + 1]
+    local d
+    if nxt then d = step_dir(nxt.x - pt.x, nxt.y - pt.y)
+    else d = tiles[#tiles] and tiles[#tiles].direction or step_dir(bx - ax, by - ay) end
+    tiles[#tiles + 1] = {position = pt, direction = d}
+  end
+  return tiles
+end
+
+local function skill_connect_belt(character, p)
+  local a, b = p.from, p.to
+  if not (a and b and a.x and a.y and b.x and b.y) then
+    return false, "connect_belt: 'from' and 'to' must be {x=N, y=N}"
+  end
+  local surface, force = character.surface, character.force
+  local blocked_at
+  for _, hfirst in ipairs({true, false}) do
+    local tiles = belt_path(a, b, hfirst)
+    if #tiles > MAX_BELT then return false, "connect_belt: path longer than " .. MAX_BELT .. " tiles" end
+    local ok = true
+    for _, t in ipairs(tiles) do
+      if not surface.can_place_entity{name = "transport-belt", position = t.position, direction = t.direction,
+                                      force = force, build_check_type = defines.build_check_type.manual_ghost,
+                                      forced = true} then
+        ok = false; blocked_at = t.position; break
+      end
+    end
+    if ok then
+      local placed, marked = 0, 0
+      for _, t in ipairs(tiles) do
+        local x, y = t.position.x, t.position.y
+        for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
+                                                          type = {"tree", "simple-entity"}}) do
+          if e.order_deconstruction(force) then marked = marked + 1 end
+        end
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
+                                        position = t.position, direction = t.direction, force = force}
+        if g then placed = placed + 1 end
+      end
+      local next_step = marked > 0
+        and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
+        or "build_ghosts next"
+      return placed > 0, string.format("connect_belt: placed %d/%d belt ghost(s) — %s (needs %d transport-belt)",
+                                       placed, #tiles, next_step, placed)
+    end
+  end
+  return false, string.format("connect_belt: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
+                              blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
+end
+
+-- -------------------------------------------------------------------------
 -- Registry + required params (mirrored in the bridge router prompt/validation)
 -- -------------------------------------------------------------------------
 AISkills.REGISTRY = {
@@ -548,6 +754,9 @@ AISkills.REGISTRY = {
   return_home      = skill_return_home,
   research         = skill_research,
   ["goto"]         = skill_goto,
+  place_blueprint  = skill_place_blueprint,
+  craft_for        = skill_craft_for,
+  connect_belt     = skill_connect_belt,
 }
 
 -- -------------------------------------------------------------------------

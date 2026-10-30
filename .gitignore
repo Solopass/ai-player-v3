@@ -27,3 +27,6 @@ dist/
 
 # Local dev dedicated-server write dir (saves, config, logs)
 server/
+
+# Your own and community blueprint imports (bridge/blueprints.py)
+blueprints/local/

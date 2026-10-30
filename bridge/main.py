@@ -21,6 +21,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import blueprints
 from .agent import Agent
 from .config import ConfigLoader
 from .factorio.rcon import RCONGateway
@@ -111,6 +112,24 @@ def main() -> None:
 
     log.info("Bridge running. Waiting for requests... (Ctrl+C to stop)")
 
+    # Blueprint library: import what the player exported in game (/ai-bp add),
+    # then push anything new/changed to the mod. Hash-compared, so a sync with
+    # nothing to do is one RCON call.
+    BP_SYNC_EVERY = 10.0
+    last_bp_sync = 0.0
+
+    def sync_blueprints():
+        try:
+            added = blueprints.ingest_from_game(cfg.output_dir)
+            if added:
+                log.info("Imported %d blueprint(s) from the game: %s", len(added), ", ".join(added))
+            if rcon.connected:
+                pushed, removed = blueprints.sync_to_mod(rcon, blueprints.load_library())
+                if pushed or removed:
+                    log.info("Blueprint library synced to the mod: %d pushed, %d removed", pushed, removed)
+        except Exception as e:      # never let a library problem stop the AI
+            log.warning("Blueprint sync failed: %s", e)
+
     # ---------------------------------------------------------------------------
     # Main loop
     # ---------------------------------------------------------------------------
@@ -118,6 +137,10 @@ def main() -> None:
         while True:
             # Hot-reload config.json written by Factorio on settings change
             cfg = loader.get()
+
+            if time.monotonic() - last_bp_sync >= BP_SYNC_EVERY:
+                last_bp_sync = time.monotonic()
+                sync_blueprints()
 
             # Reconnect RCON if host/port/password changed in-game
             if loader.rcon_changed(cfg):

@@ -38,12 +38,33 @@ def complete(messages: list[dict], config: ProviderConfig) -> str | None:
         max_retries=0,
     )
 
+    # gpt-oss on llama.cpp reads reasoning_effort via the chat template kwargs;
+    # other servers take the top-level field. Send both — unknown keys are ignored.
+    # Gemma 4 / Qwen3.5 templates read enable_thinking instead.
+    extra_body: dict = {}
+    template_kwargs: dict = {}
+    if config.reasoning_effort:
+        extra_body["reasoning_effort"] = config.reasoning_effort
+        template_kwargs["reasoning_effort"] = config.reasoning_effort
+    if config.enable_thinking is not None:
+        template_kwargs["enable_thinking"] = config.enable_thinking
+    if template_kwargs:
+        extra_body["chat_template_kwargs"] = template_kwargs
+
+    # Constrained decoding: the server can only emit a valid skill/action array.
+    kwargs = {}
+    if config.json_schema:
+        from ..schema import response_format
+        kwargs["response_format"] = response_format(blueprint_names=config.blueprint_names)
+
     try:
         response = client.chat.completions.create(
             model=config.model,
             messages=messages,
             max_tokens=config.max_tokens,
             temperature=config.temperature,
+            extra_body=extra_body or None,
+            **kwargs,
         )
         if not response.choices:
             log.error(
@@ -53,6 +74,9 @@ def complete(messages: list[dict], config: ProviderConfig) -> str | None:
             )
             return None
         content = response.choices[0].message.content
+        if response.choices[0].finish_reason == "length":
+            log.warning("Reply hit max_tokens (%d) and was cut off (model=%s) — raise AI_MAX_TOKENS",
+                        config.max_tokens, config.model)
         if content is None:
             log.error("response.choices[0].message.content is None (model=%s)", config.model)
             return None

@@ -9,6 +9,7 @@ require("scripts.perception")
 require("scripts.primitives")
 require("scripts.queries")
 require("scripts.brain")
+require("scripts.blueprints")
 require("scripts.skills")
 
 -- -------------------------------------------------------------------------
@@ -21,6 +22,20 @@ require("scripts.skills")
 --     remote.call("ai_player", "run_skill", "gather", {item="coal", count=50})))
 -- -------------------------------------------------------------------------
 remote.add_interface("ai_player", {
+  -- Blueprint library sync from the bridge (bridge/blueprints.py). Strings
+  -- arrive in chunks; bp_hashes lets the bridge push only what changed.
+  bp_chunk = function(name, i, n, part, meta_json, total_len)
+    if not storage.ai_player then return "error: not initialised" end
+    return AIBlueprints.receive_chunk(name, i, n, part, meta_json, total_len)
+  end,
+  bp_remove = function(name)
+    if storage.ai_player then AIBlueprints.remove(name) end
+  end,
+  bp_hashes = function()
+    if not storage.ai_player then return {} end
+    return AIBlueprints.hashes()
+  end,
+
   -- skill: registry name; params: table of skill params (item/count/ore/...).
   run_skill = function(skill, params)
     local character = AICharacter.get_character()
@@ -104,15 +119,17 @@ remote.add_interface("ai_player", {
     return { messages = out, latest_tick = latest }
   end,
 
-  -- Import a Factorio blueprint string as entity ghosts at {x,y} on nauvis.
-  -- Uses an item-on-ground blueprint stack (no player cursor needed). Ghosts
-  -- are placed via build_blueprint(force_build=true) so placement restrictions
-  -- are ignored; they are NOT revived — the build_ghosts skill constructs them
-  -- from inventory afterwards. force defaults to the AI's force.
+  -- Import a Factorio blueprint string as entity ghosts at {x,y} on the AI's
+  -- current surface.
+  -- Ghosts are placed with build_mode=forced (2.x; the old force_build flag no
+  -- longer exists, which made this silently place nothing): whatever can be
+  -- built is ghosted and obstructing trees/rocks are marked for
+  -- deconstruction. They are NOT revived — build_ghosts constructs them from
+  -- inventory afterwards. force defaults to the AI's force.
   -- Returns { ok, errors, ghost_count } or { ok=false, detail=... }.
   import_blueprint = function(params)
-    local s = game.surfaces["nauvis"]
-    if not s then return { ok = false, detail = "no nauvis surface" } end
+    local s = AICharacter.get_surface()
+    if not s then return { ok = false, detail = "no surface" } end
     local p = params or {}
     local bp = p.blueprint
     local x = tonumber(p.x) or 0
@@ -123,63 +140,28 @@ remote.add_interface("ai_player", {
     local fname = p.force or (storage.ai_player and storage.ai_player.force_name) or "player"
     local f = game.forces[fname]
     if not f then return { ok = false, detail = "force '" .. fname .. "' not found" } end
-    local e = s.create_entity{ name = "item-on-ground", position = { x = x, y = y }, stack = "blueprint" }
-    if not e or not e.valid then
-      return { ok = false, detail = "could not create blueprint item-on-ground" }
+    local inv = game.create_inventory(1)
+    local stack = inv[1]
+    local err = stack.import_stack(bp)
+    if not (stack.valid_for_read and stack.is_blueprint) then
+      inv.destroy()
+      return { ok = false, detail = "string is not a single blueprint (import_err=" .. tostring(err) .. ")" }
     end
-    local err = e.stack.import_stack(bp)
-    local is_bp = e.stack.is_blueprint
-    if not is_bp then
-      e.destroy()
-      return { ok = false, detail = "string is a blueprint book, not a single blueprint (import_err=" .. tostring(err) .. ")" }
-    end
-    -- Attempt 1: build_blueprint (Factorio 1.x API — may be broken/changed in 2.0)
-    local gs = e.stack.build_blueprint{
+    local gs = stack.build_blueprint{
       surface = s, force = f,
       position = { x = x, y = y },
-      force_build = true,
+      build_mode = defines.build_mode.forced,
     }
-    -- Count ghosts via pairs (in case # doesn't work on the return type in 2.0)
-    local ghost_count = 0
-    for _ in pairs(gs or {}) do ghost_count = ghost_count + 1 end
-    -- Attempt 2: if build_blueprint returned nothing, fall back to manual
-    -- entity-ghost creation from the parsed blueprint entity table.
-    -- In Factorio 2.0 LuaItemStack.build_blueprint may have changed; this
-    -- fallback uses create_entity{name="entity-ghost"} directly.
-    local fallback_used = false
-    if ghost_count == 0 then
-      local ents = e.stack.get_blueprint_entities and e.stack:get_blueprint_entities() or nil
-      if ents then
-        for _, be in ipairs(ents) do
-          -- Blueprint entity positions are relative to the blueprint origin;
-          -- add (x,y) offset. create_entity needs the center position.
-          local gx = x + (be.position and be.position.x or 0)
-          local gy = y + (be.position and be.position.y or 0)
-          local ghost = s.create_entity{
-            name = "entity-ghost",
-            position = { x = gx, y = gy },
-            force = f,
-            inner_name = be.name,
-            direction = be.direction,
-            raises_built = false,
-          }
-          if ghost and ghost.valid then ghost_count = ghost_count + 1 end
-        end
-        fallback_used = true
-      end
-    end
-    e.destroy()
-    return { ok = true, errors = err or 0, ghost_count = ghost_count,
-             import_err = tostring(err), is_blueprint = tostring(is_bp),
-             fallback = fallback_used }
+    inv.destroy()
+    return { ok = true, errors = err or 0, ghost_count = #(gs or {}), import_err = tostring(err) }
   end,
 
-  -- Export all entities in a rectangle (x1,y1)-(x2,y2) on nauvis to a blueprint
-  -- string. force defaults to the AI's force. Returns { ok, blueprint } or
-  -- { ok=false, detail=... }. Empty area -> ok=false.
+  -- Export all entities in a rectangle (x1,y1)-(x2,y2) on the AI's current
+  -- surface to a blueprint string. force defaults to the AI's force. Returns
+  -- { ok, blueprint } or { ok=false, detail=... }. Empty area -> ok=false.
   export_blueprint = function(params)
-    local s = game.surfaces["nauvis"]
-    if not s then return { ok = false, detail = "no nauvis surface" } end
+    local s = AICharacter.get_surface()
+    if not s then return { ok = false, detail = "no surface" } end
     local p = params or {}
     local x1, y1 = tonumber(p.x1) or 0, tonumber(p.y1) or 0
     local x2, y2 = tonumber(p.x2) or 0, tonumber(p.y2) or 0
@@ -246,19 +228,14 @@ end
 local function reconcile_character()
   if not storage.ai_player then return nil end
 
-  local surface = game.surfaces["nauvis"]
   local force   = AICharacter.get_force()
-  if not surface or not force then return nil end
+  if not force then return nil end
 
   -- AI characters have NO controlling/associated player (the human's character
   -- does). This distinguishes the AI even when it shares the player force in
   -- co-op mode, so we never select or destroy the human's character.
-  local chars = {}
-  for _, c in ipairs(surface.find_entities_filtered{type = "character", force = force}) do
-    if c.valid and c.player == nil and c.associated_player == nil then
-      chars[#chars + 1] = c
-    end
-  end
+  -- Searched on every surface: the AI may be on any planet.
+  local chars = AICharacter.find_all_ai_characters(force)
 
   if #chars == 0 then
     -- No character in world — clear any stale reference
@@ -344,13 +321,13 @@ script.on_configuration_changed(function()
   -- Give an already-spawned character a home anchor if it lacks one (e.g. after
   -- updating to a mod version that added home tracking mid-session).
   local c = storage.ai_player.character
-  if c and c.valid and not storage.ai_player.home_position then
-    storage.ai_player.home_position = {x = math.floor(c.position.x), y = math.floor(c.position.y)}
+  if c and c.valid and not AICharacter.get_home(c.surface) then
+    AICharacter.set_home(c.surface, c.position)
   end
   AIBrain.write_bridge_config()
   -- Rebuild the machine registry from the live world (covers mod-update load and
   -- any machines created while the registry was absent/stale).
-  AIRegistry.reconcile(game.surfaces["nauvis"], game.forces[storage.ai_player.force_name])
+  AIRegistry.reconcile(AICharacter.get_surface(), game.forces[storage.ai_player.force_name])
   game.print("[AI Player v3] Configuration reloaded", {r=0.7, g=1, b=0.7})
 end)
 
@@ -428,13 +405,25 @@ script.on_event(defines.events.on_tick, function(event)
   -- machine registry (events keep it fresh between these; this catches anything
   -- missed and prunes invalids). Every 600 ticks (~10s); cheap relative to that.
   if tick % 600 == 0 then
-    AIRegistry.reconcile(game.surfaces["nauvis"], game.forces[storage.ai_player.force_name])
+    AIRegistry.reconcile(AICharacter.get_surface(), game.forces[storage.ai_player.force_name])
   end
 
   -- Auto-respawn
   if storage.ai_player.respawn_tick and tick >= storage.ai_player.respawn_tick then
     storage.ai_player.respawn_tick = nil
     AICharacter.spawn_ai_player()
+  end
+
+  -- Planet change (carried over by /ai-come, a rocket, etc.): remember the
+  -- surface, give it a home anchor on first arrival, and rescan its machines.
+  -- Runs every tick (a string compare) and before the autonomy gate, so the
+  -- surface stays current even while an external harness drives the AI.
+  local ai_char = storage.ai_player.character
+  if ai_char and ai_char.valid and storage.ai_player.surface_name ~= ai_char.surface.name then
+    local surface = ai_char.surface
+    AICharacter.remember_surface(surface)
+    if not AICharacter.get_home(surface) then AICharacter.set_home(surface, ai_char.position) end
+    AIRegistry.reconcile(surface, game.forces[storage.ai_player.force_name])
   end
 
   -- Expire stale pending requests
@@ -471,6 +460,8 @@ script.on_event(defines.events.on_entity_died, function(event)
   if not storage.ai_player then return end
   if event.entity == storage.ai_player.character then
     game.print("[AI] Character died — respawning in 5s", {r=1, g=0.5, b=0})
+    -- Respawn on the planet it died on, not Nauvis.
+    AICharacter.remember_surface(event.entity.surface)
     storage.ai_player.character = nil
     if settings.global["ai-player-auto-respawn"].value then
       storage.ai_player.respawn_tick = event.tick + 300
@@ -507,17 +498,11 @@ script.on_event(defines.events.on_console_chat, function(event)
     and game.players[event.player_index].name or ""
   log_chat(pname, msg, event.tick)
 
-  local lower = msg:lower()
-  local directive = nil
-
-  -- Prefixes: "ai: ", "ai, ", "!ai ", "ai <text>"
-  if lower:sub(1,4) == "ai: " or lower:sub(1,4) == "ai, " then
-    directive = msg:sub(5)
-  elseif lower:sub(1,4) == "!ai " then
-    directive = msg:sub(5)
-  elseif lower:sub(1,3) == "ai " then
-    directive = msg:sub(4)
-  end
+  -- Prefixes: "ai: <text>", "ai, <text>", "!ai <text>" (any case, space after
+  -- ":"/"," optional). A bare "ai <text>" no longer counts — ordinary chat
+  -- like "ai is stuck" was being taken as an order.
+  local directive = msg:match("^%s*[Aa][Ii]%s*[:,]%s*(.-)%s*$")
+                 or msg:match("^%s*![Aa][Ii]%s+(.-)%s*$")
 
   if not directive or directive == "" then return end
 
@@ -546,32 +531,46 @@ end)
 -- Console commands
 -- -------------------------------------------------------------------------
 
-commands.add_command("spawn-ai-player", "Spawn or reset the AI player character",
-  function()
+-- Commands that change the AI's state are admin-only. cmd.player_index is nil
+-- for RCON and the server console, so the bridge is always allowed.
+local function add_admin_command(name, help, fn)
+  commands.add_command(name, help, function(cmd)
+    if cmd.player_index then
+      local p = game.get_player(cmd.player_index)
+      if not (p and p.admin) then
+        if p then p.print("[AI] /" .. name .. " is admin-only", {r=1,g=0.5,b=0}) end
+        return
+      end
+    end
+    fn(cmd)
+  end)
+end
+
+add_admin_command("spawn-ai-player", "Spawn or reset the AI player character",
+  function(cmd)
     if not storage.ai_player then
       game.print("[AI] Not initialised", {r=1,g=0,b=0}); return
     end
-    local ok = AICharacter.spawn_ai_player()
+    -- Spawn where the caller physically is (not the surface they're viewing in
+    -- remote/map view); from RCON, on the AI's current/last surface.
+    local p = cmd.player_index and game.get_player(cmd.player_index)
+    local ok = AICharacter.spawn_ai_player(p and p.physical_surface or nil)
     if ok then
       game.print("[AI] Character spawned", {r=0,g=1,b=0})
     end
   end
 )
 
-commands.add_command("remove-ai-player", "Destroy the AI player character",
+add_admin_command("remove-ai-player", "Destroy the AI player character",
   function()
     if not storage.ai_player then return end
     -- Destroy only AI characters (no controlling/associated player) — so this is
     -- safe even when the AI shares the player force in co-op mode.
-    local surface = game.surfaces["nauvis"]
     local force   = AICharacter.get_force()
     local removed = 0
-    if surface and force then
-      local chars = surface.find_entities_filtered{type="character", force=force}
-      for _, c in ipairs(chars) do
-        if c.valid and c.player == nil and c.associated_player == nil then
-          c.destroy(); removed = removed + 1
-        end
+    if force then
+      for _, c in ipairs(AICharacter.find_all_ai_characters(force)) do
+        if c.valid then c.destroy(); removed = removed + 1 end
       end
     end
     storage.ai_player.character = nil
@@ -612,7 +611,7 @@ commands.add_command("goto-ai-player", "Teleport to the AI player",
   end
 )
 
-commands.add_command("ai-coop",
+add_admin_command("ai-coop",
   "Switch the AI between co-op (shares your force) and solo (own force). Usage: /ai-coop on|off",
   function(cmd)
     if not storage.ai_player then return end
@@ -643,7 +642,7 @@ commands.add_command("ai-come", "Bring the AI character to you",
   end
 )
 
-commands.add_command("ai-collect",
+add_admin_command("ai-collect",
   "AI mines back ALL buildings it placed (into its inventory), then returns to you",
   function(cmd)
     if not storage.ai_player then return end
@@ -680,7 +679,7 @@ commands.add_command("ai-collect",
   end
 )
 
-commands.add_command("ai-do",
+add_admin_command("ai-do",
   "Force-run a skill deterministically (bypasses the LLM): /ai-do <skill> [arg] [count|output]",
   function(cmd)
     if not storage.ai_player then return end
@@ -706,7 +705,11 @@ commands.add_command("ai-do",
     local tokens = {}
     for tok in rest:gmatch("%S+") do tokens[#tokens + 1] = tok end
     local entry = {skill = skill}
-    if tokens[1] then
+    if skill == "place_blueprint" then
+      -- /ai-do place_blueprint <name> [resource]
+      entry.name = tokens[1]; entry.resource = tokens[2]
+      tokens = {}
+    elseif tokens[1] then
       entry.item = tokens[1]; entry.resource = tokens[1]; entry.ore = tokens[1]; entry.tech = tokens[1]
     end
     if tokens[2] then
@@ -723,7 +726,7 @@ commands.add_command("ai-do",
   end
 )
 
-commands.add_command("ai-force",
+add_admin_command("ai-force",
   "Lock the LLM to one skill until cleared: /ai-force <skill> [args] | /ai-force off",
   function(cmd)
     if not storage.ai_player then return end
@@ -773,7 +776,7 @@ commands.add_command("ai-force",
   end
 )
 
-commands.add_command("ai-response",
+add_admin_command("ai-response",
   "Internal: deliver bridge response to the mod",
   function(cmd)
     if not cmd.parameter then return end
@@ -784,6 +787,49 @@ commands.add_command("ai-response",
     local req_id     = cmd.parameter:sub(1, sep - 1)
     local actions_json = cmd.parameter:sub(sep + 1)
     AIBrain.handle_response(req_id, actions_json)
+  end
+)
+
+-- Blueprint library. add/book export the held blueprint (or whole book) for
+-- the bridge to import; it becomes usable once the bridge syncs it back.
+add_admin_command("ai-bp",
+  "AI blueprint library: /ai-bp add [name] [category] | book | list | remove <name> | test <name>",
+  function(cmd)
+    if not storage.ai_player then return end
+    local player = cmd.player_index and game.get_player(cmd.player_index)
+    local function say(msg, color)
+      if player then player.print("[AI bp] " .. msg, color) else rcon.print(msg) end
+    end
+    local sub, a, b = (cmd.parameter or ""):match("^%s*(%S*)%s*(%S*)%s*(%S*)")
+    if sub == "add" or sub == "book" then
+      if not player then return say("run this in game while holding a blueprint") end
+      local ok, res = AIBlueprints.export_held(player, a ~= "" and a or nil, b ~= "" and b or nil)
+      if ok then
+        say("exported '" .. res .. "' — the bridge will import it and sync it back within a few seconds"
+            .. " (books are split into one entry per blueprint)", {r=0.5, g=1, b=0.5})
+      else
+        say(res, {r=1, g=0.6, b=0.3})
+      end
+    elseif sub == "list" then
+      local l = AIBlueprints.list()
+      if #l == 0 then return say("library is empty — start the bridge, or /ai-bp add while holding a blueprint") end
+      for _, e in ipairs(l) do
+        say(string.format("%s  [%s, %s]", e.name, e.category or "?", e.placement or "?"))
+      end
+    elseif sub == "remove" and a ~= "" then
+      local n = AIBlueprints.safe_name(a)
+      if not n then return say("not a valid blueprint name") end
+      AIBlueprints.remove(n)
+      helpers.write_file("ai-player/blueprints/remove_" .. n .. ".json",
+                         helpers.table_to_json({remove = n}), false, 0)
+      say("removed '" .. n .. "' (the bridge deletes it from blueprints/local too)")
+    elseif sub == "test" and a ~= "" then
+      if not player then return say("run this in game") end
+      local ok, res = AIBlueprints.test_place(player, a)
+      say(res, ok and {r=0.5, g=1, b=0.5} or {r=1, g=0.6, b=0.3})
+    else
+      say("usage: /ai-bp add [name] [category] | book | list | remove <name> | test <name>")
+    end
   end
 )
 
@@ -804,7 +850,7 @@ commands.add_command("ai-pending",
   end
 )
 
-commands.add_command("ai-clear",
+add_admin_command("ai-clear",
   "Abort all in-flight AI requests (manual recovery if the agent is stalled)",
   function()
     if not storage.ai_player then return end

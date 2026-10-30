@@ -115,15 +115,23 @@ local FLUID_CONN_TYPES = {
 
 local function round1(n) return math.floor(n * 10 + 0.5) / 10 end
 
+-- Factorio 2.1 removed LuaEntity::fluidbox / LuaFluidBox; fluid storages are
+-- indexed directly on the entity (1..fluids_count). Storages without a
+-- fluidbox (fluid wagons, turret buffers) return nil prototype/connections.
 local function get_fluid_connections(entity)
-  local ok, fb = pcall(function() return entity.fluidbox end)
-  if not ok or not fb or #fb == 0 then return nil end
+  local ok, count = pcall(function() return entity.fluids_count end)
+  if not ok or not count or count == 0 then return nil end
   local conns = {}
-  for i = 1, #fb do
+  for i = 1, count do
     local fluid = nil
-    local okf, filt = pcall(function() return fb.get_prototype(i).filter end)
+    local okf, filt = pcall(function()
+      local proto = entity.get_fluid_box_prototype(i)
+      -- merged crafting-machine fluidboxes return an array of prototypes
+      if proto and proto.object_name == nil and proto[1] then proto = proto[1] end
+      return proto and proto.filter
+    end)
     if okf and filt then fluid = filt.name end
-    local okc, cs = pcall(function() return fb.get_pipe_connections(i) end)
+    local okc, cs = pcall(function() return entity.get_fluid_box_pipe_connections(i) end)
     if okc and cs then
       for _, c in ipairs(cs) do
         if c.position and c.flow_direction then
@@ -224,6 +232,21 @@ local PRODUCTION_ITEMS = {
   "automation-science-pack", "logistic-science-pack", "military-science-pack",
   "chemical-science-pack", "production-science-pack", "utility-science-pack",
   "space-science-pack",
+  -- milestones for the bridge's goal ladder (bridge/goals.py)
+  "plastic-bar", "sulfur", "advanced-circuit", "processing-unit", "engine-unit",
+  "low-density-structure", "rocket-fuel", "rocket-part",
+}
+
+-- Technologies the goal ladder checks; reported as research.done.
+local KEY_TECHS = {
+  -- steam-power, electronics and automation-science-pack unlock by trigger in 2.x
+  "steam-power", "automation-science-pack",
+  "automation", "logistics", "electronics", "logistic-science-pack", "steel-processing",
+  "military", "military-science-pack", "fast-inserter", "advanced-material-processing",
+  "oil-processing", "plastics", "advanced-circuit", "sulfur-processing",
+  "chemical-science-pack", "battery", "advanced-oil-processing", "production-science-pack",
+  "utility-science-pack", "rocket-fuel", "low-density-structure", "rocket-control-unit",
+  "rocket-silo", "space-science-pack",
 }
 
 local function compute_production(force, surface)
@@ -246,6 +269,7 @@ local function compute_production(force, surface)
     if t.researched then researched = researched + 1 end
   end
   production.techs_researched = researched
+  production.rockets_launched = force.rockets_launched
   return production
 end
 
@@ -407,6 +431,15 @@ function AIPerception.gather(character)
 
   local perception = {}
 
+  -- Which planet/surface the AI is on (Space Age: nauvis, vulcanus, fulgora,
+  -- gleba, aquilo, or a space platform). Home, factory and nearby_* are all
+  -- for this surface only.
+  perception.surface = {
+    name   = surface.name,
+    planet = surface.planet and surface.planet.name or nil,
+    is_platform = surface.platform ~= nil,
+  }
+
   -- Character state
   perception.character = {
     position  = {x = math.floor(pos.x), y = math.floor(pos.y)},
@@ -418,7 +451,7 @@ function AIPerception.gather(character)
   }
 
   -- Home/base anchor + how far the character has wandered from it.
-  local home = storage.ai_player and storage.ai_player.home_position
+  local home = AICharacter.get_home()
   if home then
     local dx, dy = pos.x - home.x, pos.y - home.y
     perception.home = {
@@ -568,6 +601,43 @@ function AIPerception.gather(character)
   perception.power = compute_power(surface, force, factory.by_status)
   perception.production = compute_production(force, surface)
 
+  local done = {}
+  for _, n in ipairs(KEY_TECHS) do
+    local t = force.technologies[n]
+    if t and t.researched then done[#done + 1] = n end
+  end
+  perception.research.done = done
+
+  -- Blueprints the AI placed on this surface (newest last), and what the
+  -- library holds, so the bridge's goal ladder can tell what's already down.
+  local placed = {}
+  for _, b in ipairs(storage.ai_player.placed_blueprints or {}) do
+    if b.surface == surface.name then
+      placed[#placed + 1] = {name = b.name, position = b.position}
+    end
+  end
+  while #placed > 15 do table.remove(placed, 1) end
+  perception.placed_blueprints = placed
+  -- blueprint_library: blueprints whose every building is unlocked for this
+  -- force. blueprint_locked: the rest, with up to 3 items still locked (the
+  -- bridge turns those into research hints and keeps both out of the raw
+  -- game-state JSON in the prompt).
+  local names, locked = {}, {}
+  for name, e in pairs(storage.ai_player.blueprints or {}) do
+    local missing = {}
+    for _, item in ipairs((e.meta and e.meta.items) or {}) do
+      local r = force.recipes[item]
+      if r and not r.enabled then
+        missing[#missing + 1] = item
+        if #missing >= 3 then break end
+      end
+    end
+    if #missing == 0 then names[#names + 1] = name else locked[name] = missing end
+  end
+  table.sort(names)
+  perception.blueprint_library = names
+  perception.blueprint_locked = locked
+
   -- Human-placed entity-ghosts = explicit build intent (build_ghosts skill).
   -- Search the ENTIRE surface: ghosts can be far from the character (e.g. an oil
   -- outpost the human blueprinted 200+ tiles away). build_ghosts teleports there.
@@ -624,7 +694,7 @@ function AIPerception.factory_state(character)
   local needs_counts = {}
   for bucket, list in pairs(needs) do needs_counts[bucket] = #list end
 
-  local home = storage.ai_player and storage.ai_player.home_position
+  local home = AICharacter.get_home()
   local home_distance = nil
   if home then
     local dx, dy = pos.x - home.x, pos.y - home.y
