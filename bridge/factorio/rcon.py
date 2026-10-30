@@ -182,14 +182,9 @@ class RCONGateway:
         keeps running — old request IDs are stale and the mod would block indefinitely
         waiting for responses that will never arrive.
         """
-        lua = (
-            "if storage.ai_player then "
-            "local n=0 "
-            "for _ in pairs(storage.ai_player.pending_requests) do n=n+1 end "
-            "storage.ai_player.pending_requests={} "
-            "game.print('[AI Bridge] Cleared '..n..' pending request(s)') "
-            "else game.print('[AI Bridge] No AI state to clear') end"
-        )
+        # remote.call, not /sc + storage: console commands run in the
+        # scenario's Lua state and can't see the mod's storage.
+        lua = "rcon.print(remote.call('ai_player','clear_pending'))"
         result = self.query_lua(lua)
         if result is not None:
             log.info("clear_pending_requests: %s", result.strip())
@@ -204,12 +199,7 @@ class RCONGateway:
         Single source of truth = AI_TIMEOUT in the bridge.
         """
         ticks = int(seconds * 60)
-        lua = (
-            "if storage.ai_player then "
-            f"storage.ai_player.request_timeout_ticks={ticks} "
-            f"game.print('[AI Bridge] Request timeout set to {int(seconds)}s') "
-            "else game.print('[AI Bridge] No AI state to configure') end"
-        )
+        lua = f"rcon.print(remote.call('ai_player','set_request_timeout',{ticks}))"
         result = self.query_lua(lua)
         if result is not None:
             log.info("set_request_timeout: %ds (%d ticks)", int(seconds), ticks)
@@ -223,16 +213,7 @@ class RCONGateway:
         Does NOT touch the character, pending requests, or chat log.
         Useful at the start of a new play session when old notes/todos are stale.
         """
-        lua = (
-            "if storage.ai_player and storage.ai_player.memory then "
-            "storage.ai_player.memory.notes={} "
-            "storage.ai_player.memory.todo_lists={} "
-            "storage.ai_player.memory.previous_summary=nil "
-            "storage.ai_player.memory.user_directive=nil "
-            "storage.ai_player.memory.directive_expire_tick=nil "
-            "game.print('[AI Bridge] Memory cleared (notes, todos, summary, directive)') "
-            "else game.print('[AI Bridge] No AI memory to clear') end"
-        )
+        lua = "rcon.print(remote.call('ai_player','clear_memory'))"
         result = self.query_lua(lua)
         if result is not None:
             log.info("clear_memory: %s", result.strip())
@@ -426,7 +407,7 @@ class RCONGateway:
         lua = (
             f"local s=game.surfaces['{surface}'] "
             f"local e=s.find_entity('{entity_name}',{{x={x},y={y}}}) "
-            f"if e then rcon.print(e.status and defines.entity_status[e.status] or 'unknown') "
+            f"if e then local s='unknown' for k,v in pairs(defines.entity_status) do if v==e.status then s=k end end rcon.print(s) "
             f"else rcon.print('not_found') end"
         )
         return self.query_lua(lua)

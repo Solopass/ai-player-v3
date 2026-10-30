@@ -20,13 +20,25 @@ local function enabled()
   return not s or s.value ~= false
 end
 
+-- First `n` bytes of `s`, never splitting a UTF-8 character (a split one
+-- makes the request file invalid UTF-8 for the bridge).
+function AIDebug.utf8_sub(s, n)
+  if #s <= n then return s end
+  local cut = n
+  -- step back over continuation bytes (10xxxxxx) to the start of the char
+  while cut > 0 and s:byte(cut + 1) and s:byte(cut + 1) >= 0x80 and s:byte(cut + 1) < 0xC0 do
+    cut = cut - 1
+  end
+  return s:sub(1, cut)
+end
+
 -- Turn values into something table_to_json accepts (no LuaObjects, no
 -- functions), truncating long strings. Never tostring() a table or object:
 -- that embeds a memory address, which differs between multiplayer peers and
 -- would desync storage.
 local function clean(v, depth)
   local t = type(v)
-  if t == "string" then return #v > 300 and (v:sub(1, 300) .. "…") or v end
+  if t == "string" then return #v > 300 and (AIDebug.utf8_sub(v, 300) .. "…") or v end
   if t == "number" or t == "boolean" or v == nil then return v end
   if t == "userdata" or (t == "table" and v.object_name) then
     local ok, name = pcall(function() return v.object_name end)

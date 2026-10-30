@@ -37,6 +37,8 @@ local function json_escape(s)
   s = s:gsub('\n', '\\n')
   s = s:gsub('\r', '\\r')
   s = s:gsub('\t', '\\t')
+  -- Any other control character is invalid inside a JSON string.
+  s = s:gsub('[%z\1-\31]', function(c) return string.format('\\u%04x', c:byte()) end)
   return s
 end
 

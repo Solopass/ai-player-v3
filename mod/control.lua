@@ -49,6 +49,32 @@ remote.add_interface("ai_player", {
     end
   end,
 
+  -- Bridge startup housekeeping (bridge/factorio/rcon.py). These must be
+  -- remote calls: /sc console commands run in the scenario's Lua state and
+  -- can't see the mod's storage.
+  clear_pending = function()
+    if not storage.ai_player then return "no AI state" end
+    local n = 0
+    for _ in pairs(storage.ai_player.pending_requests) do n = n + 1 end
+    storage.ai_player.pending_requests = {}
+    if n > 0 then game.print("[AI Bridge] Cleared " .. n .. " pending request(s)") end
+    return "cleared " .. n
+  end,
+  set_request_timeout = function(ticks)
+    if not storage.ai_player then return "no AI state" end
+    storage.ai_player.request_timeout_ticks = math.max(tonumber(ticks) or 0, 600)
+    return "timeout " .. math.floor(storage.ai_player.request_timeout_ticks / 60) .. "s"
+  end,
+  clear_memory = function()
+    local mem = storage.ai_player and storage.ai_player.memory
+    if not mem then return "no AI memory" end
+    mem.notes, mem.todo_lists, mem.todo_order = {}, {}, {}
+    mem.previous_summary, mem.user_directive, mem.directive_expire_tick = nil, nil, nil
+    mem.last_responded_to_message = nil
+    game.print("[AI Bridge] Memory cleared (notes, todos, summary, directive)")
+    return "cleared"
+  end,
+
   -- Everything needed to see what's going on, in one call (bridge/diag.py).
   diag = function()
     local ap = storage.ai_player
@@ -433,11 +459,13 @@ for _, ev in ipairs({
 end
 
 for _, ev in ipairs({
-  defines.events.on_entity_died, defines.events.on_player_mined_entity,
+  defines.events.on_player_mined_entity,
   defines.events.on_robot_mined_entity, defines.events.script_raised_destroy,
 }) do
   script.on_event(ev, on_machine_removed, AIRegistry.event_filters())
 end
+-- on_entity_died is registered once, below with the character-death handler
+-- (a second script.on_event for the same event replaces the first).
 
 -- -------------------------------------------------------------------------
 -- Main tick
@@ -489,7 +517,16 @@ script.on_event(defines.events.on_tick, function(event)
   -- doesn't issue competing actions. Maintenance above (registry reconcile,
   -- respawn, pending expiry) still runs; chat directives still trigger decisions
   -- via on_console_chat, which is independent of this loop.
-  if storage.ai_player.autonomy_enabled == false then return end
+  if storage.ai_player.autonomy_enabled == false then
+    -- Paused: no self-directed turns, but an order the player gave while a
+    -- request was in flight still gets its turn once the bridge is free.
+    local mem = storage.ai_player.memory
+    if mem.pending_user_message and next(storage.ai_player.pending_requests) == nil then
+      local character = AICharacter.get_character()
+      if character then AIBrain.request_decision(character, nil) end
+    end
+    return
+  end
 
   -- Decision tick
   local interval = settings.global["ai-player-tick-interval"].value or 300
@@ -508,7 +545,14 @@ end)
 -- Character death
 -- -------------------------------------------------------------------------
 
+-- Machine deaths keep the registry fresh; the AI character's death schedules
+-- a respawn. Filtered to tracked machine types + characters.
+local death_filters = {}
+for _, f in ipairs(AIRegistry.event_filters()) do death_filters[#death_filters + 1] = f end
+death_filters[#death_filters + 1] = {filter = "type", type = "character", mode = "or"}
+
 script.on_event(defines.events.on_entity_died, function(event)
+  on_machine_removed(event)
   if not storage.ai_player then return end
   if event.entity == storage.ai_player.character then
     game.print("[AI] Character died — respawning in 5s", {r=1, g=0.5, b=0})
@@ -519,7 +563,7 @@ script.on_event(defines.events.on_entity_died, function(event)
       storage.ai_player.respawn_tick = event.tick + 300
     end
   end
-end)
+end, death_filters)
 
 -- -------------------------------------------------------------------------
 -- Player chat → directive
@@ -541,8 +585,9 @@ end
 -- A player order for the AI (chat "ai: ..." or the panel's Tell box).
 local function give_directive(directive)
   local mem = storage.ai_player.memory
-  -- Skip if already responded to this exact message
-  if mem.last_responded_to_message == directive then return end
+  -- A repeated order is a real order (the player wants it again), so no
+  -- dedup against the last answered message.
+  mem.last_responded_to_message = nil
   mem.last_player_message = directive
   -- Queue it so it reaches the bridge even if a request is currently in flight.
   mem.pending_user_message = directive
@@ -655,7 +700,7 @@ end
 
 commands.add_command("goto-ai-player", "Teleport to the AI player",
   function(cmd)
-    if not storage.ai_player then return end
+    if not storage.ai_player or not cmd.player_index then return end   -- RCON has no player
     local character = AICharacter.get_character()
     if not character then
       game.print("[AI] No character active", {r=1,g=0,b=0}); return
@@ -696,7 +741,7 @@ end
 
 commands.add_command("ai-come", "Bring the AI character to you",
   function(cmd)
-    if not storage.ai_player then return end
+    if not storage.ai_player or not cmd.player_index then return end   -- RCON has no player
     bring_ai_to(game.get_player(cmd.player_index))
   end
 )

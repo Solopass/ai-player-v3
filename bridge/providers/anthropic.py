@@ -70,7 +70,11 @@ def complete(messages: list[dict], config: ProviderConfig) -> str | None:
             kwargs["system"] = system_text
 
         response = client.messages.create(**kwargs)
-        content = response.content[0].text
+        # First text block; an empty or text-less reply is "no answer", not a crash.
+        content = next((b.text for b in response.content if getattr(b, "type", "") == "text"), None)
+        if content is None:
+            log.error("Anthropic reply had no text (stop_reason=%s)", getattr(response, "stop_reason", "?"))
+            return None
         log.debug(
             "provider=anthropic model=%s input_tokens=%s output_tokens=%s",
             config.model,

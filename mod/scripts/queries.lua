@@ -52,14 +52,17 @@ REGISTRY.get_recipe = function(ctx, p)
   local frecipe = ctx.force.recipes[name]
   return {
     name           = name,
-    category       = proto.category,
+    categories     = proto.categories,   -- 2.1: a list (LuaRecipePrototype.category was removed)
     energy         = proto.energy,   -- craft time in seconds at crafting speed 1
     ingredients    = ingredients,
     products       = products,
     enabled        = (frecipe and frecipe.enabled) or false,
-    -- Only plain "crafting"-category recipes can be hand-crafted by a character;
-    -- smelting/chemistry/etc. need the right machine.
-    hand_craftable = proto.category == "crafting",
+    -- Only recipes in a category the character supports ("crafting") can be
+    -- hand-crafted; smelting/chemistry/etc. need the right machine.
+    hand_craftable = (function()
+      for _, c in ipairs(proto.categories or {}) do if c == "crafting" then return true end end
+      return false
+    end)(),
   }
 end
 

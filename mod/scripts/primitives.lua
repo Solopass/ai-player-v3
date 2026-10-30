@@ -47,13 +47,9 @@ local function get_inventory_by_slot(entity, slot_name)
     return entity.get_fuel_inventory()
 
   elseif s == "input" then
-    -- Factorio 2.0.32: crafter_input/crafter_output do NOT exist.
-    -- Use type-specific defines: furnace_source for furnaces, assembling_machine_input for assemblers.
-    if entity.type == "furnace" then
-      return entity.get_inventory(defines.inventory.furnace_source)
-    else
-      return entity.get_inventory(defines.inventory.assembling_machine_input)
-    end
+    -- Factorio 2.1 merged furnace_source / assembling_machine_input into
+    -- crafter_input (furnaces and assemblers alike).
+    return entity.get_inventory(defines.inventory.crafter_input)
 
   elseif s == "output" then
     return entity.get_output_inventory()
@@ -68,13 +64,9 @@ local function get_inventory_by_slot(entity, slot_name)
     return entity.get_inventory(defines.inventory.turret_ammo)
 
   else
-    -- Unknown slot name: guess based on entity type using type-specific defines.
-    -- defines.inventory.crafter_input does NOT exist in Factorio 2.0.32.
-    if entity.type == "furnace" then
-      local inv = entity.get_inventory(defines.inventory.furnace_source)
-      if inv then return inv end
-    elseif entity.type == "assembling-machine" then
-      local inv = entity.get_inventory(defines.inventory.assembling_machine_input)
+    -- Unknown slot name: crafting machines take it as input, anything else as a chest.
+    if entity.type == "furnace" or entity.type == "assembling-machine" then
+      local inv = entity.get_inventory(defines.inventory.crafter_input)
       if inv then return inv end
     end
     return entity.get_inventory(defines.inventory.chest)
@@ -258,13 +250,12 @@ local MINING_DRILLS = {
   ["electric-mining-drill"] = true,
   ["big-mining-drill"]      = true,
 }
-local WATER_TILES = {"water", "deepwater", "water-green", "deepwater-green",
-                     "water-shallow", "water-mud"}
 
 -- Returns a human-readable reason if a player couldn't legally place this, else nil.
 local function placement_problem(surface, item_name, position)
   if item_name == "offshore-pump" then
-    local water = surface.count_tiles_filtered{position = position, radius = 1.5, name = WATER_TILES}
+    -- "water_tile" collision layer: every planet's water (not shallow water/mud)
+    local water = surface.count_tiles_filtered{position = position, radius = 1.5, collision_mask = "water_tile"}
     if water == 0 then
       return "offshore-pump must be placed on water (not on land or a resource like crude-oil)"
     end
@@ -483,9 +474,11 @@ local function action_pickup(character, action)
     if item_entity.valid then
       local stack = item_entity.stack
       if inv and inv.can_insert(stack) then
-        inv.insert(stack)
-        item_entity.destroy()
-        picked = picked + 1
+        -- insert may take only part of the stack; leave the rest on the ground
+        local n = inv.insert(stack)
+        if n >= stack.count then item_entity.destroy()
+        elseif n > 0 then stack.count = stack.count - n end
+        if n > 0 then picked = picked + 1 end
       end
     end
   end
@@ -506,6 +499,8 @@ end
 
 local function action_summary(character, action)
   if not action.text then return end
+  -- Capped, and cut on a character boundary: it goes into every request.
+  action.text = AIDebug.utf8_sub(action.text, 400)
   storage.ai_player.memory.previous_summary = action.text
   AIBrain.update_recent_actions(action.text)
   debug_print("Summary: " .. action.text:sub(1, 80))
@@ -521,7 +516,7 @@ local MAX_TODO_ITEMS  = 20
 local function action_add_note(character, action)
   if not action.text then return end
   local notes = storage.ai_player.memory.notes
-  table.insert(notes, {tick=game.tick, text=action.text:sub(1, MAX_NOTE_CHARS)})
+  table.insert(notes, {tick=game.tick, text=AIDebug.utf8_sub(action.text, MAX_NOTE_CHARS)})
   while #notes > MAX_NOTES do table.remove(notes, 1) end
   debug_print("Note added: " .. action.text:sub(1, 60))
 end

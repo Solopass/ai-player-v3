@@ -412,6 +412,8 @@ function AIBlueprints.place(character, name, opts)
       if not fits then rejected[why or "?"] = (rejected[why or "?"] or 0) + 1 end
       if fits then
         tries = tries + 1
+        -- Marks that were already there (e.g. the player's) must survive a rollback.
+        local premarked = surface.find_entities_filtered{area = area_at(c.p, g, 1), to_be_deconstructed = true}
         local built = stack.build_blueprint{surface = surface, force = force, position = c.p,
                                             direction = c.d, build_mode = defines.build_mode.forced}
         local n = 0
@@ -441,6 +443,9 @@ function AIBlueprints.place(character, name, opts)
         partial[#partial + 1] = n
         for _, e in ipairs(built or {}) do if e.valid then e.destroy() end end
         surface.cancel_deconstruct_area{area = area_at(c.p, g, 1), force = force}
+        for _, e in ipairs(premarked) do
+          if e.valid then e.order_deconstruction(e.force.name == "neutral" and force or e.force) end
+        end
         if tries >= MAX_BUILD_TRIES then break end
       end
     end

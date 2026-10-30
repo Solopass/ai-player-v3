@@ -283,8 +283,13 @@ def ingest_from_game(output_dir: Path) -> list[str]:
             name = safe_name(e.get("name"), "") or None
             added += add_string(e["string"], name, e.get("category") or None, source="game")
             f.unlink()
-        except (OSError, ValueError, KeyError) as ex:
-            log.warning("Could not import %s from game: %s", f.name, ex)
+        except Exception as ex:      # one bad file must not block the rest
+            log.warning("Could not import %s from game (moved to blueprints/failed/): %s", f.name, ex)
+            try:
+                (d / "failed").mkdir(exist_ok=True)
+                f.replace(d / "failed" / f.name)
+            except OSError:
+                pass
     return added
 
 

@@ -277,13 +277,19 @@ class ConfigLoader:
         # otherwise override a non-default local server set in .env.
         if "LM_STUDIO_URL" not in self._env:
             cfg.lm_studio_url = raw.get("lm_studio_url", cfg.lm_studio_url)
-        cfg.openai_api_key  = raw.get("openai_api_key") or cfg.openai_api_key
-        cfg.openai_api_base = raw.get("openai_api_base", cfg.openai_api_base)
-        cfg.custom_url      = raw.get("custom_url", cfg.custom_url)
+        # Everything else follows the same rule: a value set in .env wins over
+        # the mod's setting (whose defaults would otherwise clobber it).
+        def mod_value(env_key: str, raw_key: str, current):
+            return current if env_key in self._env else raw.get(raw_key, current)
 
-        rcon_host = raw.get("rcon_host", "")
-        rcon_port = raw.get("rcon_port")
-        rcon_pw   = raw.get("rcon_password", "")
+        if "OPENAI_API_KEY" not in self._env:
+            cfg.openai_api_key = raw.get("openai_api_key") or cfg.openai_api_key
+        cfg.openai_api_base = mod_value("OPENAI_API_BASE", "openai_api_base", cfg.openai_api_base)
+        cfg.custom_url      = mod_value("AI_CUSTOM_URL", "custom_url", cfg.custom_url)
+
+        rcon_host = "" if "FACTORIO_RCON_HOST" in self._env else raw.get("rcon_host", "")
+        rcon_port = None if "FACTORIO_RCON_PORT" in self._env else raw.get("rcon_port")
+        rcon_pw   = "" if "FACTORIO_RCON_PASSWORD" in self._env else raw.get("rcon_password", "")
         if rcon_host:
             cfg.rcon.host = rcon_host
         if rcon_port is not None:

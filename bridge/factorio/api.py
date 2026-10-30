@@ -61,10 +61,11 @@ SKILLS: dict[str, list[str]] = {
 VALID_DIRECTIONS = {"north", "south", "east", "west",
                     "northeast", "northwest", "southeast", "southwest"}
 
-# Factorio defines.direction numeric values → string names
+# Factorio 2.x defines.direction numeric values (16-way; perception sends
+# these) → string names. The in-between 16-way values aren't move targets.
 _NUMERIC_DIRECTIONS = {
-    "0": "north", "1": "northeast", "2": "east",    "3": "southeast",
-    "4": "south", "5": "southwest", "6": "west",    "7": "northwest",
+    "0": "north", "2": "northeast", "4": "east",  "6": "southeast",
+    "8": "south", "10": "southwest", "12": "west", "14": "northwest",
 }
 
 

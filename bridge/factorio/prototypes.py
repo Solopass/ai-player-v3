@@ -18,29 +18,21 @@ correct API call using this registry.
 
 Sources:
   - Factorio 2.0 Lua API: https://lua-api.factorio.com/latest/
-  - defines.inventory (Factorio 2.0.32): crafter_input/crafter_output do NOT
-    exist. Use type-specific defines — furnace_source/furnace_result for
-    furnaces, assembling_machine_input/output for assemblers. Resolved by
-    entity type in mod/scripts/ai_actions.lua get_inventory_by_slot().
+  - defines.inventory (Factorio 2.1): furnaces and assemblers both use
+    crafter_input / crafter_output (2.1 removed furnace_source and
+    assembling_machine_input). Resolved in mod/scripts/primitives.lua.
   - Factorio wiki entity pages
 """
 
 # ---------------------------------------------------------------------------
 # Inventory slot → Lua API mapping
-# Verified against Factorio 2.0.32 runtime API (api_version 6).
-#
-# IMPORTANT: defines.inventory.crafter_input and crafter_output do NOT exist
-# in Factorio 2.0.32. Use type-specific defines instead:
-#   furnaces:         furnace_source / furnace_result
-#   assemblers:       assembling_machine_input / assembling_machine_output
-# Both are resolved by entity type in ai_actions.lua get_inventory_by_slot().
-# The "input" / "output" slot names map to different defines depending on entity type.
+# Factorio 2.1: "input" is defines.inventory.crafter_input for furnaces and
+# assemblers alike (resolved in mod/scripts/primitives.lua).
 # ---------------------------------------------------------------------------
 
 SLOT_API = {
     "fuel":    "entity:get_fuel_inventory()",
-    # "input" resolves to furnace_source (furnace) or assembling_machine_input (assembler)
-    "input":   "entity:get_inventory(defines.inventory.furnace_source)  -- or assembling_machine_input",
+    "input":   "entity:get_inventory(defines.inventory.crafter_input)",
     "output":  "entity:get_output_inventory()",
     "chest":   "entity:get_inventory(defines.inventory.chest)",
     "lab":     "entity:get_inventory(defines.inventory.lab_input)",

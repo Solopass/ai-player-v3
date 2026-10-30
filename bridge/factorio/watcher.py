@@ -158,7 +158,9 @@ class FileWatcher:
     def _read(self, path: Path) -> dict | None:
         """Read and parse a request file. Returns None if unreadable or not yet complete."""
         try:
-            text = path.read_text(encoding="utf-8")
+            # errors="replace": a stray invalid byte (e.g. text the mod cut
+            # mid-character) must not crash the bridge or block the request.
+            text = path.read_text(encoding="utf-8", errors="replace")
             if not text.strip():
                 return None
             return json.loads(text)

@@ -5,9 +5,8 @@
 AIPerception = {}
 
 -- Entity status enum → readable string
--- Verified against Factorio 2.0.32 runtime API (api_version 6)
--- Note: crafter_input/crafter_output do NOT exist in 2.0.32 — use furnace_source,
--- furnace_result, assembling_machine_input, assembling_machine_output instead.
+-- Checked against the Factorio 2.1 runtime API (crafter_input replaces the
+-- 2.0 furnace_source / assembling_machine_input defines).
 local STATUS_NAMES = {
   [defines.entity_status.working]                        = "working",
   [defines.entity_status.normal]                         = "normal",
@@ -80,15 +79,9 @@ local function get_fuel_contents(entity)
   return nil
 end
 
--- Input inventory — entity type determines the correct define (Factorio 2.0.32)
--- crafter_input/crafter_output do NOT exist in 2.0.32; use type-specific defines.
+-- Input inventory of a furnace or assembler (2.1: crafter_input for both).
 local function get_input_contents(entity)
-  local define
-  if entity.type == "furnace" then
-    define = defines.inventory.furnace_source
-  else
-    define = defines.inventory.assembling_machine_input
-  end
+  local define = defines.inventory.crafter_input
   local ok, inv = pcall(function() return entity.get_inventory(define) end)
   if ok and inv then return summarize_inventory(inv, 5) end
   return nil
@@ -214,8 +207,9 @@ local function compute_power(surface, force, by_status)
     for name in pairs(stats.input_counts) do
       cons = cons + stats.get_flow_count{name = name, category = "input", precision_index = idx, count = false}
     end
-    power.production_kw  = math.floor(prod / 1000)
-    power.consumption_kw = math.floor(cons / 1000)
+    -- Electric network flow counts are joules per tick: x60 for watts.
+    power.production_kw  = math.floor(prod * 60 / 1000)
+    power.consumption_kw = math.floor(cons * 60 / 1000)
   end)
   return power
 end
@@ -235,6 +229,15 @@ local PRODUCTION_ITEMS = {
   -- milestones for the bridge's goal ladder (bridge/goals.py)
   "plastic-bar", "sulfur", "advanced-circuit", "processing-unit", "engine-unit",
   "low-density-structure", "rocket-fuel", "rocket-part",
+}
+
+-- Checked first for perception.craftable (capped at 25 names).
+local CRAFT_PRIORITY = {
+  "iron-gear-wheel", "copper-cable", "electronic-circuit", "automation-science-pack",
+  "logistic-science-pack", "transport-belt", "inserter", "burner-inserter",
+  "small-electric-pole", "pipe", "stone-furnace", "burner-mining-drill",
+  "electric-mining-drill", "assembling-machine-1", "assembling-machine-2", "lab",
+  "boiler", "steam-engine", "offshore-pump", "iron-chest", "underground-belt", "splitter",
 }
 
 -- Technologies the goal ladder checks; reported as research.done.
@@ -467,12 +470,21 @@ function AIPerception.gather(character)
   perception.inventory = summarize_inventory(char_inv, 100)
 
   -- What can be crafted right now
-  local craftable = {}
-  for name, recipe in pairs(force.recipes) do
-    if recipe.enabled and character.get_craftable_count(name) > 0 then
-      table.insert(craftable, name)
-      if #craftable >= 25 then break end
+  -- Useful early items first, then the rest in prototype order, so the 25-name
+  -- cap doesn't hide the things the AI actually needs.
+  local craftable, seen = {}, {}
+  local function try(name)
+    if #craftable >= 25 or seen[name] then return end
+    seen[name] = true
+    local recipe = force.recipes[name]
+    if recipe and recipe.enabled and character.get_craftable_count(name) > 0 then
+      craftable[#craftable + 1] = name
     end
+  end
+  for _, name in ipairs(CRAFT_PRIORITY) do try(name) end
+  for name in pairs(force.recipes) do
+    if #craftable >= 25 then break end
+    try(name)
   end
   perception.craftable = craftable
 
@@ -554,14 +566,11 @@ function AIPerception.gather(character)
   table.sort(enemies, function(a,b) return a.distance < b.distance end)
   perception.enemies = enemies
 
-  -- Nearby water tiles (for offshore pump placement).
-  -- collides_with("water-tile") no longer works in Factorio 2.0 — collision layers
-  -- are now prototype-defined (CollisionLayerID). Use find_tiles_filtered with
-  -- vanilla water tile names instead.
-  local water_tile_names = {"water", "deepwater", "water-green", "deepwater-green"}
+  -- Nearby water tiles (for offshore pump placement). The "water_tile"
+  -- collision layer covers every planet's water, unlike a list of tile names.
   local px, py = math.floor(pos.x), math.floor(pos.y)
   local water_tiles = surface.find_tiles_filtered{
-    name   = water_tile_names,
+    collision_mask = "water_tile",
     area   = {{px - 15, py - 15}, {px + 15, py + 15}},
     limit  = 5,
   }

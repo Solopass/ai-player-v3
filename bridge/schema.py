@@ -30,22 +30,27 @@ FIELD_TYPES: dict[str, dict] = {
     "items": {"type": "array", "items": _STR, "maxItems": 20},
 }
 
-# Optional params each entry may carry, on top of its required ones.
+# Optional params each entry may carry, on top of its required ones — every
+# field the mod's handler reads (skills.lua p.*, primitives.lua action.*).
+# Anything missing here is stripped by the server, so keep this in sync.
 OPTIONAL: dict[str, list[str]] = {
     # skills
     "gather": ["count"],
-    "build_miner": ["resource", "output"],
-    "build_smelter": ["ore", "count"],
+    "build_miner": ["resource", "output", "item"],
+    "build_smelter": ["ore", "count", "item"],
     "research": ["tech"],
     "deconstruct": ["radius"],
-    "loot_chests": ["radius"],
-    "deposit_to_chest": ["item", "keep"],
+    "loot_chests": ["radius", "items"],
+    "deposit_to_chest": ["radius", "keep"],
     "place_blueprint": ["position", "resource"],
     "craft_for": ["count"],
     # actions
     "move": ["distance"],
-    "mine": ["position"],
-    "pickup": ["radius"],
+    "mine": ["name", "type", "position"],
+    "place": ["direction"],
+    "insert": ["inventory", "slot"],
+    "take": ["inventory", "slot"],
+    "pickup": ["position", "radius"],
 }
 
 # loot_chests takes items as "iron-plate,coal"; create_todo as a list.

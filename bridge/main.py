@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from . import blueprints, diag
-from .agent import Agent
+from .agent import Agent, _fallback
 from .config import ConfigLoader
 from .factorio.rcon import RCONGateway
 from .factorio.watcher import FileWatcher
@@ -150,10 +150,21 @@ def main() -> None:
                 rcon.reconnect((cfg.rcon.host, cfg.rcon.port, cfg.rcon.password))
 
             # Process any new request files
-            for req in watcher.poll():
+            try:
+                ready = watcher.poll()
+            except Exception:
+                log.exception("Reading request files failed — retrying next poll")
+                ready = []
+            for req in ready:
                 log.info("Processing request %s", req.req_id)
 
-                actions = agent.decide(req, cfg)
+                # One bad request must never stop the bridge: answer it with a
+                # safe "wait" so the mod doesn't sit on it, and move on.
+                try:
+                    actions = agent.decide(req, cfg)
+                except Exception as e:
+                    log.exception("Request %s crashed the agent — sending a wait", req.req_id)
+                    actions = _fallback(f"bridge error: {type(e).__name__}: {e}"[:200])
 
                 sent = rcon.send_ai_response(req.req_id, actions)
                 status = getattr(agent, "status", None)
