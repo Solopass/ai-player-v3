@@ -43,6 +43,19 @@ class Milestone:
 
 LADDER: list[Milestone] = [
     Milestone(
+        "bootstrap", "Burner mining and smelting",
+        lambda p: _by_type(p, "burner-mining-drill") >= 4 and _by_type(p, "stone-furnace") >= 2
+                  and _per_min(p, "iron-plate") >= 10,
+        lambda p: (f"{_by_type(p, 'burner-mining-drill')} burner drill(s) (want 4), "
+                   f"{_by_type(p, 'stone-furnace')} stone furnace(s) (want 2), "
+                   f"iron {_per_min(p, 'iron-plate')}/min (want 10)"),
+        "In this order: build_miner resource=coal output=chest (fuel for everything), then "
+        "build_miner resource=iron-ore output=furnace (2-3 times), then build_miner resource=copper-ore "
+        "output=furnace and resource=stone output=chest. Out of drills/furnaces → gather stone/iron and "
+        "craft_for burner-mining-drill or stone-furnace. Every few turns: fuel_all, and loot_chests to "
+        "collect coal and plates from the chests/furnaces. Go to landmarks for ore that isn't nearby.",
+        ["mining", "smelting"]),
+    Milestone(
         "power", "Steam power",
         lambda p: _by_type(p, "boiler") >= 1 and _by_type(p, "steam-engine") >= 1
                   and (p.get("power") or {}).get("has_grid", False),

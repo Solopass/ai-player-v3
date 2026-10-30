@@ -15,13 +15,22 @@ $steamId = 427520
 
 # --- process lookup -------------------------------------------------------
 
+# The venv's python.exe is a launcher that starts the real interpreter as a
+# child with the same command line, so one bridge is two processes. Count only
+# the outermost one.
+function Get-BridgeRoots($procs) {
+    $bridge = @($procs | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -match 'bridge\.main' })
+    $ids = @($bridge | ForEach-Object ProcessId)
+    @($bridge | Where-Object { $ids -notcontains $_.ParentProcessId })
+}
+
 function Get-Pieces {
     $procs = Get-CimInstance Win32_Process -Filter "Name='factorio.exe' OR Name='python.exe' OR Name='powershell.exe' OR Name='pwsh.exe'"
     $factorio = @($procs | Where-Object Name -eq 'factorio.exe')
     [pscustomobject]@{
         Server = @($factorio | Where-Object { $_.CommandLine -match '--start-server' })
         Game   = @($factorio | Where-Object { $_.CommandLine -notmatch '--start-server' })
-        Bridge = @($procs | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -match 'bridge\.main' })
+        Bridge = @(Get-BridgeRoots $procs)
         All    = $procs
     }
 }
@@ -50,6 +59,9 @@ function Test-GameHosting($game) {
 # Close the PowerShell window that hosted a process we stopped.
 function Stop-WithParent($proc, [string]$parentMatch) {
     $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.ParentProcessId)" -ErrorAction SilentlyContinue
+    # Children first: the venv launcher doesn't take the real interpreter down with it.
+    Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.ProcessId)" -ErrorAction SilentlyContinue |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     if ($parent -and $parent.Name -match 'powershell|pwsh' -and $parent.CommandLine -match $parentMatch) {
         Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
