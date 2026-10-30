@@ -426,6 +426,68 @@ end
 -- Main perception gather
 -- -------------------------------------------------------------------------
 
+-- Nearest water and nearest patch of each resource well beyond vision, so the
+-- AI knows where to walk at the start. Expanding rings, cached per surface and
+-- rescanned only after the character moves LANDMARK_MOVE tiles or the cache is
+-- LANDMARK_TTL ticks old (big searches are too slow to run every request).
+local LANDMARK_RINGS = {48, 112, 224}
+local LANDMARK_MOVE  = 32
+local LANDMARK_TTL   = 60 * 60 * 5
+
+local function closest(list, pos, get_pos)
+  local best, best_d
+  for _, it in ipairs(list) do
+    local p = get_pos(it)
+    local dx, dy = p.x - pos.x, p.y - pos.y
+    local d = dx * dx + dy * dy
+    if not best_d or d < best_d then best, best_d = p, d end
+  end
+  if not best then return nil end
+  return {x = math.floor(best.x), y = math.floor(best.y), distance = math.floor(math.sqrt(best_d))}
+end
+
+local function scan_landmarks(surface, pos)
+  local out = {resources = {}}
+  for _, r in ipairs(LANDMARK_RINGS) do
+    local tiles = surface.find_tiles_filtered{
+      collision_mask = "water_tile",
+      area  = {{pos.x - r, pos.y - r}, {pos.x + r, pos.y + r}},
+      limit = 300,
+    }
+    out.water = closest(tiles, pos, function(t) return t.position end)
+    if out.water then break end
+  end
+  local names = prototypes.get_entity_filtered{{filter = "type", type = "resource"}}
+  for name in pairs(names) do
+    for _, r in ipairs(LANDMARK_RINGS) do
+      local ents = surface.find_entities_filtered{name = name, position = pos, radius = r, limit = 200}
+      local c = closest(ents, pos, function(e) return e.position end)
+      if c then
+        c.name = name
+        table.insert(out.resources, c)
+        break
+      end
+    end
+  end
+  table.sort(out.resources, function(a, b) return a.distance < b.distance end)
+  return out
+end
+
+function AIPerception.landmarks(surface, pos)
+  local st = storage.ai_player
+  st.landmarks = st.landmarks or {}
+  local c = st.landmarks[surface.index]
+  if c then
+    local dx, dy = pos.x - c.x, pos.y - c.y
+    if dx * dx + dy * dy < LANDMARK_MOVE * LANDMARK_MOVE and game.tick - c.tick < LANDMARK_TTL then
+      return c.data
+    end
+  end
+  local data = scan_landmarks(surface, pos)
+  st.landmarks[surface.index] = {x = pos.x, y = pos.y, tick = game.tick, data = data}
+  return data
+end
+
 function AIPerception.gather(character)
   local surface = character.surface
   local pos = character.position
@@ -477,7 +539,8 @@ function AIPerception.gather(character)
     if #craftable >= 25 or seen[name] then return end
     seen[name] = true
     local recipe = force.recipes[name]
-    if recipe and recipe.enabled and character.get_craftable_count(name) > 0 then
+    if recipe and recipe.enabled and not recipe.hidden
+       and character.get_craftable_count(name) > 0 then
       craftable[#craftable + 1] = name
     end
   end
@@ -579,6 +642,7 @@ function AIPerception.gather(character)
     table.insert(water, {x = math.floor(t.position.x), y = math.floor(t.position.y)})
   end
   perception.nearby_water = water
+  perception.landmarks = AIPerception.landmarks(surface, pos)
 
   -- Environment
   perception.environment = {

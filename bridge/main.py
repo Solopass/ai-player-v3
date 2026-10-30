@@ -50,7 +50,7 @@ def _setup_logging(verbose: bool, log_dir: Path) -> None:
     logging.basicConfig(level=level, format=fmt, datefmt=datefmt, handlers=handlers)
 
     # Quiet the OpenAI and httpx loggers — they're very chatty at DEBUG
-    for noisy in ("httpx", "httpcore", "openai._base_client"):
+    for noisy in ("httpx", "httpcore", "httpx2", "httpcore2", "openai._base_client"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -118,6 +118,7 @@ def main() -> None:
     # nothing to do is one RCON call.
     BP_SYNC_EVERY = 10.0
     last_bp_sync = 0.0
+    unsent: dict[str, list] = {}  # req_id -> answer waiting for RCON
 
     def sync_blueprints():
         diag.rotate_logs(cfg.output_dir)
@@ -160,11 +161,15 @@ def main() -> None:
 
                 # One bad request must never stop the bridge: answer it with a
                 # safe "wait" so the mod doesn't sit on it, and move on.
-                try:
-                    actions = agent.decide(req, cfg)
-                except Exception as e:
-                    log.exception("Request %s crashed the agent — sending a wait", req.req_id)
-                    actions = _fallback(f"bridge error: {type(e).__name__}: {e}"[:200])
+                # A retry after an RCON failure resends the answer we already
+                # have instead of asking the model again.
+                actions = unsent.get(req.req_id)
+                if actions is None:
+                    try:
+                        actions = agent.decide(req, cfg)
+                    except Exception as e:
+                        log.exception("Request %s crashed the agent — sending a wait", req.req_id)
+                        actions = _fallback(f"bridge error: {type(e).__name__}: {e}"[:200])
 
                 sent = rcon.send_ai_response(req.req_id, actions)
                 status = getattr(agent, "status", None)
@@ -172,8 +177,10 @@ def main() -> None:
                     rcon.query_lua("remote.call('ai_player','set_status',"
                                    f"{blueprints._lua_str(json.dumps(status))})")
                 if sent:
+                    unsent.pop(req.req_id, None)
                     watcher.ack(req.req_id)
                 else:
+                    unsent[req.req_id] = actions
                     # RCON send failed — return request to pool, retry next poll
                     log.warning(
                         "RCON send failed for request %s — will retry next poll",
