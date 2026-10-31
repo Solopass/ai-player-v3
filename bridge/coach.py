@@ -62,8 +62,15 @@ def _research_sig(p: dict) -> str:
     return json.dumps([research.get("current"), sorted(research.get("done") or [])])
 
 
+BUILD_PROGRESS = ("boiler", "steam-engine", "assembling-machine-1", "lab")
+
+
 def _miner_total(p: dict) -> int:
-    return sum(((p.get("factory") or {}).get("miners_by_resource") or {}).values())
+    """Drills plus the other things the build order adds (power, assemblers, labs)."""
+    factory = p.get("factory") or {}
+    by_type = factory.get("by_type") or {}
+    return (sum((factory.get("miners_by_resource") or {}).values())
+            + sum(int(by_type.get(n, 0)) for n in BUILD_PROGRESS))
 
 
 class Coach:
@@ -75,7 +82,7 @@ class Coach:
         self.sent: deque[tuple[str, ...]] = deque(maxlen=REPEAT_LIMIT)
         self.seen_ids: deque[str] = deque(maxlen=50)
         self.context: tuple | None = None
-        # Progress = an item never held before, research moving, or more drills.
+        # Progress = an item never held before, research moving, or more drills/power/assemblers.
         # Inventory counts churn every turn (5x crafting), so they don't count.
         self.progress = 0
         self.items_seen: set[str] = set()

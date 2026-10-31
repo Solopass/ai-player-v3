@@ -36,8 +36,9 @@ FIELD_TYPES: dict[str, dict] = {
 OPTIONAL: dict[str, list[str]] = {
     # skills
     "gather": ["count"],
-    "build_miner": ["resource", "output", "item", "count"],
+    "build_miner": ["resource", "output", "item", "count", "drill"],
     "build_smelter": ["ore", "count", "item"],
+    "build_assembler": ["count", "item"],
     "research": ["tech"],
     "deconstruct": ["radius"],
     "loot_chests": ["radius", "items"],

@@ -7,6 +7,11 @@ next_steps(perception, blocked) -> up to 4 (entry, reason) moves for one turn
 (the mod runs them in order and waits for hand-crafting in between). Rules run
 in priority order and skip entries whose key is blocked (bridge/coach.py), so a
 move that keeps failing gives way to the next useful one.
+
+Each move also carries a `sure` flag: True for fixed build-order steps (the
+burner bootstrap, tend/refuel, power, the red cell...), False for guesses
+(trigger crafts, research picks). The hybrid autopilot (bridge/agent.py) skips
+the model when the first move is sure; next_plan() exposes the flag.
 """
 
 from __future__ import annotations
@@ -14,6 +19,10 @@ from __future__ import annotations
 from typing import Iterator
 
 from . import goals
+
+# Electric pair (drill -> stone furnace) yield, plates/min: the furnace is the limit.
+PAIR_PLATES_PER_MIN = 18
+SMELT_TARGET = {"iron-ore": ("iron-plate", 30), "copper-ore": ("copper-plate", 15)}
 
 # (resource, drills wanted, output) — the burner bootstrap, coal first so
 # everything else has fuel. Thresholds match the bootstrap milestone.
@@ -70,7 +79,80 @@ def _labs(p: dict) -> list[dict]:
     return [m for m in machines if isinstance(m, dict) and m.get("type") == "lab"]
 
 
-def _candidates(p: dict) -> Iterator[tuple[dict, str]]:
+def _by_type(p: dict, name: str) -> int:
+    return int(((p.get("factory") or {}).get("by_type") or {}).get(name, 0))
+
+
+def _tech(p: dict, name: str) -> bool:
+    return name in ((p.get("research") or {}).get("done") or [])
+
+
+def _rate(p: dict, item: str) -> int:
+    return int((((p.get("production") or {}).get("items") or {}).get(item) or {}).get("per_min", 0))
+
+
+def _craft(inv: dict, item: str, want: int, why: str) -> Iterator[tuple[dict, str, bool]]:
+    """craft_for until `want` are held (the bootstrap's pattern), if short."""
+    if inv.get(item, 0) < want:
+        yield {"skill": "craft_for", "item": item, "count": want}, why, True
+
+
+def _goto_far(p: dict, lm: dict | None, what: str) -> Iterator[tuple[dict, str, bool]]:
+    if lm and lm.get("distance", 0) > FAR:
+        yield ({"skill": "goto", "position": {"x": lm["x"], "y": lm["y"]}},
+               f"nearest {what} is {lm['distance']} tiles away", True)
+
+
+def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tuple[dict, str, bool]]:
+    """Build-order rules past the bootstrap: power, automation, smelting, red cell."""
+    power = p.get("power") or {}
+    if goal_id == "power":
+        if not power.get("has_grid") or not _by_type(p, "boiler"):
+            yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water")
+            for item, n in (("offshore-pump", 1), ("boiler", 1), ("steam-engine", 2), ("pipe", 5),
+                            ("small-electric-pole", 6)):
+                yield from _craft(inv, item, n, f"steam power needs {n} {item}")
+            yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
+    elif goal_id == "automation":
+        # Red packs unlock by a trigger first; until it's done, research can't start.
+        # Once it's the current research, stop asking: re-queuing it every turn
+        # would make the mod pick some other tech instead.
+        research = p.get("research") or {}
+        if (not _tech(p, "automation") and not research.get("triggers")
+                and research.get("current") != "automation"):
+            yield {"skill": "research", "tech": "automation"}, "automation unlocks assemblers", True
+    elif goal_id == "smelting":
+        if _tech(p, "electric-mining-drill") and power.get("has_grid"):
+            for ore, (plate, target) in SMELT_TARGET.items():
+                # Pairs already built count at their full rate: the measured rate lags new builds.
+                built = int((factory.get("electric_miners") or {}).get(ore, 0))
+                deficit = target - max(_rate(p, plate), built * PAIR_PLATES_PER_MIN)
+                pairs = -(-deficit // PAIR_PLATES_PER_MIN) if deficit > 0 else 0
+                if pairs <= 0:
+                    continue
+                pairs = min(pairs, 2)
+                yield from _goto_far(p, _landmark(p, ore), ore)
+                yield from _craft(inv, "electric-mining-drill", pairs, f"{pairs} electric drill(s) for {ore}")
+                yield from _craft(inv, "stone-furnace", pairs, f"{pairs} furnace(s) for {ore}")
+                yield from _craft(inv, "inserter", pairs, f"{pairs} inserter(s) for {ore}")
+                # drill=electric: fail instead of quietly building burner drills, which
+                # never count as electric_miners and would re-fire this rule forever.
+                yield ({"skill": "build_miner", "resource": ore, "output": "furnace", "count": pairs,
+                        "drill": "electric"},
+                       f"{plate} at {_rate(p, plate)}/min, want {target}", True)
+    elif goal_id == "red":
+        if _tech(p, "automation"):
+            cells = [a for a in (factory.get("assemblers") or [])
+                     if isinstance(a, dict) and a.get("recipe") == "automation-science-pack"]
+            if not cells:
+                for item, n in (("assembling-machine-1", 3), ("inserter", 7), ("iron-chest", 4),
+                                ("small-electric-pole", 6)):
+                    yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
+                yield {"skill": "build_red_cell"}, "automate red science", True
+            yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
+
+
+def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
     inv = _inv(p)
     factory = p.get("factory") or {}
     needs = p.get("needs") or {}
@@ -78,22 +160,23 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str]]:
 
     # 0. The player's own intent first (ghosts, deconstruction marks).
     if _count(p.get("ghosts")) > 0:
-        yield {"skill": "build_ghosts"}, "the player placed ghosts"
+        yield {"skill": "build_ghosts"}, "the player placed ghosts", True
     if _count(p.get("deconstruction")) > 0:
-        yield {"skill": "deconstruct"}, "the player marked things for removal"
+        yield {"skill": "deconstruct"}, "the player marked things for removal", True
 
     # 1. Keep the burner base running.
     stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in ("ground", "container", "furnace")]
     if needs.get("burners_low_fuel") or stalled:
-        yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying"
+        yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
     if inv.get("coal", 0) < 5:
         if (factory.get("miners_by_resource") or {}).get("coal"):
-            yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest"
-        yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal"
+            yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
+        yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
 
     # 2. Burner bootstrap: drills on coal, iron, copper, stone.
     cur = goals.current(p)
-    if cur and cur[1].id == "bootstrap":
+    goal_id = cur[1].id if cur else ""
+    if goal_id == "bootstrap":
         miners = factory.get("miners_by_resource") or {}
         for resource, want, output in BOOTSTRAP:
             if miners.get(resource, 0) >= want:
@@ -101,69 +184,87 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str]]:
             lm = _landmark(p, resource)
             if lm and lm.get("distance", 0) > FAR:
                 yield ({"skill": "goto", "position": {"x": lm["x"], "y": lm["y"]}},
-                       f"nearest {resource} is {lm['distance']} tiles away")
+                       f"nearest {resource} is {lm['distance']} tiles away", True)
             missing = want - miners.get(resource, 0)
             if inv.get("burner-mining-drill", 0) == 0:
                 # One turn: collect plates, craft drills, build once they're done.
-                yield {"skill": "tend"}, "collect plates for crafting drills"
+                yield {"skill": "tend"}, "collect plates for crafting drills", True
                 yield ({"skill": "craft_for", "item": "burner-mining-drill", "count": missing},
-                       f"need {missing} drill(s) for {resource}")
+                       f"need {missing} drill(s) for {resource}", True)
             yield ({"skill": "build_miner", "resource": resource, "output": output, "count": missing},
-                   f"{miners.get(resource, 0)}/{want} drill(s) on {resource}")
+                   f"{miners.get(resource, 0)}/{want} drill(s) on {resource}", True)
             if inv.get("burner-mining-drill", 0) == 0:
                 yield ({"skill": "gather", "item": "stone", "count": 20},
-                       "drills and furnaces need stone")
-        yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up"
+                       "drills and furnaces need stone", True)
+        yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up", True
+    elif goal_id:
+        yield from _late_game(p, inv, factory, goal_id)
 
-    # 3. Techs unlocked by doing something (2.x early game).
+    # 3. Techs unlocked by doing something (2.x early game). Guesses.
     for t in research.get("triggers") or []:
         target, n = t.get("target"), int(t.get("count") or 1)
         if not target:
             continue
         if t.get("type") == "craft-item":
             yield ({"skill": "craft_for", "item": target, "count": inv.get(target, 0) + n},
-                   f"crafting {n} new {target} unlocks {t.get('tech')}")
+                   f"crafting {n} new {target} unlocks {t.get('tech')}", False)
         elif t.get("type") == "mine-entity":
             first = str(target).split("/")[0]
             yield ({"skill": "gather", "item": first, "count": n},
-                   f"mining {first} unlocks {t.get('tech')}")
+                   f"mining {first} unlocks {t.get('tech')}", False)
 
     # 4. Research and labs.
     if not research.get("current"):
-        yield {"skill": "research"}, "nothing is being researched"
+        yield {"skill": "research"}, "nothing is being researched", False
     labs = _labs(p)
     if not _lab_count(p) and inv.get("lab", 0) > 0 and (p.get("home") or {}).get("position"):
         home = p["home"]["position"]
         yield ({"action": "place", "item": "lab", "position": {"x": home["x"] + 4, "y": home["y"] + 4}},
-               "place the lab near home")
+               "place the lab near home", True)
     if research.get("current") and (factory.get("labs") or {}).get("without_packs") and labs:
         if inv.get("automation-science-pack", 0) > 0:
             yield ({"action": "insert", "item": "automation-science-pack",
                     "count": inv["automation-science-pack"], "position": labs[0]["position"],
-                    "inventory": "lab"}, "a lab has no science packs")
+                    "inventory": "lab"}, "a lab has no science packs", True)
         else:
             yield ({"skill": "craft_for", "item": "automation-science-pack", "count": 10},
-                   "labs need science packs")
+                   "labs need science packs", True)
 
 
 MAX_MOVES = 4  # the schema allows 4 entries per reply
 
 
-def next_steps(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
-               limit: int = MAX_MOVES) -> list[tuple[dict, str]]:
-    """The first `limit` distinct, unblocked moves, in order."""
+def next_plan(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
+              limit: int = MAX_MOVES) -> list[tuple[dict, str, bool]]:
+    """The first `limit` distinct, unblocked moves as (entry, reason, sure)."""
     out, keys = [], set()
-    for entry, reason in _candidates(p):
+    for entry, reason, sure in _candidates(p):
         k = entry_key(entry)
         if k in blocked or k in keys:
             continue
         keys.add(k)
-        out.append((entry, reason))
+        out.append((entry, reason, sure))
         if len(out) >= limit:
             break
     return out
 
 
+def next_steps(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
+               limit: int = MAX_MOVES) -> list[tuple[dict, str]]:
+    """The first `limit` distinct, unblocked moves, in order."""
+    return [(e, r) for e, r, _ in next_plan(p, blocked, limit)]
+
+
 def next_step(p: dict, blocked: frozenset[str] | set[str] = frozenset()) -> tuple[dict, str] | None:
     steps = next_steps(p, blocked, 1)
     return steps[0] if steps else None
+
+
+def sure_prefix(plan: list[tuple[dict, str, bool]]) -> list[tuple[dict, str]]:
+    """The leading run of sure moves (what the autopilot may send unasked)."""
+    out = []
+    for entry, reason, sure in plan:
+        if not sure:
+            break
+        out.append((entry, reason))
+    return out

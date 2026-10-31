@@ -117,6 +117,10 @@ class BridgeConfig:
     json_schema: bool = False
     # Goal ladder (bridge/goals.py): add the current milestone to every prompt.
     goals: bool = True
+    # Hybrid autopilot (bridge/agent.py): when the planner's next move is a fixed
+    # build-order step, send it without asking the model. AI_AUTOPILOT=false
+    # turns it off.
+    autopilot: bool = True
 
     # RCON
     rcon: RCONConfig = field(default_factory=RCONConfig)
@@ -226,6 +230,7 @@ class ConfigLoader:
             cfg.enable_thinking = False
         cfg.json_schema = self._e("AI_JSON_SCHEMA").lower() in ("true", "1", "on")
         cfg.goals = self._e("AI_GOALS", "true").lower() not in ("false", "0", "off")
+        cfg.autopilot = self._e("AI_AUTOPILOT", "true").lower() not in ("false", "0", "off")
         cfg.rcon.host     = self._e("FACTORIO_RCON_HOST", cfg.rcon.host)
         port = self._e("FACTORIO_RCON_PORT")
         if port:

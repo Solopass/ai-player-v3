@@ -169,7 +169,8 @@ def collect(n_events: int = 25) -> dict:
     if turns:
         lat = [t.get("elapsed_s") or 0 for t in turns]
         report["turns"] = {"last_n": len(turns), "status": dict(Counter(t.get("status") for t in turns)),
-                           "avg_s": round(sum(lat) / len(lat), 1), "max_s": max(lat)}
+                           "avg_s": round(sum(lat) / len(lat), 1), "max_s": max(lat),
+                           "source": dict(Counter(t.get("source") or "llm" for t in turns))}
     return report
 
 
@@ -248,6 +249,8 @@ def _print(report: dict) -> None:
     if t:
         h("Turns")
         print(f"last {t['last_n']}: {t['status']}  avg {t['avg_s']}s, max {t['max_s']}s")
+        if t.get("source"):
+            print(f"decided by: {t['source']}")
 
 
 def main() -> None:

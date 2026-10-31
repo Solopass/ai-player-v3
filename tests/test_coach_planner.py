@@ -42,6 +42,8 @@ def lab_trigger() -> dict:
     p = spawn()
     p["factory"]["miners_by_resource"] = {"coal": 1, "iron-ore": 2, "copper-ore": 1}
     p["production"]["items"] = {"iron-plate": {"per_min": 20}}
+    p["power"] = {"has_grid": True}                  # past the power milestone
+    p["factory"]["by_type"] = {"boiler": 1, "steam-engine": 2}
     p["research"]["triggers"] = [{"tech": "automation-science-pack", "type": "craft-item",
                                   "target": "lab", "count": 1}]
     return p
@@ -238,3 +240,257 @@ def test_new_drill_counts_as_progress():
     more["factory"]["miners_by_resource"] = {"coal": 1}
     c.observe(payload(more, [], "r2"))
     assert c.sig_since == 2
+
+
+# --- planner past the bootstrap (round 4) -------------------------------------
+
+def post_bootstrap(**inv) -> dict:
+    """Bootstrap done (coal, 2 iron, copper drills, 20 iron/min); power not built yet."""
+    p = spawn()
+    p["factory"]["miners_by_resource"] = {"coal": 1, "iron-ore": 2, "copper-ore": 1}
+    p["production"]["items"] = {"iron-plate": {"per_min": 20}}
+    p["inventory"] = [{"name": n, "count": c} for n, c in
+                      {"coal": 100, "offshore-pump": 1, "boiler": 1, "steam-engine": 2, "pipe": 10,
+                       "small-electric-pole": 10, **inv}.items()]
+    p["landmarks"]["water"] = {"x": 20, "y": 20, "distance": 15}
+    return p
+
+
+def powered(p: dict, techs=()) -> dict:
+    p["power"] = {"has_grid": True}
+    p["factory"]["by_type"] = {"boiler": 1, "steam-engine": 2}
+    p["research"]["done"] = list(techs)
+    return p
+
+
+def moves(p, blocked=frozenset(), limit=planner.MAX_MOVES):
+    return [e for e, _, _ in planner.next_plan(p, blocked, limit)]
+
+
+def test_no_grid_builds_power():
+    plan = planner.next_plan(post_bootstrap())
+    assert plan[0][0] == {"skill": "build_power"}
+    assert plan[0][2] is True
+
+
+def test_far_water_goes_there_first():
+    p = post_bootstrap()
+    p["landmarks"]["water"] = {"x": 90, "y": 10, "distance": 80}
+    ms = moves(p)
+    assert ms[0] == {"skill": "goto", "position": {"x": 90, "y": 10}}
+    assert ms[1] == {"skill": "build_power"}
+
+
+def test_missing_power_parts_are_crafted_before_the_build():
+    p = post_bootstrap(**{"steam-engine": 0, "boiler": 0})
+    ms = moves(p)
+    boiler = {"skill": "craft_for", "item": "boiler", "count": 1}
+    assert boiler in ms
+    assert {"skill": "craft_for", "item": "steam-engine", "count": 2} in ms
+    assert ms.index({"skill": "build_power"}) > ms.index(boiler)
+
+
+def test_automation_research_once_powered():
+    plan = planner.next_plan(powered(post_bootstrap()))
+    assert plan[0][0] == {"skill": "research", "tech": "automation"} and plan[0][2]
+
+
+def test_automation_waits_for_pending_trigger_techs():
+    p = powered(post_bootstrap())
+    p["research"]["triggers"] = [{"tech": "automation-science-pack", "type": "craft-item",
+                                  "target": "lab", "count": 1}]
+    first = planner.next_plan(p)[0]
+    assert first[0]["skill"] == "craft_for" and first[2] is False     # a guess, not a sure move
+
+
+def test_smelting_counts_electric_pairs_from_current_rates():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 0}}
+    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
+    assert builds[0] == {"skill": "build_miner", "resource": "iron-ore", "output": "furnace", "count": 1,
+                         "drill": "electric"}
+    p["production"]["items"] = {"iron-plate": {"per_min": 11}, "copper-plate": {"per_min": 0}}
+    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
+    assert builds[0]["resource"] == "iron-ore" and builds[0]["count"] == 2
+    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 0}}
+    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
+    assert builds[0]["resource"] == "copper-ore" and builds[0]["count"] == 1
+
+
+def test_smelting_needs_the_electric_drill_tech():
+    p = powered(post_bootstrap(), ["automation"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}}
+    assert not [e for e in moves(p) if e.get("skill") == "build_miner"]
+
+
+def test_red_cell_after_automation_and_smelting():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    ms = moves(p)
+    craft = {"skill": "craft_for", "item": "assembling-machine-1", "count": 3}
+    assert {"skill": "build_red_cell"} in ms
+    assert ms.index({"skill": "build_red_cell"}) > ms.index(craft)
+
+
+def test_built_red_cell_is_tended():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    p["factory"]["by_type"]["assembling-machine-1"] = 3
+    p["factory"]["assemblers"] = [{"recipe": "automation-science-pack", "status": "working"}]
+    assert moves(p)[0] == {"skill": "tend"}
+
+
+def test_a_lone_gear_assembler_does_not_block_the_red_cell():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    p["factory"]["assemblers"] = [{"recipe": "iron-gear-wheel", "status": "working"}]
+    assert {"skill": "build_red_cell"} in moves(p, limit=8)
+
+
+def test_built_electric_pairs_count_before_the_rate_catches_up():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 20}}
+    p["factory"]["electric_miners"] = {"iron-ore": 2}
+    assert not [e for e in moves(p, limit=8) if e.get("resource") == "iron-ore"]
+
+
+def test_sure_prefix_stops_at_the_first_guess():
+    plan = [({"skill": "tend"}, "a", True), ({"skill": "research"}, "b", False),
+            ({"skill": "gather", "item": "coal"}, "c", True)]
+    assert planner.sure_prefix(plan) == [({"skill": "tend"}, "a")]
+    assert planner.sure_prefix(plan[1:]) == []
+
+
+# --- hybrid autopilot ----------------------------------------------------------
+
+import pytest
+
+from bridge import agent as agent_mod
+from bridge.config import BridgeConfig
+from bridge.factorio.watcher import PendingRequest
+
+
+class Recorder:
+    """Stands in for the LLM provider: counts calls, answers with a fixed move."""
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, messages, cfg):
+        self.calls += 1
+        return '[{"skill":"wait"}]'
+
+
+@pytest.fixture
+def pilot(tmp_path, monkeypatch):
+    rec = Recorder()
+    monkeypatch.setattr(agent_mod, "get_provider", lambda cfg: rec)
+    monkeypatch.setattr(agent_mod.blueprints, "load_library", lambda: {})
+    cfg = BridgeConfig()
+    cfg.output_dir = tmp_path
+    cfg.autopilot = True
+    return agent_mod.Agent(), cfg, rec
+
+
+def req(n: int, p: dict, results=None, rid=None, **mem) -> PendingRequest:
+    return PendingRequest(req_id=f"q{n}", payload=payload(p, results, rid, **mem), path=None)
+
+
+def test_autopilot_skips_the_model_for_sure_moves(pilot):
+    agent, cfg, rec = pilot
+    out = agent.decide(req(1, spawn()), cfg)
+    assert rec.calls == 0
+    assert out[0].pop("source") == "autopilot"
+    assert out[0] == {"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1}
+    assert agent.status["model"] == "autopilot"
+
+
+def test_autopilot_off_asks_the_model(pilot):
+    agent, cfg, rec = pilot
+    cfg.autopilot = False
+    agent.decide(req(1, spawn()), cfg)
+    assert rec.calls == 1
+
+
+def test_player_message_goes_to_the_model(pilot):
+    agent, cfg, rec = pilot
+    r = req(1, spawn())
+    r.payload["user_message"] = "build me a house"
+    agent.decide(r, cfg)
+    assert rec.calls == 1
+
+
+def test_directive_goes_to_the_model(pilot):
+    agent, cfg, rec = pilot
+    agent.decide(req(1, spawn(), user_directive="gather wood"), cfg)
+    assert rec.calls == 1
+
+
+def test_guess_moves_go_to_the_model(pilot):
+    agent, cfg, rec = pilot
+    p = powered(post_bootstrap())
+    p["research"]["triggers"] = [{"tech": "automation-science-pack", "type": "craft-item",
+                                  "target": "lab", "count": 1}]
+    agent.decide(req(1, p), cfg)
+    assert rec.calls == 1
+
+
+def test_every_sixth_turn_is_the_model(pilot):
+    agent, cfg, rec = pilot
+    p = spawn()
+    for n in range(1, 7):
+        p["inventory"].append({"name": f"item{n}", "count": 1})   # progress, so nothing gets blocked
+        agent.decide(req(n, p), cfg)
+    assert rec.calls == 1 and agent.auto_streak == 0
+
+
+def test_failed_autopilot_move_hands_the_next_turn_to_the_model(pilot):
+    agent, cfg, rec = pilot
+    p = spawn()
+    agent.decide(req(1, p), cfg)
+    assert rec.calls == 0
+    fail = {"action": "skill:build_miner", "resource": "coal", "output": "chest", "ok": False,
+            "detail": "build_miner: no spot"}
+    agent.decide(req(2, p, [fail], rid="q1"), cfg)
+    assert rec.calls == 1
+
+
+def test_successful_autopilot_move_keeps_going(pilot):
+    agent, cfg, rec = pilot
+    p = spawn()
+    agent.decide(req(1, p), cfg)
+    ok = {"action": "skill:build_miner", "resource": "coal", "output": "chest", "ok": True, "detail": "built"}
+    p["factory"]["miners_by_resource"] = {"coal": 1}
+    p["landmarks"]["resources"][1]["distance"] = 10
+    agent.decide(req(2, p, [ok], rid="q1"), cfg)
+    assert rec.calls == 0
+
+
+def test_idle_tend_failure_does_not_stop_the_autopilot(pilot):
+    agent, cfg, rec = pilot
+    p = stuck_fuel_all()
+    agent.decide(req(1, p), cfg)
+    idle = {"action": "skill:tend", "ok": False, "detail": "tend: nothing to do"}
+    agent.decide(req(2, p, [idle], rid="q1"), cfg)
+    assert rec.calls == 0
+
+
+def test_autopilot_turns_feed_the_coach(pilot):
+    agent, cfg, rec = pilot
+    p = spawn()
+    agent.decide(req(1, p), cfg)
+    assert agent.coach.sent                      # the turn was recorded for loop detection
+    fail = {"action": "skill:build_miner", "resource": "coal", "output": "chest", "ok": False, "detail": "x"}
+    for n in (2, 3):
+        agent.decide(req(n, p, [fail], rid=f"q{n - 1}"), cfg)
+    key = planner.entry_key({"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1})
+    assert key in agent.coach.blocked()
+
+
+def test_stuck_ai_goes_back_to_the_model(pilot):
+    agent, cfg, rec = pilot
+    p = spawn()
+    agent.decide(req(1, p), cfg)
+    agent.coach.sig_since = -20                  # no progress for a long time...
+    agent.coach.last_fail_turn = agent.coach.turn    # ...while moves keep failing
+    agent.decide(req(2, p), cfg)
+    assert rec.calls == 1

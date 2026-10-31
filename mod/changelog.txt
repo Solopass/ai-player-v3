@@ -6,6 +6,8 @@ Date: 2026-10-30
     - Multi-planet: per-planet home, machine list and respawn.
     - Blueprint library synced from the bridge; place_blueprint, craft_for and connect_belt skills.
     - In-game AI panel (top-left button or Ctrl+Shift+A) and a debug event log.
+    - build_power (steam block), build_assembler, build_red_cell, electric mining pairs; tend hauls plates to assemblers.
+    - /ai-selftest (self-test maps only; see tests/ingame/run_selftest.py).
   Changes:
     - State-changing commands are admin-only; chat orders need ai:, ai, or !ai.
 ---------------------------------------------------------------------------------------------------

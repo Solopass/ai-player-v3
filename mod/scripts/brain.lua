@@ -217,6 +217,8 @@ function AIBrain.handle_response(req_id, actions_json)
   -- Entries may be skills {skill=...} or primitives {action=...}; the unified
   -- executor dispatches each and records E1 results.
   AISkills.queue_turn(storage.ai_player.character, entries, req_id)
+  local turn = storage.ai_player.turn
+  if turn then turn.autopilot = (entries[1].source == "autopilot") end
 end
 
 -- -------------------------------------------------------------------------
@@ -248,7 +250,7 @@ end
 
 local STRING_FIELDS = {"action","skill","direction","item","name","type","recipe",
                        "ore","output","message","text","title","inventory","slot",
-                       "tech","resource"}
+                       "tech","resource","source","drill"}
 -- tech/resource/keep are read by skills.lua (research, build_miner, deposit)
 -- but were missing here, so the model's choice was silently dropped.
 local NUMBER_FIELDS = {"count","radius","distance","index","keep"}

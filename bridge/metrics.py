@@ -40,6 +40,7 @@ def record_exchange(
     elapsed: float,
     provider: str,
     model: str,
+    source: str = "llm",
 ) -> None:
     """Append one exchange's metrics row to metrics.jsonl. Never raises."""
     try:
@@ -67,6 +68,7 @@ def record_exchange(
             "tick": environment.get("ticks_played"),
             "provider": provider,
             "model": model,
+            "source": source,           # llm | autopilot
             # --- factory outcomes (ground truth) ---
             "phase": perception.get("game_phase"),
             "techs_researched": production.get("techs_researched"),

@@ -13,6 +13,7 @@ require("scripts.brain")
 require("scripts.blueprints")
 require("scripts.layout")
 require("scripts.skills")
+require("scripts.selftest")
 require("scripts.gui")
 
 -- -------------------------------------------------------------------------
@@ -532,6 +533,20 @@ script.on_event(defines.events.on_tick, function(event)
     return
   end
 
+  -- A turn that got something done asks for the next one soon (autopilot chains).
+  local ap = storage.ai_player
+  if ap.fast_decide_tick and tick >= ap.fast_decide_tick then
+    ap.fast_decide_tick = nil
+    if not ap.turn and next(ap.pending_requests) == nil then
+      local fc = AICharacter.get_character()
+      if fc then
+        ap.tick_counter = 0
+        AIBrain.request_decision(fc, nil)
+        return
+      end
+    end
+  end
+
   -- Decision tick
   local interval = settings.global["ai-player-tick-interval"].value or 300
   storage.ai_player.tick_counter = (storage.ai_player.tick_counter or 0) + 1
@@ -799,7 +814,7 @@ local function run_skill_text(character, skill, rest)
     entry.name = tokens[1]; entry.resource = tokens[2]
     tokens = {}
   elseif tokens[1] then
-    entry.item = tokens[1]; entry.resource = tokens[1]; entry.ore = tokens[1]; entry.tech = tokens[1]
+    entry.item = tokens[1]; entry.resource = tokens[1]; entry.ore = tokens[1]; entry.tech = tokens[1]; entry.recipe = tokens[1]
   end
   if tokens[2] then
     local n = tonumber(tokens[2])

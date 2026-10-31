@@ -313,6 +313,7 @@ local function gather_factory(surface, force, cpos)
   local machines = AIRegistry.machines()
   local by_type, by_status, attention = {}, {}, {}
   local miners, labs = {}, {count = 0, without_packs = 0}
+  local assemblers, electric = {}, {}
   local needs = {burners_low_fuel = {}, machines_no_recipe = {},
                  machines_no_input = {}, outputs_full = {}}
   local total = 0
@@ -324,12 +325,17 @@ local function gather_factory(surface, force, cpos)
       if e.type == "mining-drill" then
         local res = AISkills.drill_resource(e)
         if res then miners[res] = (miners[res] or 0) + 1 end
+        if res and e.name == "electric-mining-drill" then electric[res] = (electric[res] or 0) + 1 end
       elseif e.type == "lab" then
         labs.count = labs.count + 1
         local li = e.get_inventory(defines.inventory.lab_input)
         if li and li.is_empty() then labs.without_packs = labs.without_packs + 1 end
       end
       local st = status_string(e)
+      if e.type == "assembling-machine" and #assemblers < 12 then
+        local r = e.get_recipe()
+        assemblers[#assemblers + 1] = {recipe = r and r.name or nil, status = st, input_low = st == "no_ingredients"}
+      end
       -- "Output full" is normal for boilers/engines with no power load and for
       -- drills feeding coal into another burner's full fuel slot; reporting
       -- those sends the model chasing a problem that isn't one.
@@ -362,7 +368,8 @@ local function gather_factory(surface, force, cpos)
   while #attention > ATTENTION_LIMIT do table.remove(attention) end
 
   local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention,
-                   miners_by_resource = miners, labs = labs}
+                   miners_by_resource = miners, labs = labs, assemblers = assemblers,
+                   electric_miners = electric}
 
   -- Small base: include the full per-machine roster (lightweight). Second pass
   -- only runs when total is small, so it's cheap.

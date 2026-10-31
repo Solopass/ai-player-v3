@@ -28,10 +28,11 @@ def log_exchange(
     content: str | None,
     elapsed: float,
     entries: list[dict] | None,
+    source: str = "llm",
 ) -> None:
     """Append one prompt→response exchange to chat.log. Never raises."""
     try:
-        lines = [_SEP, f"[{time.strftime('%H:%M:%S')}] request {req_id}"]
+        lines = [_SEP, f"[{time.strftime('%H:%M:%S')}] request {req_id} source={source}"]
 
         for msg in messages:
             role = str(msg.get("role", "?")).upper()

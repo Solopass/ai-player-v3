@@ -14,7 +14,7 @@ import time
 from dataclasses import replace
 
 from . import blueprints, goals, planner
-from .coach import Coach
+from .coach import NO_FAIL_BLOCK, Coach, result_key
 from .config import BridgeConfig
 from .factorio.api import parse_response
 from .factorio.watcher import PendingRequest
@@ -24,6 +24,10 @@ from .providers import get_provider
 from .transcript import log_exchange
 
 log = logging.getLogger(__name__)
+
+# The model still takes every Nth turn while the autopilot is driving, so it
+# can add notes and spot things the planner can't.
+LLM_EVERY = 6
 
 
 def _fallback(reason: str) -> list[dict]:
@@ -38,6 +42,8 @@ class Agent:
     def __init__(self):
         self.coach = Coach()
         self.status = None
+        self.auto_streak = 0            # autopilot turns since the model last answered
+        self.auto_req_id: str | None = None
 
     def decide(self, req: PendingRequest, config: BridgeConfig) -> list[dict]:
         provider_cfg = config.to_provider_config()
@@ -63,13 +69,34 @@ class Agent:
             except Exception as e:      # a goal bug must never stop the AI
                 log.warning("Goal ladder failed: %s", e)
         # Coach/planner bugs must never stop the AI: on error, play without them.
-        suggestion, coach_text = [], ""
+        suggestion, coach_text, plan = [], "", []
         try:
             self.coach.observe(payload)
-            suggestion = planner.next_steps(perception, self.coach.blocked())
+            plan = planner.next_plan(perception, self.coach.blocked())
+            suggestion = [(e, r) for e, r, _ in plan]
             coach_text = self.coach.prompt_text(suggestion)
         except Exception:
             log.exception("Coach/planner failed — continuing without them")
+        auto = self._autopilot(req, payload, plan, config)
+        entries = self._guard(req.req_id, auto, payload, suggestion) if auto is not None else []
+        if auto is not None and not any(e.get("skill") or e.get("action") not in ("wait", "chat")
+                                        for e in entries):
+            auto = None                 # the guard left nothing to do: let the model decide
+        if auto is not None:
+            if entries:
+                entries[0]["source"] = "autopilot"      # the mod chains these turns quickly
+            self.status = {
+                "goal": goal_text.split("\n", 1)[0].removeprefix("CURRENT GOAL ").strip() or "(goal ladder off)",
+                "model": "autopilot", "seconds": 0, "answered": True}
+            why = "; ".join(r for _, r in planner.sure_prefix(plan))
+            log.info("Request %s: autopilot %d entr(ies) [%s] — %s", req.req_id, len(entries),
+                     ", ".join(e.get("skill") or e.get("action", "?") for e in entries), why)
+            log_exchange(config.output_dir, req.req_id, [], f"autopilot: {why}", 0.0, entries,
+                         source="autopilot")
+            record_exchange(config.output_dir, req.req_id, payload, entries, STATUS_OK, 0.0,
+                            "bridge", "autopilot", source="autopilot")
+            return entries
+        self.auto_streak = 0
         messages = build_messages(payload, config.system_prefix, goal_text, coach_text)
         # place_blueprint may only name blueprints the mod holds and that fit
         # this planet.
@@ -113,6 +140,8 @@ class Agent:
             return self._guard(req.req_id, [], payload, suggestion) or _fallback(
                 "could not parse a valid skill/action array from the model's reply")
 
+        for e in entries:
+            e.pop("source", None)       # only the bridge may mark a turn as autopilot
         entries = self._guard(req.req_id, entries, payload, suggestion)
         entries = self._label_chat(entries, provider_cfg.provider)
         log.info("Request %s: %d entr(ies) [%s]", req.req_id, len(entries),
@@ -121,6 +150,32 @@ class Agent:
         record_exchange(config.output_dir, req.req_id, payload, entries, STATUS_OK,
                         elapsed, provider_cfg.provider, provider_cfg.model)
         return entries
+
+    def _autopilot(self, req: PendingRequest, payload: dict, plan: list, config: BridgeConfig):
+        """The planner's leading sure moves, or None when the model should decide:
+        autopilot off, a player message/directive, the AI stuck, every LLM_EVERY-th
+        turn, the last autopilot move failed, or the first move isn't a sure one."""
+        try:
+            if not config.autopilot:
+                return None
+            mem = payload.get("memory") or {}
+            if payload.get("user_message") or mem.get("user_directive") or mem.get("force_skill"):
+                return None
+            if self.coach.stuck() or self.auto_streak >= LLM_EVERY - 1:
+                return None
+            if self.auto_req_id and mem.get("last_results_req_id") == self.auto_req_id:
+                if any(isinstance(r, dict) and not r.get("ok") and result_key(r) not in NO_FAIL_BLOCK
+                       for r in mem.get("last_action_results") or []):
+                    return None
+            moves = [e for e, _ in planner.sure_prefix(plan)]
+            if not moves:
+                return None
+            self.auto_streak += 1
+            self.auto_req_id = req.req_id
+            return moves
+        except Exception:
+            log.exception("Autopilot failed — asking the model")
+            return None
 
     def _guard(self, req_id: str, entries: list[dict], payload: dict, suggestion) -> list[dict]:
         try:

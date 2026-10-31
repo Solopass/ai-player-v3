@@ -137,6 +137,8 @@ local function ready_collector(character, out_kind)
   return nil, wanted[1], false
 end
 
+local build_electric_miner      -- defined below, once stock_up exists
+
 local function skill_build_miner(character, p)
   local resource = p.resource or p.item or "iron-ore"
   local out_kind = (p.output or "chest"):lower()
@@ -144,6 +146,17 @@ local function skill_build_miner(character, p)
   if out_kind == "furnace" and (resource == "coal" or resource == "stone") then out_kind = "chest" end
   local want = math.max(1, math.min(tonumber(p.count) or 1, 6))
   local inv = inv_of(character)
+
+  -- Past the burner stage (drill researched, drill in hand or craftable, a pole to
+  -- wire to): electric drills into furnaces, collected by an inserter into a chest.
+  if out_kind == "furnace" then
+    local ok, detail = build_electric_miner(character, resource, want)
+    if ok ~= nil then return ok, detail end
+  end
+  if p.drill == "electric" then
+    return false, "build_miner: electric drills need the tech, a drill in hand or craftable, "
+      .. "and a powered pole within reach — build_power or extend poles first"
+  end
 
   local drills = inv.get_item_count("burner-mining-drill")
   if drills == 0 then
@@ -215,6 +228,73 @@ local function skill_build_miner(character, p)
     detail = detail .. string.format("; wanted %d — short on drills/%s or space", tonumber(p.count) or 1, collector)
   end
   return true, detail
+end
+
+-- -------------------------------------------------------------------------
+-- stock_up(need) — hand-craft whatever a plan is short of. Returns true when
+-- everything is in the inventory, else false + what is being crafted/missing
+-- so the skill can say so and the next move retries.
+-- -------------------------------------------------------------------------
+local function stock_up(character, need, skill)
+  local inv = inv_of(character)
+  local crafting, missing = {}, {}
+  for name, n in pairs(need) do
+    local short = n - inv.get_item_count(name)
+    if short > 0 then
+      local r = character.force.recipes[name]
+      local queued = 0
+      if r and r.enabled and character.get_craftable_count(r) > 0 then
+        queued = character.begin_crafting{recipe = r, count = math.min(short, character.get_craftable_count(r)),
+                                          silent = true}
+      end
+      if queued >= short then crafting[#crafting + 1] = short .. "x " .. name
+      else missing[#missing + 1] = (short - queued) .. "x " .. name end
+    end
+  end
+  table.sort(crafting); table.sort(missing)
+  if #missing > 0 then
+    return false, skill .. ": need " .. table.concat(missing, ", ") .. " more (craft_for them; plates are smelted, not crafted)"
+  end
+  if #crafting > 0 then
+    return false, skill .. ": crafting " .. table.concat(crafting, ", ") .. " — retry next move"
+  end
+  return true
+end
+
+-- -------------------------------------------------------------------------
+-- build_power() — offshore pump on the nearest shore, boiler, 2 steam engines
+-- and a pole chain toward home / the existing grid (layout.lua find_power).
+-- -------------------------------------------------------------------------
+local function skill_build_power(character, _)
+  local surface = character.surface
+  local inv = inv_of(character)
+  local force = character.force
+  if surface.count_entities_filtered{name = "boiler", force = force, limit = 1} > 0
+     and surface.count_entities_filtered{name = "steam-engine", force = force, limit = 1} > 0 then
+    return false, "build_power: a boiler and steam engine already exist — tend them instead"
+  end
+  local lm = (AIPerception.landmarks(surface, character.position) or {}).water
+  if not lm then return false, "build_power: no water found near — explore" end
+  if lm.distance > 40 then
+    return false, string.format("build_power: nearest water is %d tiles away at {%d,%d} — goto it first",
+                                lm.distance, lm.x, lm.y)
+  end
+  local home = AICharacter.get_home(surface) or character.position
+  local plan = AILayout.find_power(character, character.position, home)
+  if not plan then
+    return false, "build_power: no shoreline spot where a pump, boiler and 2 engines fit near {"
+      .. lm.x .. "," .. lm.y .. "} — try another shore"
+  end
+  local ready, why = stock_up(character, AILayout.items({plan}), "build_power")
+  if not ready then return false, why end
+  local ok, res = AILayout.build(character, plan)
+  if not ok then return false, "build_power: " .. res end
+  local poles = 0
+  for _, p in ipairs(res) do if p.role == "pole" then poles = poles + 1 end end
+  local pump = res[1].position
+  return true, string.format("built steam power: pump at {%d,%d}, boiler (fuelled), 2 steam engines, %d pole(s)%s",
+    math.floor(pump.x), math.floor(pump.y), poles,
+    plan.joined and ", wired into the existing grid" or " toward home — connect consumers with more poles")
 end
 
 -- -------------------------------------------------------------------------
@@ -554,9 +634,17 @@ local function skill_research(character, p)
   local force = character.force
 
   if p.tech then
-    if try_queue(force, force.technologies[p.tech]) then
+    local tech = force.technologies[p.tech]
+    local cur = force.current_research
+    if cur and cur.name == p.tech then
+      return true, "already researching " .. p.tech .. " — feed a lab with science packs"
+    end
+    if try_queue(force, tech) then
       return true, "queued research: " .. p.tech .. " — feed a lab with science packs to progress"
     end
+    -- An explicit choice never falls back to some other tech.
+    return false, (tech and trigger_text(tech))
+      or ("research: can't queue " .. p.tech .. " (unknown, already done, or prerequisites missing)")
   end
   for _, name in ipairs(PREFERRED_TECH) do
     if try_queue(force, force.technologies[name]) then
@@ -823,6 +911,149 @@ local function skill_connect_belt(character, p)
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
+-- A chest item for plans that need `n`: what the AI holds enough of, else
+-- wooden when there's wood for it, else iron.
+local function chest_for(character, n)
+  local inv = inv_of(character)
+  for _, name in ipairs({"wooden-chest", "iron-chest"}) do
+    if inv.get_item_count(name) >= n then return name end
+  end
+  return inv.get_item_count("wood") >= 2 * n and "wooden-chest" or "iron-chest"
+end
+
+-- Electric drill -> furnace -> inserter -> chest pairs. Returns nil (use burner drills
+-- instead) when electric isn't available here, else ok, detail.
+function build_electric_miner(character, resource, want)
+  local force, inv = character.force, inv_of(character)
+  local recipe = force.recipes["electric-mining-drill"]
+  if not (recipe and recipe.enabled) then return nil end
+  if not AILayout.nearest_pole(character, character.position) then return nil end
+  if inv.get_item_count("electric-mining-drill") == 0 and character.get_craftable_count(recipe) == 0 then
+    return nil
+  end
+  local chest = chest_for(character, want)
+  local built, first, err = 0, nil, nil
+  for _ = 1, want do
+    local plan = AILayout.find_electric_pair(character, resource, character.position, {chest = chest})
+    if not plan then
+      err = err or "no spot on the " .. resource .. " patch for an electric drill, furnace, inserter and chest"
+      break
+    end
+    local ready, why = stock_up(character, AILayout.items({plan}), "build_miner")
+    if not ready then return false, why end
+    local ok, res = AILayout.build(character, plan)
+    if not ok then err = res; break end
+    built = built + 1
+    first = first or res[1].position
+  end
+  if built == 0 then
+    -- No electric spot: the burner path may still work, unless parts were short.
+    return nil
+  end
+  local detail = string.format("built %d electric drill->furnace->inserter->chest pair(s) on %s at {%d,%d}",
+    built, resource, math.floor(first.x), math.floor(first.y))
+  if built < want then detail = detail .. "; stopped: " .. tostring(err) end
+  return true, detail
+end
+
+-- Whether an assembling-machine-1 can run this recipe (category match, no fluids).
+local function asm_can_make(recipe)
+  local cats = prototypes.entity["assembling-machine-1"].crafting_categories or {}
+  local ok = false
+  for _, c in ipairs(recipe.categories or {}) do if cats[c] then ok = true end end
+  for _, ing in ipairs(recipe.ingredients) do if ing.type == "fluid" then return false end end
+  return ok
+end
+
+-- -------------------------------------------------------------------------
+-- build_assembler(recipe, count) — assembler with the recipe set, an input
+-- chest -> inserter in front and inserter -> output chest behind, powered by
+-- poles wired to the nearest grid pole. `tend` then hauls plates in.
+-- -------------------------------------------------------------------------
+local function skill_build_assembler(character, p)
+  local recipe = p.recipe or p.item
+  local force = character.force
+  if not recipe then return false, "build_assembler: 'recipe' is required (e.g. iron-gear-wheel)" end
+  local r = force.recipes[recipe]
+  if not r then return false, "build_assembler: no recipe named " .. recipe end
+  if not r.enabled then return false, "build_assembler: " .. recipe .. " is locked — " .. unlock_hint(force, recipe) end
+  if not force.recipes["assembling-machine-1"].enabled then
+    return false, "build_assembler: assemblers are locked — research automation first"
+  end
+  if not asm_can_make(r) then
+    return false, "build_assembler: " .. recipe .. " needs a different machine than assembling-machine-1 "
+      .. "(a fluid recipe, or a special crafting category)"
+  end
+  local surface = character.surface
+  local want = math.max(1, math.min(tonumber(p.count) or 1, 3))
+  local home = AICharacter.get_home(surface) or character.position
+  local chest = chest_for(character, 2 * want)
+  local claimed, built, last, notes = {}, 0, nil, nil
+  for i = 1, want do
+    local plan = AILayout.find_assembler_unit(character, recipe, home, claimed, chest)
+    if not plan then
+      notes = "no clear spot near home for another assembler cell"
+      break
+    end
+    if not plan.grid then
+      return false, "build_assembler: no electric pole anywhere — build_power first"
+    end
+    local ready, why = stock_up(character, AILayout.items({plan}), "build_assembler")
+    if not ready then
+      if built == 0 then return false, why end
+      notes = why
+      break
+    end
+    local ok, res = AILayout.build(character, plan)
+    if not ok then
+      if built == 0 then return false, "build_assembler: " .. res end
+      notes = res
+      break
+    end
+    built = built + 1
+    last = plan
+    for _, b in ipairs(plan.boxes) do claimed[#claimed + 1] = b end
+  end
+  if built == 0 then return false, "build_assembler: " .. tostring(notes) end
+  local a = last.anchor
+  local detail = string.format("built %d %s assembler cell(s) at {%d,%d}: input chest -> inserter -> assembler -> "
+    .. "inserter -> output chest; tend hauls plates in", built, recipe, a.x, a.y)
+  if notes then detail = detail .. "; stopped: " .. notes end
+  return true, detail
+end
+
+-- -------------------------------------------------------------------------
+-- build_red_cell() — one gear assembler feeding two red-science assemblers
+-- that drop into a lab (or a chest), with input chests and poles.
+-- -------------------------------------------------------------------------
+local function skill_build_red_cell(character, _)
+  local force = character.force
+  local surface = character.surface
+  if not force.recipes["assembling-machine-1"].enabled then
+    return false, "build_red_cell: assemblers are locked — research automation first"
+  end
+  local inv = inv_of(character)
+  for _, a in ipairs(surface.find_entities_filtered{type = "assembling-machine", force = force}) do
+    local r = a.get_recipe()
+    if a.last_user == nil and r and r.name == "automation-science-pack" then
+      return false, "build_red_cell: a red-science cell already exists — tend it"
+    end
+  end
+  local home = AICharacter.get_home(surface) or character.position
+  local plan = AILayout.find_red_cell(character, home, chest_for(character, 5), inv.get_item_count("lab"))
+  if not plan then
+    return false, "build_red_cell: no clear 15x9 area near home for the cell (trees/rocks/buildings in the way?)"
+  end
+  if not plan.grid then return false, "build_red_cell: no electric pole anywhere — build_power first" end
+  local ready, why = stock_up(character, AILayout.items({plan}), "build_red_cell")
+  if not ready then return false, why end
+  local ok, res = AILayout.build(character, plan)
+  if not ok then return false, "build_red_cell: " .. res end
+  local a = plan.anchor
+  return true, string.format("built the red-science cell at {%d,%d}: gear assembler feeding 2 science assemblers; "
+    .. "tend hauls iron and copper plates into its chests", a.x, a.y)
+end
+
 -- -------------------------------------------------------------------------
 -- tend() — look after the AI's own burner base near home in one call:
 -- collect plates/ore from its furnaces and chests, refuel its burners, feed
@@ -833,6 +1064,9 @@ end
 -- -------------------------------------------------------------------------
 local SMELTS = {["iron-ore"] = "iron-plate", ["copper-ore"] = "copper-plate", ["stone"] = "stone-brick"}
 local TEND_RADIUS = 64
+-- Hauling into assembler chests: fill each to HAUL_FILL, at most HAUL_CAP items per
+-- tend, and never dig into the last HAUL_RESERVE of anything the AI crafts with.
+local HAUL_FILL, HAUL_CAP, HAUL_RESERVE = 50, 200, 20
 
 local function ai_owned(e) return e.valid and e.last_user == nil end
 
@@ -865,7 +1099,8 @@ local function skill_tend(character, _)
   local own, seen = {}, {}
   for _, at in ipairs({center, character.position}) do
     for _, e in ipairs(surface.find_entities_filtered{force = character.force, position = at,
-                       radius = TEND_RADIUS, type = {"mining-drill", "furnace", "container", "boiler", "inserter"}}) do
+                       radius = TEND_RADIUS, type = {"mining-drill", "furnace", "container", "boiler", "inserter",
+                                                   "assembling-machine", "lab"}}) do
       if ai_owned(e) and not seen[e.unit_number] then
         seen[e.unit_number] = true
         own[#own + 1] = e
@@ -932,8 +1167,10 @@ local function skill_tend(character, _)
   -- 3. refuel (furnaces placed in step 2 included)
   for _, e in ipairs(own) do
     local fb = e.valid and e.get_fuel_inventory and e.get_fuel_inventory()
-    if fb and fb.valid and fb.get_item_count("coal") < 5 then
-      local n = math.min(10, inv.get_item_count("coal"))
+    -- Boilers run the whole base: keep them at 20 coal, not 5.
+    local boiler = e.valid and e.type == "boiler"
+    if fb and fb.valid and fb.get_item_count("coal") < (boiler and 10 or 5) then
+      local n = math.min(boiler and (20 - fb.get_item_count("coal")) or 10, inv.get_item_count("coal"))
       if n > 0 then
         local ins = fb.insert{name = "coal", count = n}
         if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
@@ -975,12 +1212,57 @@ local function skill_tend(character, _)
     end
   end
 
+  -- 5. assemblers: haul plates from the AI's inventory (what steps 1 and 4 gathered)
+  -- into their input chests, and finished science packs into the labs. Capped so
+  -- a tend stays short and the AI keeps plates to craft with.
+  local hauled, packs_fed = 0, 0
+  local feeds = {}
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "inserter" then
+      local src, dst = e.pickup_target, e.drop_target
+      if src and dst and src.valid and dst.valid and dst.type == "assembling-machine" and src.type == "container" then
+        local f = feeds[dst.unit_number] or {asm = dst, chests = {}}
+        f.chests[#f.chests + 1] = src
+        feeds[dst.unit_number] = f
+      end
+    end
+  end
+  for _, f in pairs(feeds) do
+    local r = f.asm.valid and f.asm.get_recipe()
+    for _, ing in ipairs(r and r.ingredients or {}) do
+      for _, chest in ipairs(f.chests) do
+        local ci = ing.type == "item" and chest.valid and chest.get_inventory(defines.inventory.chest)
+        if ci then
+          local n = math.min(HAUL_FILL - ci.get_item_count(ing.name), inv.get_item_count(ing.name) - HAUL_RESERVE,
+                             HAUL_CAP - hauled)
+          if n > 0 then
+            local ins = ci.insert{name = ing.name, count = n}
+            if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
+          end
+        end
+      end
+    end
+  end
+  for _, lab in ipairs(own) do
+    if lab.valid and lab.type == "lab" then
+      local li = lab.get_inventory(defines.inventory.lab_input)
+      for _, it in ipairs(inv.get_contents()) do
+        if li and it.name:find("science%-pack$") and li.get_item_count(it.name) < 10 then
+          local ins = li.insert{name = it.name, count = math.min(10, it.count)}
+          if ins > 0 then inv.remove{name = it.name, count = ins}; packs_fed = packs_fed + ins end
+        end
+      end
+    end
+  end
+
   local parts = {}
   for name, n in pairs(got) do parts[#parts + 1] = n .. "x " .. name end
   table.sort(parts)
-  local idle = #parts == 0 and fueled == 0 and fed == 0 and fixed == 0
+  local idle = #parts == 0 and fueled == 0 and fed == 0 and fixed == 0 and hauled == 0 and packs_fed == 0
   local detail = string.format("tend: collected %s; refueled %d, fed %d furnace(s), fixed %d spilling drill(s)",
     #parts > 0 and table.concat(parts, ", ") or "nothing", fueled, fed, fixed)
+  if hauled > 0 then detail = detail .. string.format("; hauled %d plates into assembler chests", hauled) end
+  if packs_fed > 0 then detail = detail .. string.format("; fed %d science pack(s) to labs", packs_fed) end
   if inv.get_item_count("coal") == 0 then detail = detail .. "; OUT OF COAL — gather coal or build_miner coal" end
   if #notes > 0 then detail = detail .. "; " .. table.concat(notes, "; ", 1, math.min(#notes, 3)) end
   -- Nothing done = not useful this turn; the bridge doesn't count it as a
@@ -996,6 +1278,9 @@ AISkills.REGISTRY = {
   deconstruct      = skill_deconstruct,
   gather           = skill_gather,
   build_miner      = skill_build_miner,
+  build_power      = skill_build_power,
+  build_assembler  = skill_build_assembler,
+  build_red_cell   = skill_build_red_cell,
   build_smelter    = skill_build_smelter,
   fuel_all         = skill_fuel_all,
   tend             = skill_tend,
@@ -1079,6 +1364,7 @@ end
 -- whole turn is done, so the model sees every result.
 -- -------------------------------------------------------------------------
 local TURN_WAIT_TICKS = 600
+local FAST_DECIDE_TICKS = 60      -- at least 1 s between a finished turn and the next request
 
 function AISkills.queue_turn(character, entries, source_id)
   storage.ai_player.turn = {entries = entries, i = 1, results = {}, source_id = source_id,
@@ -1091,6 +1377,15 @@ local function finish_turn(turn)
   mem.last_action_results = turn.results
   mem.last_results_req_id = turn.source_id
   storage.ai_player.turn = nil
+  -- Ask for the next decision soon (autopilot turns chain), unless the turn did
+  -- nothing: then the normal interval applies so failing moves can't spin.
+  -- Only for autopilot turns (model turns keep the normal interval, so the GPU isn't
+  -- asked nonstop), and a lone successful tend doesn't count as getting something done.
+  local any_ok = false
+  for _, r in ipairs(turn.results) do
+    if r.ok and r.action ~= "skill:tend" then any_ok = true end
+  end
+  storage.ai_player.fast_decide_tick = (turn.autopilot and any_ok) and (game.tick + FAST_DECIDE_TICKS) or nil
 end
 
 function AISkills.step_turn(tick)
