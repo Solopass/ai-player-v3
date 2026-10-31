@@ -1,6 +1,6 @@
-# AI Player v3
+# AI Player v3 Space Age Fork
 
-A Factorio 2.0 mod that spawns an autonomous AI character in your game. The AI perceives the factory, decides what to do, and acts — building, mining, smelting, researching, and responding to chat — all driven by an LLM of your choice.
+A Factorio 2.0 mod (updated for 2.1) that spawns an autonomous AI character in your game. The AI perceives the factory, decides what to do, and acts — building, mining, smelting, researching, and responding to chat — all driven by an LLM of your choice.
 
 **Providers supported:** LM Studio (local), Ollama, OpenAI, Anthropic Claude, or any OpenAI-compatible endpoint.
 
@@ -12,7 +12,8 @@ A Factorio 2.0 mod that spawns an autonomous AI character in your game. The AI p
 > - an in-game panel, `python -m bridge.diag`, a headless-server launcher (`start-server.ps1`, needed for RCON) and a Windows control panel (`control-panel.ps1`).
 >
 > See `DEBUGGING.md` and `mod/changelog.txt`. All credit for the original mod goes to its author.
-
+ 
+> Works with local AI, may need some tweaking. Expect bugs, and the AI isn't too great at playing, but it can place down stuff and decide what to do on its own. Definitely a WIP very early on. Needs a bit more work.
 ---
 
 ## How it works
