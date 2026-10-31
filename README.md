@@ -13,7 +13,7 @@ A Factorio 2.0 mod (updated for 2.1) that spawns an autonomous AI character in y
 >
 > See `DEBUGGING.md` and `mod/changelog.txt`. All credit for the original mod goes to its author.
  
-> Works with local AI, may need some tweaking. Expect bugs, and the AI isn't too great at playing, but it can place down stuff and decide what to do on it's own. Definitely a WIP very early on. Needs a bit more work.
+> Works with local AI, may need some tweaking. Expect bugs, and the AI isn't too great at playing, but it can place down stuff and decide what to do on its own. Definitely a WIP very early on. Needs a bit more work.
 ---
 
 ## How it works
