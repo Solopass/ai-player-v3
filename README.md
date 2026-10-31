@@ -4,6 +4,15 @@ A Factorio 2.0 mod that spawns an autonomous AI character in your game. The AI p
 
 **Providers supported:** LM Studio (local), Ollama, OpenAI, Anthropic Claude, or any OpenAI-compatible endpoint.
 
+> **Fork note.** This is a fork of [thedemon117/ai-player-v3](https://github.com/thedemon117/ai-player-v3), branch `ai-bridge-setup`. It adds:
+> - Factorio 2.1 support and multi-planet awareness;
+> - a blueprint library, a goal ladder and a build-order planner;
+> - a loop-breaking coach;
+> - drill and collector placement planned before building, plus multi-move turns;
+> - an in-game panel, `python -m bridge.diag`, a headless-server launcher (`start-server.ps1`, needed for RCON) and a Windows control panel (`control-panel.ps1`).
+>
+> See `DEBUGGING.md` and `mod/changelog.txt`. All credit for the original mod goes to its author.
+
 ---
 
 ## How it works
