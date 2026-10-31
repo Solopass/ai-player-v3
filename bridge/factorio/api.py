@@ -49,6 +49,8 @@ SKILLS: dict[str, list[str]] = {
     "build_power":   [],
     "build_assembler": ["recipe"],
     "build_red_cell": [],
+    "build_green_cell": [],
+    "build_defense": [],
     "fuel_all":      [],
     "tend":          [],
     "loot_chests":   [],

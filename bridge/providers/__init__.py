@@ -9,6 +9,7 @@ Supported providers:
   "openai"    — openai_compat.py  (api.openai.com with real key)
   "custom"    — openai_compat.py  (any OpenAI-compatible endpoint)
   "anthropic" — anthropic.py      (Claude via api.anthropic.com)
+  "stub"      — stub.py           (always waits; for the soak test's no-LLM mode)
 """
 
 from dataclasses import dataclass, field
@@ -35,6 +36,8 @@ def get_provider(config: ProviderConfig):
     """Return the complete() callable for the given provider."""
     if config.provider == "anthropic":
         from .anthropic import complete
+    elif config.provider == "stub":
+        from .stub import complete
     else:
         from .openai_compat import complete
     return complete

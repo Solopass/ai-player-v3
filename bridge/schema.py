@@ -39,6 +39,7 @@ OPTIONAL: dict[str, list[str]] = {
     "build_miner": ["resource", "output", "item", "count", "drill"],
     "build_smelter": ["ore", "count", "item"],
     "build_assembler": ["count", "item"],
+    "build_defense": ["count"],
     "research": ["tech"],
     "deconstruct": ["radius"],
     "loot_chests": ["radius", "items"],

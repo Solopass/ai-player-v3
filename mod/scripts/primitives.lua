@@ -322,6 +322,7 @@ local function action_place(character, action)
     -- create_entity does not raise on_built_entity, so register AI placements
     -- with the machine registry directly (no-ops for non-machine items).
     AIRegistry.add(entity)
+    AIRegistry.own(entity)
     highlight(surface, action.position, {r=0, g=1, b=0})
     debug_print("Placed: " .. item_name)
     return true, string.format("placed %s at {%d,%d}", item_name, px, py)

@@ -24,11 +24,12 @@ from pathlib import Path
 SEED = 424242                     # must match SEED in selftest.lua
 FACTORIO_DIR = Path(os.environ.get("FACTORIO_DIR", r"E:\SteamLibrary\steamapps\common\Factorio"))
 EXE = FACTORIO_DIR / "bin" / "x64" / "factorio.exe"
-MODS = Path(os.environ["APPDATA"]) / "Factorio" / "mods"
+REPO = Path(__file__).resolve().parents[2]
+REAL_MODS = Path(os.environ["APPDATA"]) / "Factorio" / "mods"     # only mod-list.json is read from here
 
 FACINGS = ["north", "east", "south", "west"]
 FACING_CASES = {"miner_furnace", "miner_chest", "miner_belt", "power", "electric_miner"}
-ALL_CASES = ["miner_furnace", "miner_chest", "miner_belt", "power", "assembler", "red_cell", "electric_miner"]
+ALL_CASES = ["miner_furnace", "miner_chest", "miner_belt", "power", "assembler", "red_cell", "electric_miner", "tend_far", "lab_trigger", "tend_wire", "tend_depleted", "green_cell", "defense", "tend_registry"]
 CASE_TIMEOUT = 240
 BOOT_TIMEOUT = 240
 
@@ -37,6 +38,27 @@ def factorio_running() -> bool:
     out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq factorio.exe", "/NH"],
                          capture_output=True, text=True).stdout
     return "factorio.exe" in out.lower()
+
+
+def prepare_mods(tmp: Path) -> Path:
+    """A throwaway mods folder: a copy of the repo's mod/ plus a minimal mod-list.json
+    (the official mods the real list enables, and this one). The real mods folder
+    stays untouched, and mod-settings.dat (which can hold API keys) is never copied."""
+    mods = tmp / "mods"
+    info = json.loads((REPO / "mod" / "info.json").read_text(encoding="utf8"))
+    shutil.copytree(REPO / "mod", mods / f"{info['name']}_{info['version']}",
+                    ignore=shutil.ignore_patterns("__pycache__", "config.json"))
+    official = {p.name for p in (FACTORIO_DIR / "data").iterdir() if p.is_dir()}
+    names = ["base"]
+    try:
+        real = json.loads((REAL_MODS / "mod-list.json").read_text(encoding="utf8"))
+        names += [m["name"] for m in real.get("mods", [])
+                  if m.get("enabled") and m["name"] in official and m["name"] != "base"]
+    except (OSError, ValueError, KeyError):
+        pass
+    names.append(info["name"])
+    (mods / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in names]}))
+    return mods
 
 
 def free_port(udp: bool = False) -> int:
@@ -74,7 +96,7 @@ def main() -> int:
     cfg = tmp / "config.ini"
     cfg.write_text(f"[path]\nread-data={FACTORIO_DIR / 'data'}\nwrite-data={write_data}\n")
     save = tmp / "selftest.zip"
-    common = [str(EXE), "-c", str(cfg), "--mod-directory", str(MODS)]
+    common = [str(EXE), "-c", str(cfg), "--mod-directory", str(prepare_mods(tmp))]
 
     print("creating map ...")
     r = subprocess.run(common + ["--create", str(save), "--map-gen-seed", str(SEED)],

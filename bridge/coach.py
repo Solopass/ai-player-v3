@@ -41,6 +41,9 @@ PASSIVE = {"chat", "summary", "wait", "add_note", "note"}
 # those as failures. Repeating them with no progress still blocks tend.
 NO_FAIL_BLOCK = {"skill:tend", "skill:build_ghosts"}
 NO_REPEAT_BLOCK = {"skill:build_ghosts"}
+# Blocks that never grow past BLOCK_TURNS: tend is how the base keeps running, so a
+# long block on it (it repeats by design) just idles the AI.
+NO_ESCALATE = {"skill:tend"}
 
 Steps = list[tuple[dict, str]]
 
@@ -145,7 +148,8 @@ class Coach:
 
     def _activate(self, key: str, b: dict) -> None:
         n = self.strikes[key] = self.strikes.get(key, 0) + 1
-        b["until"] = self.turn + min(BLOCK_TURNS * 2 ** (n - 1), MAX_BLOCK_TURNS)
+        grow = 0 if key in NO_ESCALATE else n - 1
+        b["until"] = self.turn + min(BLOCK_TURNS * 2 ** grow, MAX_BLOCK_TURNS)
 
     def blocked(self) -> set[str]:
         return {k for k, b in self.blocks.items() if "until" in b}

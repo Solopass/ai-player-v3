@@ -8,6 +8,7 @@
 --   AILayout.find_assembler_unit(character, recipe, home, claimed, chest) -> plan
 --   AILayout.find_electric_pair(character, resource, center, opts) -> plan   (drill -> furnace -> inserter -> chest)
 --   AILayout.find_red_cell(character, home, chest, labs) -> plan
+--   AILayout.find_consumer_poles(character, entity) -> plan   (poles wiring an unpowered lab/assembler to a live pole)
 --   AILayout.build(character, plan) -> ok, detail   (verifies, rolls back on failure)
 --
 -- A plan is a list of {name, position, direction} placements plus checks to
@@ -623,6 +624,59 @@ function AILayout.find_electric_pair(character, resource, center, opts)
             end
           end
         end
+      end
+    end
+  end
+  return nil
+end
+
+-- Poles that wire an unpowered consumer (a lab placed before the grid reached it, ...):
+-- one beside the machine, then a chain to the nearest pole on a network with a
+-- generator. Returns a plan {place = poles}, or nil when a pole already covers the
+-- machine or no chain fits.
+function AILayout.find_consumer_poles(character, e)
+  local surface, force = character.surface, character.force
+  local ex, ey = e.position.x, e.position.y
+  local w, h = footprint(e.name)
+  if #surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
+                                     radius = math.max(w, h) / 2 + 2.5} > 0 then
+    return nil                      -- a pole's supply area already reaches it
+  end
+  local live = {}
+  for _, g in ipairs(surface.find_entities_filtered{type = {"generator", "electric-energy-interface"}, force = force}) do
+    if g.electric_network_id then live[g.electric_network_id] = true end
+  end
+  local goal, gd
+  for _, pole in ipairs(surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
+                                                       radius = 250}) do
+    if next(live) == nil or live[pole.electric_network_id] then
+      local d = dist2(pole.position.x, pole.position.y, ex, ey)
+      if not gd or d < gd then goal, gd = pole, d end
+    end
+  end
+  if not goal then return nil end
+  local own = box(ex, ey, w, h)
+  local spots = {}
+  for k = -math.floor(h / 2), math.floor(h / 2) do
+    spots[#spots + 1] = {ex - w / 2 - 0.5, ey + k}
+    spots[#spots + 1] = {ex + w / 2 + 0.5, ey + k}
+  end
+  for k = -math.floor(w / 2), math.floor(w / 2) do
+    spots[#spots + 1] = {ex + k, ey - h / 2 - 0.5}
+    spots[#spots + 1] = {ex + k, ey + h / 2 + 0.5}
+  end
+  table.sort(spots, function(a, b)
+    return dist2(a[1], a[2], goal.position.x, goal.position.y) < dist2(b[1], b[2], goal.position.x, goal.position.y)
+  end)
+  for _, sp in ipairs(spots) do
+    local x, y = math.floor(sp[1]) + 0.5, math.floor(sp[2]) + 0.5
+    if can_place(character, "small-electric-pole", x, y) then
+      local boxes = {own, box(x, y, 1, 1)}
+      local poles, joined = AILayout.pole_chain(character, {x = x, y = y}, goal.position, boxes)
+      if poles and joined then
+        local place = {{name = "small-electric-pole", position = {x = x, y = y}, role = "pole"}}
+        for _, pole in ipairs(poles) do place[#place + 1] = pole end
+        return {place = place}
       end
     end
   end

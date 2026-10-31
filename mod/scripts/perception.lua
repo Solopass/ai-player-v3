@@ -245,6 +245,8 @@ local KEY_TECHS = {
   -- steam-power, electronics and automation-science-pack unlock by trigger in 2.x
   "steam-power", "automation-science-pack",
   "automation", "logistics", "electronics", "logistic-science-pack", "steel-processing",
+  "gun-turret", "stone-wall", "physical-projectile-damage-1", "weapon-shooting-speed-1",
+  "automation-2", "engine", "electric-energy-distribution-1",
   "military", "military-science-pack", "fast-inserter", "advanced-material-processing",
   "oil-processing", "plastics", "advanced-circuit", "sulfur-processing",
   "chemical-science-pack", "battery", "advanced-oil-processing", "production-science-pack",
@@ -519,6 +521,8 @@ function AIPerception.landmarks(surface, pos)
   return data
 end
 
+local THREAT_RADIUS = 200
+
 function AIPerception.gather(character)
   local surface = character.surface
   local pos = character.position
@@ -659,6 +663,32 @@ function AIPerception.gather(character)
   end
   table.sort(enemies, function(a,b) return a.distance < b.distance end)
   perception.enemies = enemies
+
+  -- Threat to the base: the nearest enemy nest or worm within THREAT_RADIUS of home, and
+  -- the latest attack on something the AI owns (control.lua on_entity_damaged).
+  local home = AICharacter.get_home(surface) or pos
+  -- the 200-tile search is cached for 10 s
+  local cache = storage.ai_player and storage.ai_player.threat_cache
+  local nest, nd
+  if cache and cache.surface == surface.index and game.tick - cache.tick < 600 then
+    nest, nd = cache.nest, cache.nd
+  else
+    for _, e in ipairs(surface.find_entities_filtered{position = home, radius = THREAT_RADIUS, force = "enemy",
+                                                      type = {"unit-spawner", "turret"}}) do
+      local d = math.sqrt((e.position.x - home.x) ^ 2 + (e.position.y - home.y) ^ 2)
+      if not nd or d < nd then nest, nd = {name = e.name, position = {x = e.position.x, y = e.position.y}}, d end
+    end
+    if storage.ai_player then
+      storage.ai_player.threat_cache = {surface = surface.index, tick = game.tick, nest = nest, nd = nd}
+    end
+  end
+  local atk = storage.ai_player and storage.ai_player.last_attack
+  perception.threat = {
+    nearest = nest and {name = nest.name, x = math.floor(nest.position.x), y = math.floor(nest.position.y),
+                        distance = math.floor(nd)} or nil,
+    attack = atk and game.tick - atk.tick < 3600
+      and {name = atk.name, x = atk.x, y = atk.y, seconds_ago = math.floor((game.tick - atk.tick) / 60)} or nil,
+  }
 
   -- Nearby water tiles (for offshore pump placement). The "water_tile"
   -- collision layer covers every planet's water, unlike a list of tile names.

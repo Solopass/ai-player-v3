@@ -108,6 +108,170 @@ def test_planner_skips_blocked_steps():
     assert entry["skill"] in ("goto", "build_miner") and entry.get("resource") != "coal"
 
 
+def labbed() -> dict:
+    """Past red science: a lab is standing, nothing is being researched."""
+    p = lab_trigger()
+    p["research"]["triggers"] = []
+    p["research"]["done"] = ["steam-power", "electronics", "automation-science-pack", "automation"]
+    p["factory"]["labs"] = {"count": 1, "without_packs": 0}
+    p["production"]["items"].update({"copper-plate": {"per_min": 20}})
+    return p
+
+
+def research_moves(p, blocked=frozenset()):
+    return [e for e, _, _ in planner.next_plan(p, blocked, 8) if e.get("skill") == "research"]
+
+
+def test_research_order_queues_the_next_unresearched_tech():
+    p = labbed()
+    assert research_moves(p)[0] == {"skill": "research", "tech": "logistics"}
+    p["research"]["done"] += ["logistics"]
+    assert research_moves(p)[0] == {"skill": "research", "tech": "logistic-science-pack"}
+
+
+def test_research_order_skips_trigger_techs_and_blocked_ones():
+    p = labbed()
+    p["research"]["triggers"] = [{"tech": "logistics", "type": "craft-item", "target": "lab", "count": 1}]
+    assert research_moves(p)[0]["tech"] == "logistic-science-pack"
+    p["research"]["triggers"] = []
+    blocked = {planner.entry_key({"skill": "research", "tech": "logistics"})}
+    assert research_moves(p, blocked)[0]["tech"] == "logistic-science-pack"
+
+
+def test_research_order_is_quiet_while_researching_or_without_a_lab():
+    p = labbed()
+    p["research"]["current"] = "logistics"
+    assert all("tech" not in e for e in research_moves(p))
+    p = labbed()
+    p["factory"]["labs"] = {"count": 0, "without_packs": 0}
+    assert all("tech" not in e for e in research_moves(p))
+
+
+def test_research_order_holds_green_techs_until_green_science_runs():
+    p = labbed()
+    p["research"]["done"] += [t for t, g in planner.RESEARCH_ORDER if not g]
+    assert all("tech" not in e for e in research_moves(p))
+    p["production"]["items"]["logistic-science-pack"] = {"per_min": 3}
+    assert research_moves(p)[0]["tech"] == "automation-2"
+
+
+def test_labs_without_packs_haul_through_the_red_cell():
+    p = labbed()
+    p["research"]["current"] = "logistics"
+    p["factory"]["labs"] = {"count": 1, "without_packs": 1}
+    p["factory"]["machines"] = [{"type": "lab", "position": {"x": 1, "y": 1}}]
+    assert planner.next_step(p)[0] == {"skill": "tend"}         # no plates to craft packs from yet
+    p["inventory"] += [{"name": "copper-plate", "count": 20}]
+    assert planner.next_step(p)[0] == {"skill": "craft_for", "item": "automation-science-pack", "count": 10}
+    p["factory"]["assemblers"] = [{"recipe": "automation-science-pack"}]
+    assert planner.next_step(p)[0] == {"skill": "tend"}
+
+
+def test_far_water_goes_there_before_build_power():
+    p = labbed()
+    p["research"]["done"] = ["steam-power", "electronics"]
+    p["power"] = {"has_grid": False}
+    p["factory"]["by_type"] = {}
+    p["landmarks"]["water"] = {"x": -44, "y": -20, "distance": 44}
+    entry, _ = planner.next_step(p)
+    assert entry == {"skill": "goto", "position": {"x": -44, "y": -20}}
+
+
+def test_low_coal_with_far_coal_goes_there_first():
+    p = spawn()
+    p["inventory"] = [{"name": "coal", "count": 1}, {"name": "burner-mining-drill", "count": 1}]
+    p["landmarks"]["resources"][0].update(distance=44)
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert moves[0] == {"skill": "goto", "position": {"x": 43, "y": -13}}
+    assert {"skill": "gather", "item": "coal", "count": 50} in moves
+
+
+def green_ready() -> dict:
+    """Red cell running, logistic-science-pack researched, no green units yet."""
+    p = labbed()
+    p["research"]["done"] += ["logistics", "logistic-science-pack"]
+    p["production"]["items"].update({"automation-science-pack": {"per_min": 6}, "iron-plate": {"per_min": 35},
+                                     "copper-plate": {"per_min": 20}})
+    p["factory"]["assemblers"] = [{"recipe": "automation-science-pack"}, {"recipe": "iron-gear-wheel"},
+                                  {"recipe": "automation-science-pack"}]
+    p["inventory"] += [{"name": "assembling-machine-1", "count": 3}, {"name": "inserter", "count": 6}]
+    return p
+
+
+def test_green_cell_is_built_once_the_tech_is_done():
+    moves = [e for e, _ in planner.next_steps(green_ready())]
+    assert {"skill": "build_green_cell"} in moves
+    p = green_ready()
+    p["research"]["done"].remove("logistic-science-pack")
+    assert {"skill": "build_green_cell"} not in [e for e, _ in planner.next_steps(p)]
+
+
+def test_green_cell_crafts_the_parts_first_and_counts_built_units():
+    p = green_ready()
+    p["inventory"] = [i for i in p["inventory"] if i["name"] not in ("assembling-machine-1", "inserter")]
+    p["inventory"].append({"name": "iron-plate", "count": 300})
+    first = [e for e, _ in planner.next_steps(p)][:3]
+    assert first[0] == {"skill": "craft_for", "item": "assembling-machine-1", "count": 3}
+    assert first[1] == {"skill": "craft_for", "item": "inserter", "count": 6}
+    assert first[2] == {"skill": "build_green_cell"}
+    # one unit already standing besides the red cell's: still builds the rest
+    p["factory"]["assemblers"].append({"recipe": "electronic-circuit"})
+    p["factory"]["assemblers"] += [{"recipe": r} for r in planner.GREEN_UNITS[:1] if r != "iron-gear-wheel"]
+    assert {"skill": "build_green_cell"} in [e for e, _ in planner.next_steps(p)]
+
+
+def test_finished_green_cell_is_only_tended():
+    p = green_ready()
+    p["factory"]["assemblers"] += [{"recipe": r} for r in ("copper-cable", "electronic-circuit", "inserter",
+                                                           "transport-belt", "logistic-science-pack",
+                                                           "logistic-science-pack")]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "build_green_cell"} not in moves
+    assert {"skill": "tend"} in moves
+
+
+def test_smelted_trigger_items_are_not_hand_crafted():
+    p = labbed()
+    p["research"]["triggers"] = [{"tech": "steel-axe", "type": "craft-item", "target": "steel-plate", "count": 5}]
+    assert not any(e.get("item") == "steel-plate" for e, _ in planner.next_steps(p, limit=8))
+
+
+def threatened(**kw) -> dict:
+    p = labbed()
+    p["threat"] = {"nearest": {"name": "biter-spawner", "x": 90, "y": 0, "distance": 100}, **kw}
+    return p
+
+
+def test_enemies_near_home_research_the_turret_then_build_defense():
+    p = threatened()
+    assert planner.next_step(p)[0] == {"skill": "research", "tech": "gun-turret"}
+    p["research"]["done"] += ["gun-turret"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert moves[-1] == {"skill": "build_defense", "count": 3} or {"skill": "build_defense", "count": 3} in moves
+    assert {"skill": "craft_for", "item": "gun-turret", "count": 3} in moves
+
+
+def test_far_enemies_do_not_trigger_defense():
+    p = threatened()
+    p["threat"]["nearest"]["distance"] = 400
+    moves = [e for e, _ in planner.next_steps(p, limit=8)]
+    assert not any(e.get("skill") == "build_defense" or e.get("tech") == "gun-turret" for e in moves)
+
+
+def test_an_attack_triggers_defense_without_a_visible_nest():
+    p = labbed()
+    p["threat"] = {"nearest": None, "attack": {"name": "lab", "x": 5, "y": 5, "seconds_ago": 4}}
+    p["research"]["done"] += ["gun-turret"]
+    assert {"skill": "build_defense", "count": 3} in [e for e, _ in planner.next_steps(p, limit=8)]
+
+
+def test_built_turrets_end_the_defense_rule():
+    p = threatened()
+    p["research"]["done"] += ["gun-turret"]
+    p["factory"]["by_type"]["ammo-turret"] = 3
+    assert not any(e.get("skill") == "build_defense" for e, _ in planner.next_steps(p, limit=8))
+
+
 # --- coach -------------------------------------------------------------------
 
 FAIL = {"action": "skill:craft_for", "item": "lab", "count": 1, "ok": False,
@@ -494,3 +658,15 @@ def test_stuck_ai_goes_back_to_the_model(pilot):
     agent.coach.last_fail_turn = agent.coach.turn    # ...while moves keep failing
     agent.decide(req(2, p), cfg)
     assert rec.calls == 1
+
+def test_tend_blocks_do_not_escalate():
+    c = Coach()
+    spans = []
+    for key in ("skill:tend", "skill:gather"):
+        c.turn = 0
+        for _ in range(4):
+            b = {"fails": 0}
+            c._activate(key, b)
+            spans.append((key, b["until"] - c.turn))
+    assert [n for k, n in spans if k == "skill:tend"] == [6, 6, 6, 6]
+    assert [n for k, n in spans if k == "skill:gather"] == [6, 12, 24, 48]

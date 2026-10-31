@@ -36,8 +36,15 @@ from .providers import ProviderConfig
 
 log = logging.getLogger(__name__)
 
-# .env file sits next to this module (bridge/.env)
+# .env file sits next to this module (bridge/.env). BRIDGE_ENV_FILE (a process
+# environment variable) points at another file instead, e.g. the soak test's
+# throwaway settings, so a child bridge never reads the real .env.
 _ENV_FILE = Path(__file__).parent / ".env"
+
+
+def _env_file() -> Path:
+    override = os.environ.get("BRIDGE_ENV_FILE")
+    return Path(override) if override else _ENV_FILE
 
 # Fallback output dir if not set in .env or config.json.
 # For Docker deployments set FACTORIO_OUTPUT_DIR in bridge/.env instead.
@@ -174,7 +181,7 @@ class ConfigLoader:
     """
 
     def __init__(self, env_file: Path | None = None):
-        self._env_file = env_file or _ENV_FILE
+        self._env_file = env_file or _env_file()
         self._env = _load_env_file(self._env_file)
         if self._env:
             log.info("Loaded %d setting(s) from %s", len(self._env), self._env_file)

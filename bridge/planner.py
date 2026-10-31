@@ -29,6 +29,29 @@ SMELT_TARGET = {"iron-ore": ("iron-plate", 30), "copper-ore": ("copper-plate", 1
 BOOTSTRAP = [("coal", 1, "chest"), ("iron-ore", 2, "furnace"),
              ("copper-ore", 1, "furnace"), ("stone", 1, "chest")]
 FAR = 50  # tiles; build_miner only searches 64 around the character
+WATER_NEAR = 35  # tiles; build_power refuses water farther than 40
+DEFENSE_RANGE = 150   # tiles: an enemy nest this close to home (or any attack) means turrets
+DEFENSE_TURRETS = 3
+GATHER_NEAR = 35  # tiles; gather only searches 40 around the character
+
+
+# Techs to queue, in order, whenever nothing is being researched: the ladder's own
+# needs first (automation -> logistics -> green science), then defence and quality of
+# life. (tech, needs_green): green-pack techs wait until green science is made.
+RESEARCH_ORDER = [
+    ("automation", False), ("logistics", False), ("logistic-science-pack", False),
+    ("gun-turret", False), ("military", False), ("steel-processing", False),
+    ("fast-inserter", False), ("stone-wall", False),
+    ("physical-projectile-damage-1", False), ("weapon-shooting-speed-1", False),
+    ("automation-2", True), ("engine", True), ("electric-energy-distribution-1", True),
+    ("toolbelt", True), ("advanced-material-processing", True),
+]
+
+
+# Assembler units of the green cell (mod skills.lua GREEN_UNITS): gears, cable, circuits,
+# inserters, belts and two science assemblers.
+GREEN_UNITS = ["iron-gear-wheel", "copper-cable", "electronic-circuit", "inserter", "transport-belt",
+               "logistic-science-pack", "logistic-science-pack"]
 
 
 def entry_key(d: dict) -> str:
@@ -97,8 +120,9 @@ def _craft(inv: dict, item: str, want: int, why: str) -> Iterator[tuple[dict, st
         yield {"skill": "craft_for", "item": item, "count": want}, why, True
 
 
-def _goto_far(p: dict, lm: dict | None, what: str) -> Iterator[tuple[dict, str, bool]]:
-    if lm and lm.get("distance", 0) > FAR:
+def _goto_far(p: dict, lm: dict | None, what: str,
+              limit: int = FAR) -> Iterator[tuple[dict, str, bool]]:
+    if lm and lm.get("distance", 0) > limit:
         yield ({"skill": "goto", "position": {"x": lm["x"], "y": lm["y"]}},
                f"nearest {what} is {lm['distance']} tiles away", True)
 
@@ -108,7 +132,8 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
     power = p.get("power") or {}
     if goal_id == "power":
         if not power.get("has_grid") or not _by_type(p, "boiler"):
-            yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water")
+            yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water",
+                                 WATER_NEAR)
             for item, n in (("offshore-pump", 1), ("boiler", 1), ("steam-engine", 2), ("pipe", 5),
                             ("small-electric-pole", 6)):
                 yield from _craft(inv, item, n, f"steam power needs {n} {item}")
@@ -150,9 +175,26 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                     yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
                 yield {"skill": "build_red_cell"}, "automate red science", True
             yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
+    elif goal_id == "green":
+        if _tech(p, "logistic-science-pack"):
+            have = [a.get("recipe") for a in (factory.get("assemblers") or []) if isinstance(a, dict)]
+            missing = []
+            for recipe in GREEN_UNITS:
+                if recipe in have:
+                    have.remove(recipe)
+                else:
+                    missing.append(recipe)
+            if missing:
+                if inv.get("iron-plate", 0) < 60:
+                    yield {"skill": "tend"}, "collect plates for the green-science parts", True
+                n = min(3, len(missing))
+                yield from _craft(inv, "assembling-machine-1", n, f"{n} more green-science unit(s) need assemblers")
+                yield from _craft(inv, "inserter", 2 * n, f"{n} more green-science unit(s) need inserters")
+                yield {"skill": "build_green_cell"}, f"{len(missing)} green-science unit(s) still to build", True
+            yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
 
 
-def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
+def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:
     inv = _inv(p)
     factory = p.get("factory") or {}
     needs = p.get("needs") or {}
@@ -168,10 +210,27 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
     stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in ("ground", "container", "furnace")]
     if needs.get("burners_low_fuel") or stalled:
         yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
+    elif (p.get("power") or {}).get("machines_no_power") and _lab_count(p) + _by_type(p, "assembling-machine"):
+        yield {"skill": "tend"}, "a lab or assembler has no power: tend wires it to the grid", True
     if inv.get("coal", 0) < 5:
         if (factory.get("miners_by_resource") or {}).get("coal"):
             yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
+        yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
+
+    # 1b. Enemies near home or an attack on the AI's things: gun turrets with ammo.
+    threat = p.get("threat") or {}
+    nest = threat.get("nearest") or {}
+    if (nest and nest.get("distance", 1e9) <= DEFENSE_RANGE) or threat.get("attack"):
+        if _by_type(p, "ammo-turret") < DEFENSE_TURRETS:
+            if not _tech(p, "gun-turret"):
+                if research.get("current") != "gun-turret" and _lab_count(p):
+                    yield {"skill": "research", "tech": "gun-turret"}, "enemies are near: gun turrets need research", True
+            else:
+                need = DEFENSE_TURRETS - _by_type(p, "ammo-turret")
+                yield from _craft(inv, "gun-turret", need, f"{need} gun turret(s) against the nearby enemies")
+                yield from _craft(inv, "firearm-magazine", 10 * need, "ammo for the turrets")
+                yield {"skill": "build_defense", "count": DEFENSE_TURRETS}, "enemies near home: turrets toward them", True
 
     # 2. Burner bootstrap: drills on coal, iron, copper, stone.
     cur = goals.current(p)
@@ -194,6 +253,7 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
             yield ({"skill": "build_miner", "resource": resource, "output": output, "count": missing},
                    f"{miners.get(resource, 0)}/{want} drill(s) on {resource}", True)
             if inv.get("burner-mining-drill", 0) == 0:
+                yield from _goto_far(p, _landmark(p, "stone"), "stone", GATHER_NEAR)
                 yield ({"skill": "gather", "item": "stone", "count": 20},
                        "drills and furnaces need stone", True)
         yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up", True
@@ -205,6 +265,8 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
         target, n = t.get("target"), int(t.get("count") or 1)
         if not target:
             continue
+        if t.get("type") == "craft-item" and str(target).endswith(("-plate", "-brick")):
+            continue                # made by furnaces, not by hand: the base's smelting covers these
         if t.get("type") == "craft-item":
             yield ({"skill": "craft_for", "item": target, "count": inv.get(target, 0) + n},
                    f"crafting {n} new {target} unlocks {t.get('tech')}", False)
@@ -214,19 +276,40 @@ def _candidates(p: dict) -> Iterator[tuple[dict, str, bool]]:
                    f"mining {first} unlocks {t.get('tech')}", False)
 
     # 4. Research and labs.
-    if not research.get("current"):
-        yield {"skill": "research"}, "nothing is being researched", False
     labs = _labs(p)
+    if not research.get("current"):
+        # Only with a lab standing: queuing earlier would just sit there. Trigger techs
+        # (research.triggers) can't be queued; the loop above is how those get unlocked.
+        pending = {t.get("tech") for t in research.get("triggers") or []}
+        queued = False
+        if _lab_count(p):
+            for tech, needs_green in RESEARCH_ORDER:
+                if _tech(p, tech) or tech in pending or (needs_green and not _rate(p, "logistic-science-pack")):
+                    continue
+                entry = {"skill": "research", "tech": tech}
+                if entry_key(entry) in blocked:
+                    continue                # failed twice: take the next tech instead
+                yield entry, f"nothing is being researched — {tech} is next", True
+                queued = True
+                break
+        if not queued and goal_id != "automation":
+            yield {"skill": "research"}, "nothing is being researched", False
     if not _lab_count(p) and inv.get("lab", 0) > 0 and (p.get("home") or {}).get("position"):
         home = p["home"]["position"]
         yield ({"action": "place", "item": "lab", "position": {"x": home["x"] + 4, "y": home["y"] + 4}},
                "place the lab near home", True)
     if research.get("current") and (factory.get("labs") or {}).get("without_packs") and labs:
+        cell = any(isinstance(a, dict) and a.get("recipe") == "automation-science-pack"
+                   for a in factory.get("assemblers") or [])
         if inv.get("automation-science-pack", 0) > 0:
             yield ({"action": "insert", "item": "automation-science-pack",
                     "count": inv["automation-science-pack"], "position": labs[0]["position"],
                     "inventory": "lab"}, "a lab has no science packs", True)
+        elif cell:
+            yield {"skill": "tend"}, "the red cell makes the packs: haul plates into it", True
         else:
+            if inv.get("iron-plate", 0) < 20 or inv.get("copper-plate", 0) < 10:
+                yield {"skill": "tend"}, "collect plates for hand-crafting science packs", True
             yield ({"skill": "craft_for", "item": "automation-science-pack", "count": 10},
                    "labs need science packs", True)
 
@@ -238,7 +321,7 @@ def next_plan(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
               limit: int = MAX_MOVES) -> list[tuple[dict, str, bool]]:
     """The first `limit` distinct, unblocked moves as (entry, reason, sure)."""
     out, keys = [], set()
-    for entry, reason, sure in _candidates(p):
+    for entry, reason, sure in _candidates(p, blocked):
         k = entry_key(entry)
         if k in blocked or k in keys:
             continue

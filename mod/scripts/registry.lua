@@ -101,4 +101,65 @@ function AIRegistry.reconcile(surface, force)
   storage.ai_player.last_reconcile_tick = game.tick
 end
 
+-- ---------------------------------------------------------------------------
+-- Owned set: entities the AI itself placed (storage.ai_player.owned, keyed by
+-- unit_number). tend works from this, never from a surface scan: in co-op the AI
+-- shares the player force, so a scan would walk the human's whole base.
+-- "Owned" still also needs last_user == nil (see skills.lua ai_owned). NB: script
+-- entities from other mods have last_user nil too, which is why membership here,
+-- not last_user alone, decides what tend touches.
+-- ---------------------------------------------------------------------------
+local function owned_store()
+  storage.ai_player.owned = storage.ai_player.owned or {}
+  return storage.ai_player.owned
+end
+
+function AIRegistry.own(entity)
+  if not (entity and entity.valid and entity.unit_number) then return end
+  owned_store()[entity.unit_number] = entity
+  script.register_on_object_destroyed(entity)
+end
+
+function AIRegistry.disown(unit_number)
+  if unit_number and storage.ai_player and storage.ai_player.owned then
+    storage.ai_player.owned[unit_number] = nil
+  end
+end
+
+-- Valid owned entities of the given types on `surface` (pruning dead refs).
+function AIRegistry.owned(surface, types)
+  local set = {}
+  for _, t in ipairs(types) do set[t] = true end
+  local out = {}
+  local m = owned_store()
+  for un, e in pairs(m) do
+    if not e.valid then m[un] = nil
+    elseif e.surface == surface and set[e.type] and e.last_user == nil then out[#out + 1] = e end
+  end
+  return out
+end
+
+-- One-off rebuild for saves that predate the owned set: everything on the AI force
+-- with last_user nil within OWNED_RADIUS of each surface's home.
+local OWNED_RADIUS = 300
+function AIRegistry.rebuild_owned(types)
+  if not storage.ai_player then return end
+  local force = game.forces[storage.ai_player.force_name]
+  local m = {}
+  storage.ai_player.owned = m
+  if not force then return end
+  for _, surface in pairs(game.surfaces) do
+    local home = AICharacter.get_home(surface)
+    if home then
+      for _, e in ipairs(surface.find_entities_filtered{force = force, position = home, radius = OWNED_RADIUS,
+                                                        type = types}) do
+        if e.valid and e.unit_number and e.last_user == nil then
+          m[e.unit_number] = e
+          script.register_on_object_destroyed(e)
+        end
+      end
+    end
+  end
+end
+
 return AIRegistry

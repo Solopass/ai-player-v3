@@ -8,7 +8,11 @@ Date: 2026-10-30
     - In-game AI panel (top-left button or Ctrl+Shift+A) and a debug event log.
     - build_power (steam block), build_assembler, build_red_cell, electric mining pairs; tend hauls plates to assemblers.
     - /ai-selftest (self-test maps only; see tests/ingame/run_selftest.py).
+    - build_green_cell (green science from assembler units) and build_defense (gun turrets with ammo); tend loads turret ammo.
+    - /ai-soak-start, /ai-soak-speed, /ai-soak-snapshot (self-test maps only; see tests/ingame/run_soak.py).
   Changes:
+    - tend now looks after every AI-built machine on the surface, wires unpowered labs/assemblers to the grid, and picks up drills whose ore ran out.
+    - craft_for reports hand-crafts to the force statistics so "craft a lab" research triggers fire for the AI.
     - State-changing commands are admin-only; chat orders need ai:, ai, or !ai.
 ---------------------------------------------------------------------------------------------------
 Version: 0.4.2

@@ -5,20 +5,24 @@
 -- checks what actually got built and writes the verdict to
 -- script-output/ai-player/selftest.json. Driven by tests/ingame/run_selftest.py.
 --
--- Safety: refuses to run unless the map was created with SELFTEST_SEED (the
--- runner passes --map-gen-seed), so it can never touch a real save.
+-- Safety: refuses to run unless the map was created with one of the armed seeds
+-- (the runner passes --map-gen-seed) and no player ever joined, so it can never
+-- touch a real save.
+--
+-- The soak runner (tests/ingame/run_soak.py) uses the same arming on a normal
+-- generated map: /ai-soak-start, /ai-soak-speed <n> and /ai-soak-snapshot.
 
 AISelftest = {}
 
-local SEED = 424242
+local SEEDS = {[424242] = true, [2476103329] = true, [1873625901] = true, [3598211047] = true}   -- keep in sync with run_soak.py
 local OUT = "ai-player/selftest.json"
 local FACINGS = {"north", "east", "south", "west"}
 local STEP = {north = {0, -1}, east = {1, 0}, south = {0, 1}, west = {-1, 0}}
 
 local function armed()
   local s = game.surfaces["nauvis"]
-  -- The runner's map has the fixed seed and never a player; any real save has one.
-  return s ~= nil and s.map_gen_settings.seed == SEED and #game.players == 0
+  -- The runner's map has an armed seed and never a player; any real save has one.
+  return s ~= nil and SEEDS[s.map_gen_settings.seed] == true and #game.players == 0
 end
 
 local function write_result(r)
@@ -296,6 +300,194 @@ CASES.electric_miner = {
   end,
 }
 
+-- Machines 100+ tiles from the AI (ore patches lie far apart on a real map): tend
+-- must still empty their furnaces and refuel their drills.
+CASES.tend_far = {
+  delay = 120,
+  setup = function(c)
+    local f = c.surface.create_entity{name = "stone-furnace", position = {90, 90}, force = c.force}
+    f.get_inventory(defines.inventory.crafter_output).insert{name = "iron-plate", count = 12}
+    c.furnace = f
+    c.drill = c.surface.create_entity{name = "burner-mining-drill", position = {-95, -90}, force = c.force}
+    c.chest = c.surface.create_entity{name = "iron-chest", position = {-95, -88}, force = c.force}
+    for _, e in ipairs({f, c.drill, c.chest}) do AIRegistry.own(e) end
+    c.chest.insert{name = "coal", count = 30}
+    c.before = c.character.get_inventory(defines.inventory.character_main).get_item_count("iron-plate")
+  end,
+  run = function(c) return {{skill = "tend"}} end,
+  check = function(c, add)
+    local inv = c.character.get_inventory(defines.inventory.character_main)
+    add("tend ok", c.results[1].ok, c.results[1].detail)
+    add("far furnace emptied", c.furnace.valid and c.furnace.get_inventory(defines.inventory.crafter_output).is_empty())
+    add("plates reached the AI", inv.get_item_count("iron-plate") >= c.before + 12, inv.get_item_count("iron-plate"))
+    add("far drill refuelled", c.drill.valid and c.drill.get_fuel_inventory().get_item_count("coal") > 0)
+    add("AI is back where it started", math.abs(c.character.position.x) < 20 and math.abs(c.character.position.y) < 20,
+        c.character.position.x .. "," .. c.character.position.y)
+  end,
+}
+
+-- A bare script character's hand-crafting doesn't count for the "craft a lab" research
+-- trigger on its own (verified); craft_for reports it to the force's statistics.
+-- Fresh force with only steam-power and electronics researched.
+CASES.lab_trigger = {
+  delay = 1800,
+  setup = function(c)
+    local f = game.create_force("ai-trig-" .. game.tick)
+    f.technologies["steam-power"].researched = true
+    f.technologies["electronics"].researched = true
+    local ch = c.surface.create_entity{name = "character", position = {6.5, 0.5}, force = f}
+    ch.character_crafting_speed_modifier = 5
+    give(ch, {["iron-plate"] = 200, ["copper-plate"] = 100})
+    c.trig_force, c.trig_char = f, ch
+    c.trig_ok, c.trig_detail = AISkills.REGISTRY.craft_for(ch, {skill = "craft_for", item = "lab", count = 1})
+  end,
+  run = function() return {} end,
+  check = function(c, add)
+    local labs = c.trig_char.get_inventory(defines.inventory.character_main).get_item_count("lab")
+    add("craft_for queued the lab", c.trig_ok, c.trig_detail)
+    add("lab crafted", labs > 0, labs)
+    add("craft-a-lab trigger fired", c.trig_force.technologies["automation-science-pack"].researched)
+  end,
+}
+
+-- A lab standing 40 tiles from the nearest live pole (placed before the grid got there):
+-- tend must run a pole chain to it.
+CASES.tend_wire = {
+  delay = 300,
+  setup = function(c)
+    free_power(c.surface, c.force, 15, 15)
+    c.lab = c.surface.create_entity{name = "lab", position = {50.5, 40.5}, force = c.force}
+    AIRegistry.own(c.lab)
+    give(c.character, {["small-electric-pole"] = 12})
+  end,
+  run = function(c) return {{skill = "tend"}} end,
+  check = function(c, add)
+    add("tend ok", c.results[1].ok, c.results[1].detail)
+    add("tend says it wired the lab", tostring(c.results[1].detail):find("wired") ~= nil, c.results[1].detail)
+    local st = c.lab.status
+    add("lab is powered", st ~= defines.entity_status.no_power
+        and st ~= defines.entity_status.not_plugged_in_electric_network, st)
+    add("AI is back where it started", math.abs(c.character.position.x) < 20 and math.abs(c.character.position.y) < 20)
+  end,
+}
+
+-- A drill with nothing left to mine: tend picks it up (and its furnace) for reuse.
+CASES.tend_depleted = {
+  delay = 400,
+  setup = function(c)
+    c.drill = c.surface.create_entity{name = "burner-mining-drill", position = {20, 20}, force = c.force, direction = defines.direction.east}
+    c.drill.insert{name = "coal", count = 5}          -- fuelled, so its status says "no ore" rather than "no fuel"
+    AIRegistry.own(c.drill)
+    c.furnace = c.drill.drop_target or c.surface.create_entity{name = "stone-furnace", position = {22.5, 19.5}, force = c.force}
+    c.before = c.character.get_inventory(defines.inventory.character_main).get_item_count("burner-mining-drill")
+  end,
+  run = function() return {} end,
+  late = function(c) return {{skill = "tend"}} end,
+  late_after = 120,
+  check = function(c, add)
+    local inv = c.character.get_inventory(defines.inventory.character_main)
+    add("tend ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    add("drill picked up", not c.drill.valid)
+    add("drill is back in the inventory", inv.get_item_count("burner-mining-drill") > c.before, inv.get_item_count("burner-mining-drill"))
+  end,
+}
+
+-- Green science: seven assembler units in three build calls, then one tend hauls plates in.
+-- (The whole chain needs several tends; this checks the build and the first hop.)
+CASES.green_cell = {
+  delay = 1500,
+  setup = function(c)
+    free_power(c.surface, c.force, 15, 15)
+    give(c.character, {["assembling-machine-1"] = 7, inserter = 14, ["wooden-chest"] = 16,
+                       ["small-electric-pole"] = 30, ["iron-plate"] = 400, ["copper-plate"] = 200})
+  end,
+  run = function(c)
+    return {{skill = "build_green_cell"}, {skill = "build_green_cell"}, {skill = "build_green_cell"}}
+  end,
+  late = function(c) return {{skill = "tend"}} end,
+  late_after = 120,
+  check = function(c, add)
+    for i = 1, 3 do add("build_green_cell #" .. i .. " ok", c.results[i].ok, c.results[i].detail) end
+    local recipes = {}
+    for _, a in ipairs(c.surface.find_entities_filtered{type = "assembling-machine"}) do
+      local r = a.get_recipe()
+      if r then recipes[r.name] = (recipes[r.name] or 0) + 1 end
+    end
+    for _, name in ipairs({"iron-gear-wheel", "copper-cable", "electronic-circuit", "inserter", "transport-belt"}) do
+      add("unit for " .. name, recipes[name] == 1, recipes[name])
+    end
+    add("2 science units", recipes["logistic-science-pack"] == 2, recipes["logistic-science-pack"])
+    add("tend hauled plates", tostring(c.results[4] and c.results[4].detail):find("hauled") ~= nil,
+        c.results[4] and c.results[4].detail)
+    local made = 0
+    for _, a in ipairs(c.surface.find_entities_filtered{type = "assembling-machine"}) do
+      local r = a.get_recipe()
+      if r and (r.name == "iron-gear-wheel" or r.name == "copper-cable") then made = made + a.products_finished end
+    end
+    add("gear and cable units produced", made > 0, made)
+    local again, detail = AISkills.REGISTRY.build_green_cell(c.character, {})
+    add("a fourth call finds nothing to build", again == false and tostring(detail):find("all 7") ~= nil, detail)
+  end,
+}
+
+-- Gun turrets toward a nest, loaded; tend tops an emptied one back up.
+CASES.defense = {
+  delay = 600,
+  setup = function(c)
+    c.surface.create_entity{name = "biter-spawner", position = {70, 0}, force = "enemy"}
+    give(c.character, {["gun-turret"] = 3, ["firearm-magazine"] = 60})
+  end,
+  run = function(c) return {{skill = "build_defense", count = 3}} end,
+  late = function(c)
+    for _, t in ipairs(c.surface.find_entities_filtered{name = "gun-turret"}) do
+      t.get_inventory(defines.inventory.turret_ammo).clear()
+      break
+    end
+    return {{skill = "tend"}}
+  end,
+  late_after = 120,
+  check = function(c, add)
+    add("build_defense ok", c.results[1].ok, c.results[1].detail)
+    local turrets = c.surface.find_entities_filtered{name = "gun-turret"}
+    add("3 turrets built", #turrets == 3, #turrets)
+    for _, t in ipairs(turrets) do
+      local ammo = t.get_inventory(defines.inventory.turret_ammo).get_item_count("firearm-magazine")
+      add("turret at " .. math.floor(t.position.x) .. "," .. math.floor(t.position.y) .. " is loaded", ammo >= 10, ammo)
+      add("turret lies between home and the nest", t.position.x > 8 and t.position.x < 70, t.position.x)
+    end
+    add("tend loaded magazines", tostring(c.results[2] and c.results[2].detail):find("loaded") ~= nil,
+        c.results[2] and c.results[2].detail)
+    local ai = c.character
+    add("a second call finds the turrets standing", select(1, AISkills.REGISTRY.build_defense(ai, {count = 3})) == false)
+  end,
+}
+
+-- tend looks after what the AI placed (the owned set) and leaves anything else alone,
+-- even with last_user nil (a player's or another mod's script entity).
+CASES.tend_registry = {
+  delay = 120,
+  setup = function(c)
+    local function furnace(x)
+      local f = c.surface.create_entity{name = "stone-furnace", position = {x, 30}, force = c.force}
+      f.get_inventory(defines.inventory.crafter_output).insert{name = "iron-plate", count = 7}
+      return f
+    end
+    c.mine, c.theirs = furnace(10), furnace(20)
+    AIRegistry.own(c.mine)
+  end,
+  run = function() return {{skill = "tend"}} end,
+  check = function(c, add)
+    add("tend ok", c.results[1].ok, c.results[1].detail)
+    add("registered furnace emptied", c.mine.get_inventory(defines.inventory.crafter_output).is_empty())
+    add("unregistered furnace untouched", c.theirs.get_inventory(defines.inventory.crafter_output).get_item_count("iron-plate") == 7)
+    c.mine.destroy()
+    AIRegistry.owned(c.surface, AISkills.TEND_TYPES)         -- prunes dead references
+    local dead = 0
+    for _, e in pairs(storage.ai_player.owned) do if not e.valid then dead = dead + 1 end end
+    add("destroyed entity leaves the owned set", dead == 0, dead)
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,
@@ -399,6 +591,66 @@ script.on_nth_tick(30, function()
     if not ok then return finish({ok = false, case = st.case, run_id = st.run_id, detail = "late phase: " .. tostring(err)}) end
   end
   if st.check_tick and game.tick >= st.check_tick then conclude() end
+end)
+
+-- ---------------------------------------------------------------------------
+-- Soak support (armed maps only, RCON/console only)
+-- ---------------------------------------------------------------------------
+local SOAK_MAX_SPEED = 4
+
+-- The headless server has no player to generate chunks as the AI walks, so
+-- ask for them around it (non-blocking) every 30 s.
+script.on_nth_tick(1800, function()
+  if not (storage.soak and storage.soak.on) or not armed() then return end
+  local ch = storage.ai_player and storage.ai_player.character
+  if ch and ch.valid then
+    ch.surface.request_to_generate_chunks(ch.position, 5)
+  end
+end)
+
+local function soak_start()
+  local s = game.surfaces["nauvis"]
+  s.request_to_generate_chunks({0, 0}, 8)
+  s.force_generate_chunk_requests()
+  storage.soak = {on = true, start_tick = game.tick}
+end
+
+-- One full perception (what the bridge sees) plus soak extras, as a file the
+-- runner reads: RCON replies are too small for it.
+local function soak_snapshot()
+  local ch = storage.ai_player and storage.ai_player.character
+  local out = {tick = game.tick, speed = game.speed, character_valid = ch ~= nil and ch.valid}
+  if out.character_valid then
+    out.perception = AIPerception.gather(ch)
+    local lost = storage.soak and storage.soak.lost or {}
+    out.lost = lost
+    local made = {}                  -- recipe -> products finished by AI-force assemblers
+    for _, a in ipairs(ch.surface.find_entities_filtered{type = "assembling-machine", force = ch.force}) do
+      local r = a.get_recipe()
+      if r then made[r.name] = (made[r.name] or 0) + a.products_finished end
+    end
+    out.assembler_products = made
+    out.enemies_seen = #ch.surface.find_entities_filtered{type = "unit-spawner", force = "enemy", position = ch.position, radius = 300}
+  end
+  helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json(out), false, 0)
+end
+
+local function soak_command(name, fn)
+  commands.add_command(name, "Soak-test support (armed maps only)", function(cmd)
+    if cmd.player_index then return end        -- RCON / console only
+    if not armed() then return end
+    fn(cmd)
+  end)
+end
+
+soak_command("ai-soak-start", function() soak_start() end)
+soak_command("ai-soak-snapshot", function()
+  local ok, err = pcall(soak_snapshot)
+  if not ok then helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json({error = tostring(err)}), false, 0) end
+end)
+soak_command("ai-soak-speed", function(cmd)
+  local n = tonumber(cmd.parameter) or 1
+  game.speed = math.max(0.25, math.min(SOAK_MAX_SPEED, n))
 end)
 
 commands.add_command("ai-selftest", "Run an in-game self-test case (self-test maps only)", function(cmd)

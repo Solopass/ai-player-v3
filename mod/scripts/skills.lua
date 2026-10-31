@@ -483,6 +483,7 @@ local function skill_build_ghosts(character, _)
         -- tile; teleporting there makes the CHARACTER block the spot and revive()
         -- fails. revive() is a force-level op and needs no character reach.
         local _, ent = g.revive{raise_revive = false}
+        if ent and ent.valid then AIRegistry.own(ent) end
         if not (ent and ent.valid) then
           -- The character may be standing ON this ghost (e.g. its home tile).
           -- Step aside to a spot clear of the ghost footprint and retry once.
@@ -754,6 +755,25 @@ local function unlock_hint(force, recipe_name)
   return "not unlocked by any remaining tech"
 end
 
+-- A bare script character's hand-crafting doesn't count toward "craft X" research
+-- triggers (only a connected player's does), so the AI could never unlock
+-- automation-science-pack by crafting a lab. The trigger reads the force's production
+-- statistics, so report the craft there. (A craft cancelled afterwards still counts, so
+-- the tech can unlock slightly early; accepted.)
+local function credit_craft_trigger(character, item, n)
+  local force = character.force
+  for _, t in pairs(force.technologies) do
+    local trig = t.prototype.research_trigger
+    if trig and trig.type == "craft-item" and t.enabled and not t.researched then
+      local target = type(trig.item) == "table" and trig.item.name or trig.item
+      if target == item then
+        force.get_item_production_statistics(character.surface).on_flow(item, n)
+        return
+      end
+    end
+  end
+end
+
 local function skill_craft_for(character, p)
   local item = p.item
   if not item then return false, "craft_for: 'item' is required" end
@@ -810,6 +830,7 @@ local function skill_craft_for(character, p)
     queued = character.begin_crafting{recipe = r, count = math.min(crafts, can), silent = true}
   end
   local detail = string.format("craft_for: queued %d craft(s) of %s", queued, item)
+  if queued > 0 then credit_craft_trigger(character, item, queued * product_amount(r, item)) end
   if queued < crafts then
     local have = {}
     for _, it in ipairs(inv.get_contents()) do have[it.name] = (have[it.name] or 0) + it.count end
@@ -1055,6 +1076,105 @@ local function skill_build_red_cell(character, _)
 end
 
 -- -------------------------------------------------------------------------
+-- build_green_cell() — green science from assembler units that build_assembler
+-- makes (chest -> inserter -> assembler -> inserter -> chest): gears, copper cable,
+-- circuits, inserters, belts, and two logistic-science-pack assemblers. tend hauls
+-- plates in, carries each unit's output to the next unit's input chest, and the
+-- packs to the labs. Builds up to 3 missing units per call.
+-- -------------------------------------------------------------------------
+local GREEN_UNITS = {"iron-gear-wheel", "copper-cable", "electronic-circuit", "inserter", "transport-belt",
+                     "logistic-science-pack", "logistic-science-pack"}
+
+local function skill_build_green_cell(character, _)
+  local force = character.force
+  local surface = character.surface
+  if not force.recipes["logistic-science-pack"].enabled then
+    return false, "build_green_cell: logistic-science-pack is locked — research it first"
+  end
+  local have = {}
+  for _, a in ipairs(surface.find_entities_filtered{type = "assembling-machine", force = force}) do
+    local r = a.get_recipe()
+    if a.last_user == nil and r then have[r.name] = (have[r.name] or 0) + 1 end
+  end
+  local missing = {}
+  for _, recipe in ipairs(GREEN_UNITS) do
+    if (have[recipe] or 0) > 0 then have[recipe] = have[recipe] - 1 else missing[#missing + 1] = recipe end
+  end
+  if #missing == 0 then
+    return false, "build_green_cell: all 7 units exist — tend them"
+  end
+  local built, notes = {}, nil
+  for i = 1, math.min(#missing, 3) do
+    local ok, detail = skill_build_assembler(character, {recipe = missing[i], count = 1})
+    if not ok then notes = detail; break end
+    built[#built + 1] = missing[i]
+  end
+  if #built == 0 then return false, notes end
+  local detail = string.format("built green-science units: %s (%d of 7 still to build)", table.concat(built, ", "),
+                               #missing - #built)
+  if notes then detail = detail .. "; stopped: " .. notes end
+  return true, detail
+end
+
+-- -------------------------------------------------------------------------
+-- build_defense([count]) — 2-4 gun turrets on the side of home facing the nearest
+-- enemy nest (or the latest attack), each loaded with firearm magazines. tend keeps
+-- them stocked.
+-- -------------------------------------------------------------------------
+local TURRET_AMMO, TURRET_MAX_COUNT = 10, 4
+
+local function skill_build_defense(character, p)
+  local force, surface = character.force, character.surface
+  local recipe = force.recipes["gun-turret"]
+  if not (recipe and recipe.enabled) then
+    return false, "build_defense: gun-turret is locked — research gun-turret first"
+  end
+  local want = math.max(1, math.min(tonumber(p.count) or 3, TURRET_MAX_COUNT))
+  local home = AICharacter.get_home(surface) or character.position
+  local have = surface.count_entities_filtered{name = "gun-turret", force = force, position = home, radius = 60}
+  if have >= want then
+    return false, "build_defense: " .. have .. " gun turrets already stand near home — tend keeps them stocked"
+  end
+  -- Which way the danger lies: the nearest nest, else where the AI was last attacked.
+  local dx, dy
+  local nest, nd
+  for _, e in ipairs(surface.find_entities_filtered{position = home, radius = 300, force = "enemy",
+                                                    type = {"unit-spawner", "turret"}}) do
+    local d = (e.position.x - home.x) ^ 2 + (e.position.y - home.y) ^ 2
+    if not nd or d < nd then nest, nd = e, d end
+  end
+  local atk = storage.ai_player and storage.ai_player.last_attack
+  if nest then dx, dy = nest.position.x - home.x, nest.position.y - home.y
+  elseif atk then dx, dy = atk.x - home.x, atk.y - home.y
+  else dx, dy = 1, 0 end
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len < 1 then dx, dy, len = 1, 0, 1 end
+  dx, dy = dx / len, dy / len
+  local need = want - have
+  local ready, why = stock_up(character, {["gun-turret"] = need, ["firearm-magazine"] = need * TURRET_AMMO}, "build_defense")
+  if not ready then return false, why end
+  local inv = inv_of(character)
+  local built = 0
+  -- a line across the approach, 18 tiles out from home, 4 tiles apart
+  for i = 1, need do
+    local off = (i - (need + 1) / 2) * 4
+    local at = {x = home.x + dx * 18 - dy * off, y = home.y + dy * 18 + dx * off}
+    local spot = surface.find_non_colliding_position("gun-turret", at, 8, 1)
+    if spot and AIActions.run(character, {action = "place", item = "gun-turret", position = spot}) then
+      local t = surface.find_entities_filtered{name = "gun-turret", position = spot, radius = 1, limit = 1}[1]
+      if t then
+        local put = t.insert{name = "firearm-magazine", count = math.min(TURRET_AMMO, inv.get_item_count("firearm-magazine"))}
+        if put > 0 then inv.remove{name = "firearm-magazine", count = put} end
+        built = built + 1
+      end
+    end
+  end
+  if built == 0 then return false, "build_defense: no clear spot for a gun turret toward the threat" end
+  return true, string.format("built %d gun turret(s) %d tiles toward %s, each with %d magazines", built, 18,
+    nest and string.format("the nest at {%d,%d}", nest.position.x, nest.position.y) or "the last attack", TURRET_AMMO)
+end
+
+-- -------------------------------------------------------------------------
 -- tend() — look after the AI's own burner base near home in one call:
 -- collect plates/ore from its furnaces and chests, refuel its burners, feed
 -- ore into idle furnaces, and give drills that spill onto the ground a
@@ -1063,7 +1183,10 @@ end
 -- co-op it never empties the player's machines.
 -- -------------------------------------------------------------------------
 local SMELTS = {["iron-ore"] = "iron-plate", ["copper-ore"] = "copper-plate", ["stone"] = "stone-brick"}
-local TEND_RADIUS = 64
+local TURRET_REFILL = 10
+AISkills.TEND_TYPES = {"mining-drill", "furnace", "container", "boiler", "inserter", "assembling-machine", "lab",
+                       "ammo-turret"}
+local TEND_MAX = 400      -- machines one tend looks after
 -- Hauling into assembler chests: fill each to HAUL_FILL, at most HAUL_CAP items per
 -- tend, and never dig into the last HAUL_RESERVE of anything the AI crafts with.
 local HAUL_FILL, HAUL_CAP, HAUL_RESERVE = 50, 200, 20
@@ -1095,21 +1218,18 @@ local function skill_tend(character, _)
   local center = AICharacter.get_home(surface) or character.position
   local got, fueled, fed, fixed, notes = {}, 0, 0, 0, {}
 
-  -- Around home AND around the AI (it builds at distant ore patches too).
-  local own, seen = {}, {}
-  for _, at in ipairs({center, character.position}) do
-    for _, e in ipairs(surface.find_entities_filtered{force = character.force, position = at,
-                       radius = TEND_RADIUS, type = {"mining-drill", "furnace", "container", "boiler", "inserter",
-                                                   "assembling-machine", "lab"}}) do
-      if ai_owned(e) and not seen[e.unit_number] then
-        seen[e.unit_number] = true
-        own[#own + 1] = e
-      end
-    end
+  -- Every machine the AI placed (registry.lua owned set; ore patches can lie 100+ tiles from
+  -- home and from each other, and the AI only teleports below where it must place something).
+  if storage.ai_player.owned == nil then AIRegistry.rebuild_owned(AISkills.TEND_TYPES) end
+  local own = {}
+  for _, e in ipairs(AIRegistry.owned(surface, AISkills.TEND_TYPES)) do
+    own[#own + 1] = e
+    if #own >= TEND_MAX then break end
   end
   if #own == 0 then
-    return true, "tend: no AI-built drills/furnaces/chests within " .. TEND_RADIUS .. " tiles of home yet"
+    return true, "tend: no AI-built drills/furnaces/chests yet"
   end
+  local origin = character.position
 
   -- 1. collect output: furnace results, and chests a drill fills (other chests
   -- may be storage the AI deposited into on purpose)
@@ -1119,6 +1239,42 @@ local function skill_tend(character, _)
     elseif (e.type == "mining-drill" or e.type == "inserter") and e.drop_target
            and e.drop_target.type == "container" then
       take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
+    end
+  end
+
+  -- 1a. what assembler units made: the output chest of each unit goes into the inventory
+  -- (the next unit's input chest is filled from it in step 5; science packs go to the labs)
+  local made = {}
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "assembling-machine" then
+      local r = e.get_recipe()
+      if r then made[r.name] = true end
+    end
+    local src, dst = e.valid and e.type == "inserter" and e.pickup_target, e.valid and e.type == "inserter" and e.drop_target
+    if src and dst and src.valid and dst.valid and src.type == "assembling-machine" and dst.type == "container" then
+      take_all(dst.get_inventory(defines.inventory.chest), inv, got)
+    end
+  end
+
+  -- 1b. drills whose ore ran out: pick them (and the furnace/chest only they fed) up, so the
+  -- planner rebuilds them on fresh ore
+  local recycled = 0
+  local feeding = {}                  -- collector unit_number -> drills dropping into it
+  for _, d in ipairs(own) do
+    local t = d.valid and d.type == "mining-drill" and d.drop_target
+    if t and t.unit_number then feeding[t.unit_number] = (feeding[t.unit_number] or 0) + 1 end
+  end
+  for _, d in ipairs(own) do
+    if d.valid and d.type == "mining-drill" and d.status == defines.entity_status.no_minable_resources then
+      local t = d.drop_target
+      if d.mine{inventory = inv, force = false, raise_destroyed = true} then
+        recycled = recycled + 1
+        if t and t.valid and ai_owned(t) and (t.type == "furnace" or t.type == "container")
+           and (feeding[t.unit_number] or 0) <= 1 then
+          take_all(t.get_inventory(t.type == "furnace" and defines.inventory.crafter_output or defines.inventory.chest), inv, got)
+          t.mine{inventory = inv, force = false, raise_destroyed = true}
+        end
+      end
     end
   end
 
@@ -1136,6 +1292,11 @@ local function skill_tend(character, _)
             if n >= st.count then ie.destroy() else st.count = st.count - n end
           end
         end
+      end
+      if math.abs(d.position.x - character.position.x) + math.abs(d.position.y - character.position.y) > 12 then
+        -- placing needs the AI beside the drill; it goes back to where it was at the end
+        local near = surface.find_non_colliding_position("character", d.position, 6, 0.5)
+        if near then character.teleport(near) end
       end
       local res = AISkills.drill_resource(d)
       local want = (res and SMELTS[res] and res ~= "stone") and {"stone-furnace"} or {"wooden-chest", "iron-chest"}
@@ -1163,6 +1324,8 @@ local function skill_tend(character, _)
       end
     end
   end
+
+  character.teleport(origin)
 
   -- 3. refuel (furnaces placed in step 2 included)
   for _, e in ipairs(own) do
@@ -1233,8 +1396,9 @@ local function skill_tend(character, _)
       for _, chest in ipairs(f.chests) do
         local ci = ing.type == "item" and chest.valid and chest.get_inventory(defines.inventory.chest)
         if ci then
-          local n = math.min(HAUL_FILL - ci.get_item_count(ing.name), inv.get_item_count(ing.name) - HAUL_RESERVE,
-                             HAUL_CAP - hauled)
+          -- things the units make are not kept back for hand-crafting
+          local n = math.min(HAUL_FILL - ci.get_item_count(ing.name),
+                             inv.get_item_count(ing.name) - (made[ing.name] and 0 or HAUL_RESERVE), HAUL_CAP - hauled)
           if n > 0 then
             local ins = ci.insert{name = ing.name, count = n}
             if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
@@ -1255,14 +1419,51 @@ local function skill_tend(character, _)
     end
   end
 
+  -- 5b. gun turrets: top their ammo up from the inventory, crafting magazines when out
+  local ammo_given = 0
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "ammo-turret" then
+      local ai = e.get_inventory(defines.inventory.turret_ammo)
+      local short = TURRET_REFILL - (ai and ai.get_item_count("firearm-magazine") or 0)
+      if ai and short > 0 then
+        if inv.get_item_count("firearm-magazine") == 0 then
+          character.begin_crafting{recipe = "firearm-magazine", count = 5, silent = true}
+        end
+        local n = math.min(short, inv.get_item_count("firearm-magazine"))
+        if n > 0 then
+          local ins = ai.insert{name = "firearm-magazine", count = n}
+          if ins > 0 then inv.remove{name = "firearm-magazine", count = ins}; ammo_given = ammo_given + ins end
+        end
+      end
+    end
+  end
+
+  -- 6. wire consumers no pole reaches (the lab went down before the grid got there)
+  local wired = 0
+  for _, e in ipairs(own) do
+    if wired < 2 and e.valid and (e.type == "lab" or e.type == "assembling-machine")
+       and (e.status == defines.entity_status.no_power
+            or e.status == defines.entity_status.not_plugged_in_electric_network) then
+      local plan = AILayout.find_consumer_poles(character, e)
+      if plan and stock_up(character, AILayout.items({plan}), "tend") and AILayout.build(character, plan) then
+        wired = wired + 1
+      end
+    end
+  end
+  if wired > 0 then character.teleport(origin) end
+
   local parts = {}
   for name, n in pairs(got) do parts[#parts + 1] = n .. "x " .. name end
   table.sort(parts)
   local idle = #parts == 0 and fueled == 0 and fed == 0 and fixed == 0 and hauled == 0 and packs_fed == 0
+               and wired == 0 and recycled == 0 and ammo_given == 0
   local detail = string.format("tend: collected %s; refueled %d, fed %d furnace(s), fixed %d spilling drill(s)",
     #parts > 0 and table.concat(parts, ", ") or "nothing", fueled, fed, fixed)
   if hauled > 0 then detail = detail .. string.format("; hauled %d plates into assembler chests", hauled) end
   if packs_fed > 0 then detail = detail .. string.format("; fed %d science pack(s) to labs", packs_fed) end
+  if wired > 0 then detail = detail .. string.format("; wired %d unpowered machine(s) to the grid", wired) end
+  if ammo_given > 0 then detail = detail .. string.format("; loaded %d magazine(s) into gun turrets", ammo_given) end
+  if recycled > 0 then detail = detail .. string.format("; picked up %d drill(s) whose ore ran out", recycled) end
   if inv.get_item_count("coal") == 0 then detail = detail .. "; OUT OF COAL — gather coal or build_miner coal" end
   if #notes > 0 then detail = detail .. "; " .. table.concat(notes, "; ", 1, math.min(#notes, 3)) end
   -- Nothing done = not useful this turn; the bridge doesn't count it as a
@@ -1281,6 +1482,8 @@ AISkills.REGISTRY = {
   build_power      = skill_build_power,
   build_assembler  = skill_build_assembler,
   build_red_cell   = skill_build_red_cell,
+  build_green_cell = skill_build_green_cell,
+  build_defense    = skill_build_defense,
   build_smelter    = skill_build_smelter,
   fuel_all         = skill_fuel_all,
   tend             = skill_tend,

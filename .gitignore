@@ -30,3 +30,6 @@ server/
 
 # Your own and community blueprint imports (bridge/blueprints.py)
 blueprints/local/
+
+# Soak test output (tests/ingame/run_soak.py)
+tests/ingame/soak-out/

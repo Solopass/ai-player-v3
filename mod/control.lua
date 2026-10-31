@@ -397,6 +397,7 @@ script.on_configuration_changed(function()
   AIGui.reset_all()
   for _, p in pairs(game.players) do AIGui.ensure_button(p) end
   storage.ai_player.pending_requests = {}
+  AIRegistry.rebuild_owned(AISkills.TEND_TYPES)
   reconcile_character()
   -- Give an already-spawned character a home anchor if it lacks one (e.g. after
   -- updating to a mod version that added home tracking mid-session).
@@ -570,9 +571,32 @@ local death_filters = {}
 for _, f in ipairs(AIRegistry.event_filters()) do death_filters[#death_filters + 1] = f end
 death_filters[#death_filters + 1] = {filter = "type", type = "character", mode = "or"}
 
+-- An enemy hit something the AI owns: remember where and when (perception.threat.attack).
+local function ai_owned_target(e)
+  return e.valid and storage.ai_player and e.force == AICharacter.get_force()
+    and (e.type == "character" or e.last_user == nil)
+end
+
+script.on_event(defines.events.on_entity_damaged, function(event)
+  if not storage.ai_player or not (event.force and event.force.name == "enemy") then return end
+  local e = event.entity
+  if ai_owned_target(e) then
+    storage.ai_player.last_attack = {tick = event.tick, x = math.floor(e.position.x),
+                                     y = math.floor(e.position.y), name = e.name}
+  end
+end, {{filter = "turret"}, {filter = "crafting-machine", mode = "or"}, {filter = "type", type = "mining-drill", mode = "or"},
+      {filter = "type", type = "lab", mode = "or"}, {filter = "type", type = "character", mode = "or"},
+      {filter = "type", type = "container", mode = "or"}})
+
 script.on_event(defines.events.on_entity_died, function(event)
   on_machine_removed(event)
   if not storage.ai_player then return end
+  -- soak runs count what the enemy destroyed (selftest.lua soak_snapshot)
+  if storage.soak and storage.soak.on and event.force and event.force.name == "enemy" and ai_owned_target(event.entity) then
+    local lost = storage.soak.lost or {}
+    storage.soak.lost = lost
+    lost[event.entity.name] = (lost[event.entity.name] or 0) + 1
+  end
   if event.entity == storage.ai_player.character then
     game.print("[AI] Character died — respawning in 5s", {r=1, g=0.5, b=0})
     -- Respawn on the planet it died on, not Nauvis.
@@ -1032,3 +1056,8 @@ AIGui.set_actions({
   bring_ai_to = bring_ai_to,
   run_skill_text = run_skill_text,
 })
+
+-- An owned entity was destroyed: drop it from the owned set (registry.lua).
+script.on_event(defines.events.on_object_destroyed, function(event)
+  if event.type == defines.target_type.entity then AIRegistry.disown(event.useful_id) end
+end)
