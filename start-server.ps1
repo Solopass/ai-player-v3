@@ -4,11 +4,11 @@
 # Connect to address -> 127.0.0.1
 #
 #   .\start-server.ps1                     # newest save in %APPDATA%\Factorio\saves
-#   .\start-server.ps1 -Save "SPACE REN"   # a save by name
-param([string]$Save = "")
+#   .\start-server.ps1 -Save "my save"     # a save by name
+#   .\start-server.ps1 -FactorioExe "D:\Games\Factorio\bin\x64\factorio.exe"
+param([string]$Save = "", [string]$FactorioExe = "")
 
 $ErrorActionPreference = "Stop"
-$exe     = "E:\SteamLibrary\steamapps\common\Factorio\bin\x64\factorio.exe"
 $client  = Join-Path $env:APPDATA "Factorio"
 $server  = Join-Path $env:APPDATA "Factorio-server"   # own write-data: the game window locks its own
 $envFile = Join-Path $PSScriptRoot "bridge\.env"
@@ -17,6 +17,33 @@ $envFile = Join-Path $PSScriptRoot "bridge\.env"
 $cfg = @{}
 foreach ($line in Get-Content $envFile) {
     if ($line -match '^\s*([A-Z_]+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2] }
+}
+
+# factorio.exe: -FactorioExe, else FACTORIO_EXE in bridge/.env, else every
+# Steam library (libraryfolders.vdf), else the standalone default install.
+function Find-Factorio {
+    $tail = "steamapps\common\Factorio\bin\x64\factorio.exe"
+    $steam = (Get-ItemProperty "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue).SteamPath
+    $libs = @()
+    if ($steam) {
+        $libs += $steam
+        $vdf = Join-Path $steam "steamapps\libraryfolders.vdf"
+        if (Test-Path $vdf) {
+            $libs += Select-String -Path $vdf -Pattern '"path"\s+"([^"]+)"' |
+                     ForEach-Object { $_.Matches[0].Groups[1].Value -replace '\\\\', '\' }
+        }
+    }
+    foreach ($lib in $libs) {
+        $p = Join-Path $lib $tail
+        if (Test-Path $p) { return $p }
+    }
+    $standalone = Join-Path $env:ProgramFiles "Factorio\bin\x64\factorio.exe"
+    if (Test-Path $standalone) { return $standalone }
+    return $null
+}
+$exe = if ($FactorioExe) { $FactorioExe } elseif ($cfg.FACTORIO_EXE) { $cfg.FACTORIO_EXE } else { Find-Factorio }
+if (-not $exe -or -not (Test-Path $exe)) {
+    throw "factorio.exe not found - pass -FactorioExe or set FACTORIO_EXE in bridge\.env"
 }
 $rconPort = if ($cfg.FACTORIO_RCON_PORT) { $cfg.FACTORIO_RCON_PORT } else { "27015" }
 if (-not $cfg.FACTORIO_RCON_PASSWORD) { throw "FACTORIO_RCON_PASSWORD missing in bridge\.env" }
