@@ -262,6 +262,16 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     # 0. The player's own intent first (ghosts, deconstruction marks).
     if _count(p.get("ghosts")) > 0:
         yield {"skill": "build_ghosts"}, "the player placed ghosts", True
+        ghost_list = (p.get("ghosts") if isinstance(p.get("ghosts"), dict) else {}).get("list") or []
+        needed: dict[str, int] = {}
+        for g in ghost_list:
+            gname = g.get("ghost_name")
+            if gname and not g.get("have_item"):
+                item = _ENTITY_ITEM.get(gname, gname)
+                needed[item] = needed.get(item, 0) + 1
+        for item, count in sorted(needed.items()):
+            if inv.get(item, 0) < count:
+                yield {"skill": "craft_for", "item": item, "count": count}, f"craft {count} {item} for blueprint ghosts", True
     if _count(p.get("deconstruction")) > 0:
         yield {"skill": "deconstruct"}, "the player marked things for removal", True
 
@@ -284,6 +294,8 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     # 1b. Enemies near home or an attack on the AI's things: gun turrets with ammo.
     threat = p.get("threat") or {}
     nest = threat.get("nearest") or {}
+    attack = threat.get("attack") or {}
+    attacked_power = attack.get("name") in ("boiler", "steam-engine", "offshore-pump")
     if (nest and nest.get("distance", 1e9) <= DEFENSE_RANGE) or threat.get("attack"):
         if _by_type(p, "ammo-turret") < DEFENSE_TURRETS:
             if not _tech(p, "gun-turret"):
@@ -293,7 +305,10 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
                 need = DEFENSE_TURRETS - _by_type(p, "ammo-turret")
                 yield from _craft(inv, "gun-turret", need, f"{need} gun turret(s) against the nearby enemies")
                 yield from _craft(inv, "firearm-magazine", 10 * need, "ammo for the turrets")
-                yield {"skill": "build_defense", "count": DEFENSE_TURRETS}, "enemies near home: turrets toward them", True
+                defense_entry = {"skill": "build_defense", "count": DEFENSE_TURRETS}
+                if attacked_power:
+                    defense_entry["site"] = "power"
+                yield defense_entry, f"enemies near {'power' if attacked_power else 'home'}: turrets toward them", True
 
     # 2. Burner bootstrap: drills on coal, iron, copper, stone.
     cur = goals.current(p)

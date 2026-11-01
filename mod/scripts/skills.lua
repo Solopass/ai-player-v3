@@ -1149,23 +1149,35 @@ local function skill_build_defense(character, p)
   if not (recipe and recipe.enabled) then
     return false, "build_defense: gun-turret is locked — research gun-turret first"
   end
-  local want = math.max(1, math.min(tonumber(p.count) or 3, TURRET_MAX_COUNT))
-  local home = AICharacter.get_home(surface) or character.position
-  local have = surface.count_entities_filtered{name = "gun-turret", force = force, position = home, radius = 60}
+  local site_name = p.site or "home"
+  local center = AICharacter.get_home(surface) or character.position
+  local dist_out = 18
+  local check_radius = 60
+  if p.site == "power" then
+    local boiler = surface.find_entities_filtered{name = "boiler", force = force, limit = 1}[1]
+    if boiler and boiler.valid then
+      center = boiler.position
+      dist_out = 8
+      check_radius = 25
+    end
+  end
+
+  local want = math.max(1, math.min(tonumber(p.count) or (p.site == "power" and 1 or 3), TURRET_MAX_COUNT))
+  local have = surface.count_entities_filtered{name = "gun-turret", force = force, position = center, radius = check_radius}
   if have >= want then
-    return false, "build_defense: " .. have .. " gun turrets already stand near home — tend keeps them stocked"
+    return false, string.format("build_defense: %d gun turrets already stand near %s — tend keeps them stocked", have, site_name)
   end
   -- Which way the danger lies: the nearest nest, else where the AI was last attacked.
   local dx, dy
   local nest, nd
-  for _, e in ipairs(surface.find_entities_filtered{position = home, radius = 300, force = "enemy",
+  for _, e in ipairs(surface.find_entities_filtered{position = center, radius = 300, force = "enemy",
                                                     type = {"unit-spawner", "turret"}}) do
-    local d = (e.position.x - home.x) ^ 2 + (e.position.y - home.y) ^ 2
+    local d = (e.position.x - center.x) ^ 2 + (e.position.y - center.y) ^ 2
     if not nd or d < nd then nest, nd = e, d end
   end
   local atk = storage.ai_player and storage.ai_player.last_attack
-  if nest then dx, dy = nest.position.x - home.x, nest.position.y - home.y
-  elseif atk then dx, dy = atk.x - home.x, atk.y - home.y
+  if nest then dx, dy = nest.position.x - center.x, nest.position.y - center.y
+  elseif atk then dx, dy = atk.x - center.x, atk.y - center.y
   else dx, dy = 1, 0 end
   local len = math.sqrt(dx * dx + dy * dy)
   if len < 1 then dx, dy, len = 1, 0, 1 end
@@ -1175,10 +1187,10 @@ local function skill_build_defense(character, p)
   if not ready then return false, why end
   local inv = inv_of(character)
   local built = 0
-  -- a line across the approach, 18 tiles out from home, 4 tiles apart
+  -- a line across the approach, dist_out tiles out from center, 4 tiles apart
   for i = 1, need do
     local off = (i - (need + 1) / 2) * 4
-    local at = {x = home.x + dx * 18 - dy * off, y = home.y + dy * 18 + dx * off}
+    local at = {x = center.x + dx * dist_out - dy * off, y = center.y + dy * dist_out + dx * off}
     local spot = surface.find_non_colliding_position("gun-turret", at, 8, 1)
     if spot and AIActions.run(character, {action = "place", item = "gun-turret", position = spot}) then
       local t = surface.find_entities_filtered{name = "gun-turret", position = spot, radius = 1, limit = 1}[1]
@@ -1190,8 +1202,8 @@ local function skill_build_defense(character, p)
     end
   end
   if built == 0 then return false, "build_defense: no clear spot for a gun turret toward the threat" end
-  return true, string.format("built %d gun turret(s) %d tiles toward %s, each with %d magazines", built, 18,
-    nest and string.format("the nest at {%d,%d}", nest.position.x, nest.position.y) or "the last attack", TURRET_AMMO)
+  return true, string.format("built %d gun turret(s) %d tiles toward %s near %s, each with %d magazines", built, dist_out,
+    nest and string.format("the nest at {%d,%d}", nest.position.x, nest.position.y) or "the last attack", site_name, TURRET_AMMO)
 end
 
 -- -------------------------------------------------------------------------

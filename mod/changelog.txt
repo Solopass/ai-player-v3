@@ -1,5 +1,12 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.0
+Date: 2026-10-31
+  Features:
+    - Modular tileable blueprint architecture: starter tileable steam power, smelting, red science, and green science committed in repo.
+    - Snap-tiling placement: place_blueprint supports adjacent snap target coordinates with zero-margin clearance and entity-ghost non-blocking seams.
+    - Autopilot ghost procurement: planner automatically queues craft_for for missing blueprint ghost items.
+    - Shoreline power plant defense: build_defense site="power" protects offshore pumps and steam blocks from biter raids.
+    - Multi-move turn de-conflicting: eliminates redundant lab pack inserts after tend.
 Date: 2026-10-30
   Features:
     - Factorio 2.1 support (crafter inventories, fluid box API, build modes).

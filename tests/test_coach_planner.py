@@ -265,6 +265,14 @@ def test_an_attack_triggers_defense_without_a_visible_nest():
     assert {"skill": "build_defense", "count": 3} in [e for e, _ in planner.next_steps(p, limit=8)]
 
 
+def test_attacked_power_plant_builds_defense_at_power_site():
+    p = labbed()
+    p["threat"] = {"nearest": None, "attack": {"name": "boiler", "x": 40, "y": 10, "seconds_ago": 2}}
+    p["research"]["done"] += ["gun-turret"]
+    moves = [e for e, _ in planner.next_steps(p, limit=8)]
+    assert {"skill": "build_defense", "count": 3, "site": "power"} in moves
+
+
 def test_built_turrets_end_the_defense_rule():
     p = threatened()
     p["research"]["done"] += ["gun-turret"]
