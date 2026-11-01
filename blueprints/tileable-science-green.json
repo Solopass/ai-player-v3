@@ -1,0 +1,33 @@
+{
+  "name": "tileable-science-green",
+  "string": "0eNqd1UFvgyAUB/CvYjhtiTSiYKu3nXbaadlpWRbUF0eGaIAuaxq/+1Cbrlu7BXpE4ff+EuHtUSW3MGihLCr3SPIKJCrRQ99sJdfRvQZQ0WMtQNUQPSlho5s0ujMGukqCNrcoRqLulUHl8x4Z0SouJ8fuBnCMsNC5GYp300j2rTBW1NgsHh54/Y5GJ6gGPlFJxpcYGcUHbHvcatFMknu+jtEOlbmbCMoKK2CpNg92r2rbVaDd6mMdvsQTqsUdr9+EAkxciqE3bnGvDmq2SmaXrJiTNdRi+C/kWb30WE8oA9q6Z2c1yI8ajXBVlrf0Aph5gCwEpFfuCL1yR1jAjlCfD8gDdsQLXB9Bq7kyQ68tdj+8PWeTFZvZ5De7ucBuvNn8kNaLLYLTEh+WJMFx/VwSnDf1ctPgvH5uFpw383JpcF4/lwXnpV5uHpzXzw0/bczLDT9ufu73eTMdlxKDdNO1u/iGXsLfV9l0li/1hySMYyf/wtQI595ZnrTnGH24jjsvYHla0KJgGU1JRtJx/ALRU42O",
+  "hash": "cb717737149ecc0f",
+  "source": "repo",
+  "category": "science-green",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Green Science Unit (2 Assemblers)",
+  "entities": 20,
+  "cost": {
+    "transport-belt": 12,
+    "inserter": 4,
+    "assembling-machine-1": 2,
+    "small-electric-pole": 2
+  },
+  "size": {
+    "w": 7,
+    "h": 7
+  },
+  "recipes": [
+    "logistic-science-pack"
+  ],
+  "tileable": true,
+  "tile_offset": {
+    "x": 0,
+    "y": 6
+  },
+  "snap_grid": {
+    "x": 7,
+    "y": 6
+  }
+}

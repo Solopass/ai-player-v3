@@ -731,3 +731,76 @@ def test_combat_cancels_do_not_make_the_same_moves_a_loop():
 def test_prompt_tells_the_model_about_reflexes():
     from bridge.prompt import SYSTEM_PROMPT
     assert "REFLEXES" in SYSTEM_PROMPT and "cancelled: combat" in SYSTEM_PROMPT
+
+
+def test_get_tile_target_computes_adjacent_snap():
+    from bridge import blueprints
+    bp = {
+        "name": "tileable-smelter-stone",
+        "tileable": True,
+        "tile_offset": {"x": 0, "y": 6}
+    }
+    placed = [{"name": "tileable-smelter-stone", "position": {"x": 10, "y": 20}}]
+    target = blueprints.get_tile_target(placed, bp)
+    assert target == {"x": 10, "y": 26}
+
+
+def test_planner_selects_modular_smelter_when_unlocked():
+    p = labbed()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"]["iron-plate"] = {"per_min": 10}
+    p["blueprint_library"] = ["tileable-smelter-stone"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-smelter-stone"} in moves
+
+
+def test_planner_tiles_modular_smelter_when_plate_deficit():
+    p = labbed()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"]["iron-plate"] = {"per_min": 10}
+    p["blueprint_library"] = ["tileable-smelter-stone"]
+    p["placed_blueprints"] = [{"name": "tileable-smelter-stone", "position": {"x": 5, "y": 10}}]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-smelter-stone", "position": {"x": 5, "y": 16}} in moves
+
+
+def test_planner_selects_modular_red_science_when_unlocked():
+    p = labbed()
+    p["research"]["done"] = ["automation"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 35}, "copper-plate": {"per_min": 20},
+                                     "automation-science-pack": {"per_min": 0}})
+    p["blueprint_library"] = ["tileable-science-red"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-science-red"} in moves
+
+
+def test_planner_tiles_modular_red_science_when_output_low():
+    p = labbed()
+    p["research"]["done"] = ["automation"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 35}, "copper-plate": {"per_min": 20},
+                                     "automation-science-pack": {"per_min": 2}})
+    p["blueprint_library"] = ["tileable-science-red"]
+    p["placed_blueprints"] = [{"name": "tileable-science-red", "position": {"x": 2, "y": 4}}]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-science-red", "position": {"x": 2, "y": 10}} in moves
+
+
+def test_planner_selects_modular_green_science_when_unlocked():
+    p = green_ready()
+    p["blueprint_library"] = ["tileable-science-green"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-science-green"} in moves
+
+
+def test_next_plan_suppresses_redundant_pack_insert_after_tend():
+    p = labbed()
+    p["research"]["current"] = "automation"
+    p["factory"]["labs"] = {"count": 1, "without_packs": 1}
+    p["factory"]["machines"] = [{"type": "lab", "position": {"x": 1, "y": 1}}]
+    p["needs"]["burners_low_fuel"] = 2
+    p["inventory"] = [{"name": "coal", "count": 10}, {"name": "automation-science-pack", "count": 5}]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    # tend runs, so manual insert of science packs must be filtered
+    assert any(e.get("skill") == "tend" for e in moves)
+    assert not any(e.get("action") == "insert" and e.get("item") == "automation-science-pack" for e in moves)
+

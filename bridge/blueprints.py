@@ -127,7 +127,7 @@ def analyze(bp: dict) -> dict:
 
     if names["offshore-pump"] and (names["boiler"] or names["steam-engine"]):
         category, placement = "power", "near_water"
-    elif names["solar-panel"]:
+    elif names["solar-panel"] or names["boiler"] or names["steam-engine"]:
         category, placement = "power", "clear"
     elif names["rocket-silo"]:
         category, placement = "rocket", "clear"
@@ -150,11 +150,21 @@ def analyze(bp: dict) -> dict:
     else:
         category, placement = "other", "clear"
 
-    return {
+    snap = b.get("snap-to-grid")
+    tileable = snap is not None or "tileable" in label or "tile" in label
+
+    res = {
         "category": category, "placement": placement, "resource": resource,
         "label": b.get("label") or "", "entities": sum(names.values()),
         "cost": dict(cost.most_common()), "size": size, "recipes": sorted(recipes),
     }
+    if tileable:
+        res["tileable"] = True
+        if snap:
+            res["snap_grid"] = snap
+        if b.get("absolute-snapping"):
+            res["absolute_snapping"] = True
+    return res
 
 
 def split(data: dict, base_name: str) -> list[tuple[str, dict]]:
@@ -320,8 +330,10 @@ def sync_to_mod(rcon, lib: dict[str, dict]) -> tuple[int, int]:
         parts = [s[i:i + CHUNK_CHARS] for i in range(0, len(s), CHUNK_CHARS)]
         # items: what the build needs, so the mod can report which blueprints
         # are still locked by research.
-        meta = json.dumps({**{k: e.get(k) for k in ("category", "placement", "resource", "label", "hash")},
-                           "items": sorted(e.get("cost") or {})})
+        meta = json.dumps({
+            **{k: e.get(k) for k in ("category", "placement", "resource", "label", "hash", "tileable", "tile_offset", "snap_grid", "size") if e.get(k) is not None},
+            "items": sorted(e.get("cost") or {})
+        })
         ok = True
         for i, part in enumerate(parts, 1):
             res = rcon.query_lua(
@@ -346,6 +358,25 @@ def sync_to_mod(rcon, lib: dict[str, dict]) -> tuple[int, int]:
 def missing_items(entry: dict, inventory: list[dict]) -> dict[str, int]:
     have = {i.get("name"): i.get("count", 0) for i in inventory or []}
     return {k: v - have.get(k, 0) for k, v in entry.get("cost", {}).items() if v > have.get(k, 0)}
+
+
+def get_tile_target(placed: list[dict], entry: dict) -> dict | None:
+    """If entry is tileable and an instance was already placed on this surface,
+    compute the adjacent snap coordinate from its tile_offset or snap_grid."""
+    if not entry.get("tileable"):
+        return None
+    name = entry.get("name")
+    matching = [p for p in (placed or []) if isinstance(p, dict) and p.get("name") == name and p.get("position")]
+    if not matching:
+        return None
+    last_pos = matching[-1]["position"]
+    offset = entry.get("tile_offset") or entry.get("snap_grid") or {}
+    dx = offset.get("x", 0)
+    dy = offset.get("y", 0)
+    if dx == 0 and dy == 0:
+        return None
+    return {"x": last_pos["x"] + dx, "y": last_pos["y"] + dy}
+
 
 
 # ---------------------------------------------------------------------------

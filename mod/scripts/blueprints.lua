@@ -31,7 +31,7 @@ end
 -- Entity types that don't block a building spot (trees/rocks get marked for
 -- deconstruction by a forced build; the rest are harmless).
 local NON_BLOCKING = {"tree", "simple-entity", "resource", "fish", "corpse",
-                      "item-entity", "character", "unit", "spider-unit"}
+                      "item-entity", "character", "unit", "spider-unit", "entity-ghost"}
 
 local function lib()
   storage.ai_player.blueprints = storage.ai_player.blueprints or {}
@@ -244,10 +244,11 @@ local function generated(surface, a)
 end
 
 -- Returns ok, reason (reason names the check that failed, for the debug log).
-local function spot_ok(surface, force, p, g, placement, resource)
-  local a = area_at(p, g, 1)
+local function spot_ok(surface, force, p, g, placement, resource, is_tiling)
+  local margin = is_tiling and 0 or 1
+  local a = area_at(p, g, margin)
   if not generated(surface, a) then return false, "ungenerated" end
-  if surface.count_entities_filtered{area = a, type = NON_BLOCKING, invert = true} > 0 then
+  if not is_tiling and surface.count_entities_filtered{area = a, type = NON_BLOCKING, invert = true} > 0 then
     return false, "buildings"
   end
   local water = surface.count_tiles_filtered{area = a, collision_mask = "water_tile"}
@@ -405,10 +406,11 @@ function AIBlueprints.place(character, name, opts)
     local rejected, partial = {}, {}
     local cands = candidates(surface, home, geo, placement, resource, opts.position)
     local tries = 0
+    local is_tiling = opts.position ~= nil
     for _, c in ipairs(cands) do
       local g = geo.dirs[c.d]
       local fits, why = false, "no_geometry"
-      if g then fits, why = spot_ok(surface, force, c.p, g, placement, resource) end
+      if g then fits, why = spot_ok(surface, force, c.p, g, placement, resource, is_tiling) end
       if not fits then rejected[why or "?"] = (rejected[why or "?"] or 0) + 1 end
       if fits then
         tries = tries + 1

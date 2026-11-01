@@ -1,0 +1,32 @@
+{
+  "name": "tileable-steam-power",
+  "string": "0eNqV099LwzAQB/B/pdyTYjvWX3Pro+CjIIhPIpKuxzhILyVJ1TL6v3vtZIpu2j6VJHefXODbPZS6xcYSeyj2oFWJGgq4M1WrlQ0ePKo6uDdvaINHJh9cxDdXye0lhEBbww6Kpz042rHSQ7vvGpRu8lhLBat6WLnBiJB3xAi9NHKF71DE/XMIjlUTeRPtLFUDIPtpCJ2cJlKJ7MkTHm4ZF90Lt3WJVgqOvreKXWOsj2R2L/c2xkmb4U9wuchHUr5iVmRxezjN+vAXm0xm4zlsOplN5rDZkSV2aL3snZ0z/gmuT4D5ESwN6b+4dLH8n1udDsFZdDVlxuuZaDzp5esvtVZaR6il2tI2aozG86Ea7CHIY+SLbz9TCK9o3diQr5JNttnkaZbEqQS7/wDbHR/G",
+  "hash": "1362a1b14046b5cb",
+  "source": "repo",
+  "category": "power",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Steam Power Unit (1B+2E)",
+  "entities": 8,
+  "cost": {
+    "transport-belt": 3,
+    "steam-engine": 2,
+    "inserter": 1,
+    "boiler": 1,
+    "small-electric-pole": 1
+  },
+  "size": {
+    "w": 4,
+    "h": 13
+  },
+  "recipes": [],
+  "tileable": true,
+  "tile_offset": {
+    "x": 3,
+    "y": 0
+  },
+  "snap_grid": {
+    "x": 3,
+    "y": 12
+  }
+}

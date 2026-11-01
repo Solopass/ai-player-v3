@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from . import goals
+from . import blueprints, goals
+from .blueprints import _ENTITY_ITEM
 
 # Electric pair (drill -> stone furnace) yield, plates/min: the furnace is the limit.
 PAIR_PLATES_PER_MIN = 18
@@ -143,8 +144,12 @@ def _goto_far(p: dict, lm: dict | None, what: str,
 
 
 def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tuple[dict, str, bool]]:
-    """Build-order rules past the bootstrap: power, automation, smelting, red cell."""
+    """Build-order rules past the bootstrap: power, automation, smelting, red cell, green cell."""
     power = p.get("power") or {}
+    unlocked_bps = set(p.get("blueprint_library") or [])
+    placed_bps = p.get("placed_blueprints") or []
+    placed_names = {b.get("name") for b in placed_bps if isinstance(b, dict)}
+
     if goal_id == "power":
         if not power.get("has_grid") or not _by_type(p, "boiler"):
             yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water",
@@ -162,7 +167,20 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 and research.get("current") != "automation"):
             yield {"skill": "research", "tech": "automation"}, "automation unlocks assemblers", True
     elif goal_id == "smelting":
-        if _tech(p, "electric-mining-drill") and power.get("has_grid"):
+        bp_name = "tileable-smelter-stone"
+        if bp_name in unlocked_bps and power.get("has_grid"):
+            lib = blueprints.load_library()
+            bp_entry = lib.get(bp_name, {})
+            if bp_name not in placed_names:
+                yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular stone smelter column", True
+            else:
+                if _rate(p, "iron-plate") < 30 or _rate(p, "copper-plate") < 15:
+                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                    if snap:
+                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
+                               "tile modular stone smelter column for more plates", True)
+                yield {"skill": "tend"}, "keep smelters fed with coal and ore", True
+        elif _tech(p, "electric-mining-drill") and power.get("has_grid"):
             for ore, (plate, target) in SMELT_TARGET.items():
                 # Pairs already built count at their full rate: the measured rate lags new builds.
                 built = int((factory.get("electric_miners") or {}).get(ore, 0))
@@ -182,31 +200,57 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                        f"{plate} at {_rate(p, plate)}/min, want {target}", True)
     elif goal_id == "red":
         if _tech(p, "automation"):
-            cells = [a for a in (factory.get("assemblers") or [])
-                     if isinstance(a, dict) and a.get("recipe") == "automation-science-pack"]
-            if not cells:
-                for item, n in (("assembling-machine-1", 3), ("inserter", 7), ("iron-chest", 4),
-                                ("small-electric-pole", 6)):
-                    yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
-                yield {"skill": "build_red_cell"}, "automate red science", True
-            yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
+            bp_name = "tileable-science-red"
+            if bp_name in unlocked_bps:
+                lib = blueprints.load_library()
+                bp_entry = lib.get(bp_name, {})
+                if bp_name not in placed_names:
+                    yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular red science unit", True
+                elif _rate(p, "automation-science-pack") < 5:
+                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                    if snap and _rate(p, "automation-science-pack") > 0:
+                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
+                               "tile modular red science for higher output", True)
+                yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
+            else:
+                cells = [a for a in (factory.get("assemblers") or [])
+                         if isinstance(a, dict) and a.get("recipe") == "automation-science-pack"]
+                if not cells:
+                    for item, n in (("assembling-machine-1", 3), ("inserter", 7), ("iron-chest", 4),
+                                    ("small-electric-pole", 6)):
+                        yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
+                    yield {"skill": "build_red_cell"}, "automate red science", True
+                yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
     elif goal_id == "green":
         if _tech(p, "logistic-science-pack"):
-            have = [a.get("recipe") for a in (factory.get("assemblers") or []) if isinstance(a, dict)]
-            missing = []
-            for recipe in GREEN_UNITS:
-                if recipe in have:
-                    have.remove(recipe)
-                else:
-                    missing.append(recipe)
-            if missing:
-                if inv.get("iron-plate", 0) < 60:
-                    yield {"skill": "tend"}, "collect plates for the green-science parts", True
-                n = min(3, len(missing))
-                yield from _craft(inv, "assembling-machine-1", n, f"{n} more green-science unit(s) need assemblers")
-                yield from _craft(inv, "inserter", 2 * n, f"{n} more green-science unit(s) need inserters")
-                yield {"skill": "build_green_cell"}, f"{len(missing)} green-science unit(s) still to build", True
-            yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
+            bp_name = "tileable-science-green"
+            if bp_name in unlocked_bps:
+                lib = blueprints.load_library()
+                bp_entry = lib.get(bp_name, {})
+                if bp_name not in placed_names:
+                    yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular green science unit", True
+                elif _rate(p, "logistic-science-pack") < 5:
+                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                    if snap and _rate(p, "logistic-science-pack") > 0:
+                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
+                               "tile modular green science for higher output", True)
+                yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
+            else:
+                have = [a.get("recipe") for a in (factory.get("assemblers") or []) if isinstance(a, dict)]
+                missing = []
+                for recipe in GREEN_UNITS:
+                    if recipe in have:
+                        have.remove(recipe)
+                    else:
+                        missing.append(recipe)
+                if missing:
+                    if inv.get("iron-plate", 0) < 60:
+                        yield {"skill": "tend"}, "collect plates for the green-science parts", True
+                    n = min(3, len(missing))
+                    yield from _craft(inv, "assembling-machine-1", n, f"{n} more green-science unit(s) need assemblers")
+                    yield from _craft(inv, "inserter", 2 * n, f"{n} more green-science unit(s) need inserters")
+                    yield {"skill": "build_green_cell"}, f"{len(missing)} green-science unit(s) still to build", True
+                yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
 
 
 def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:
@@ -340,11 +384,17 @@ def next_plan(p: dict, blocked: frozenset[str] | set[str] = frozenset(),
               limit: int = MAX_MOVES) -> list[tuple[dict, str, bool]]:
     """The first `limit` distinct, unblocked moves as (entry, reason, sure)."""
     out, keys = [], set()
+    has_tend = False
     for entry, reason, sure in _candidates(p, blocked):
         k = entry_key(entry)
         if k in blocked or k in keys:
             continue
+        # If tend is already in this plan batch, suppress redundant manual pack insert
+        if has_tend and entry.get("action") == "insert" and str(entry.get("item", "")).endswith("-science-pack"):
+            continue
         keys.add(k)
+        if entry.get("skill") == "tend":
+            has_tend = True
         out.append((entry, reason, sure))
         if len(out) >= limit:
             break

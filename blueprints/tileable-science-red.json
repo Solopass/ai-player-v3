@@ -1,0 +1,33 @@
+{
+  "name": "tileable-science-red",
+  "string": "0eNqd1dFOwyAUBuBXabjSZCylLXXtnQ/gjcYrYwxrT+aJFBqgxmXZu0u7ZZtuGthlKXznL4GeDVnKAXqDypF6Q6RYgiQ1edDtIIVJHqFNnhoE1UDyrNAlN1lyby10SwnG3pIZwUYrS+qXDbG4UkKOilv34BF00PkZSnTjkxic7oRDrajdibQXzQfZekO18EVqtn2dEatET52mK4PtaPnxuxlZk7r0E0E5dAi7etPD+k0N3RKMX32stAuIakU70byjAsp8jl5bHMvv1XyeTi6bcy8baLD/P+ZZxexQEZUF4/zYWRX2o0qLvs7ubXEBzANAHgMWV+5JcfWe8Ig9KUI+oYzYkyDw7gA6I5TttXHUH3p3zqZzPrHpb3ZxgV0Es+U+bRBbRadlISxLo+OGuSw6bxbkZtF5w9w8Om8e5BbRecNcHp23CHLL6Lxhbvxt40Fu/HULc4/3zXZCSgrSTzfY0F5L+PtXNt7lSx0ijeP4yVkYm+HUQeuTFj0jn77vTgt4mVVFVfG8yFjOsu32Gzhfj2E=",
+  "hash": "840ae8bb49b8b275",
+  "source": "repo",
+  "category": "science-red",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Red Science Unit (2 Assemblers)",
+  "entities": 20,
+  "cost": {
+    "transport-belt": 12,
+    "inserter": 4,
+    "assembling-machine-1": 2,
+    "small-electric-pole": 2
+  },
+  "size": {
+    "w": 7,
+    "h": 7
+  },
+  "recipes": [
+    "automation-science-pack"
+  ],
+  "tileable": true,
+  "tile_offset": {
+    "x": 0,
+    "y": 6
+  },
+  "snap_grid": {
+    "x": 7,
+    "y": 6
+  }
+}
