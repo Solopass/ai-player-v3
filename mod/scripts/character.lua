@@ -154,9 +154,18 @@ function AICharacter.spawn_ai_player(surface)
     AICharacter.set_home(surface, pos)
   end
 
+  if AIReflexes then AIReflexes.on_respawn() end
   game.print(string.format("[AI] Spawned at {%.1f, %.1f}", pos.x, pos.y), {r=0, g=1, b=0})
   return true
 end
+
+-- True when no enemy unit, worm or nest lies within `radius` of pos.
+function AICharacter.calm_at(surface, pos, radius)
+  return surface.count_entities_filtered{position = pos, radius = radius, force = "enemy",
+                                         type = {"unit", "turret", "unit-spawner"}, limit = 1} == 0
+end
+
+local CALM_RADIUS = 40
 
 function AICharacter.find_spawn_position(surface)
   -- Try near the lowest-index connected player first
@@ -178,8 +187,22 @@ function AICharacter.find_spawn_position(surface)
     local base = player.character.position
     for _, off in ipairs(offsets) do
       local pos = {x = base.x + off.x, y = base.y + off.y}
-      if surface.can_place_entity{name="character", position=pos} then
+      if surface.can_place_entity{name="character", position=pos} and AICharacter.calm_at(surface, pos, CALM_RADIUS) then
         return pos
+      end
+    end
+  end
+
+  -- Then home, then rings around it: the first spot with no enemy within 40 tiles (a respawn
+  -- into the biters that just killed the AI would only kill it again).
+  local home = AICharacter.get_home(surface)
+  if home then
+    for rad = 0, 160, 20 do
+      for k = 0, (rad == 0 and 0 or 7) do
+        local a = k * math.pi / 4
+        local pos = surface.find_non_colliding_position("character",
+          {x = home.x + math.cos(a) * rad, y = home.y + math.sin(a) * rad}, 6, 0.5)
+        if pos and AICharacter.calm_at(surface, pos, CALM_RADIUS) then return pos end
       end
     end
   end

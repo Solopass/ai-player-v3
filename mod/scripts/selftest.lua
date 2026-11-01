@@ -488,6 +488,47 @@ CASES.tend_registry = {
   end,
 }
 
+-- Rounds left in the AI's firearm magazines (a magazine only leaves the stack once its 10
+-- rounds are used up, so the item count alone barely moves in a short fight).
+local function rounds_of(ch)
+  local n, size = 0, prototypes.item["firearm-magazine"].magazine_size
+  for _, id in ipairs({defines.inventory.character_ammo, defines.inventory.character_main}) do
+    local inv = ch.get_inventory(id)
+    for i = 1, #inv do
+      local s = inv[i]
+      if s.valid_for_read and s.name == "firearm-magazine" then n = n + (s.count - 1) * size + s.ammo end
+    end
+  end
+  return n
+end
+AISelftest.rounds_of = rounds_of
+
+-- Step 0 of the reflexes: a player-less character with a pistol and magazines can shoot at all.
+-- shooting_state is set every pulse (as the reflex does); the biter must die and the ammo
+-- count must drop.
+CASES.shoot_probe = {
+  delay = 600,
+  setup = function(c)
+    c.ammo0 = rounds_of(c.character)
+    c.character.selected_gun_index = 1
+    c.biter = c.surface.create_entity{name = "small-biter", position = {9.5, 0.5}, force = "enemy"}
+  end,
+  run = function() return {} end,
+  pulse = function(c)
+    if c.biter and c.biter.valid then
+      c.character.shooting_state = {state = defines.shooting.shooting_enemies, position = c.biter.position}
+    else
+      c.character.shooting_state = {state = defines.shooting.not_shooting, position = c.character.position}
+    end
+  end,
+  check = function(c, add)
+    local ammo = rounds_of(c.character)
+    add("the biter died", not c.biter.valid)
+    add("ammo went down", ammo < c.ammo0, c.ammo0 .. " -> " .. ammo .. " rounds")
+    add("the character lives", c.character.valid and c.character.health > 0, c.character.health)
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,
@@ -499,6 +540,13 @@ AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = l
 local function finish(result)
   local st = storage.selftest
   AILayout.only_facing = nil
+  if st and st.prev then               -- a reflex case: give the AI slot back
+    local ap, prev = storage.ai_player, st.prev
+    ap.character, ap.surface_name, ap.combat_mode = prev.character, prev.surface_name, prev.combat_mode
+    ap.reflex, ap.held_turn, ap.turn, ap.last_attack = nil, nil, nil, nil
+    ap.respawn_tick, ap.fast_decide_tick, ap.tick_counter = nil, nil, 0
+    ap.pending_requests = {}
+  end
   if st and st.surface and st.surface.valid then game.delete_surface(st.surface) end
   storage.selftest = nil
   write_result(result)
@@ -545,6 +593,18 @@ function AISelftest.start(arg)
       if not cok then rok, detail = false, rok end
       c.results[#c.results + 1] = {ok = rok ~= false, detail = detail}
     end
+    if case.reflexes then
+      -- The scene's character becomes THE AI for this case; the decision tick is parked so no
+      -- request goes out for the throwaway surface.
+      local ap = storage.ai_player
+      storage.selftest.prev = {character = ap.character, surface_name = ap.surface_name, combat_mode = ap.combat_mode}
+      ap.character, ap.combat_mode = c.character, nil
+      ap.reflex, ap.held_turn, ap.turn, ap.last_attack = nil, nil, nil, nil
+      ap.tick_counter, ap.fast_decide_tick = -1000000000, nil
+      AICharacter.remember_surface(surface)
+      AICharacter.set_home(surface, {x = 0.5, y = 0.5})
+      storage.selftest.reflexes = true
+    end
     if case.after then case.after(c) end
     storage.selftest.check_tick = game.tick + case.delay
     if case.late then storage.selftest.late_tick = game.tick + (case.late_after or 60) end
@@ -552,6 +612,13 @@ function AISelftest.start(arg)
   if not ok then
     finish({ok = false, case = name, run_id = run_id, detail = "harness error: " .. tostring(err)})
   end
+end
+
+-- Called by the reflex tick (every 15 ticks): keeps the parked decision tick parked.
+function AISelftest.pulse()
+  local st = storage.selftest
+  local case = st and CASES[st.case_name]
+  if st and st.reflexes and not (case and case.keep_fast) then storage.ai_player.fast_decide_tick = nil end
 end
 
 local function conclude()
@@ -586,6 +653,8 @@ end
 script.on_nth_tick(30, function()
   local st = storage.selftest
   if not st then return end
+  local case = CASES[st.case_name]
+  if case and case.pulse and st.c then pcall(case.pulse, st.c) end
   if st.late_tick and game.tick >= st.late_tick then
     local ok, err = pcall(run_late, st)
     if not ok then return finish({ok = false, case = st.case, run_id = st.run_id, detail = "late phase: " .. tostring(err)}) end
@@ -631,6 +700,36 @@ local function soak_snapshot()
     end
     out.assembler_products = made
     out.enemies_seen = #ch.surface.find_entities_filtered{type = "unit-spawner", force = "enemy", position = ch.position, radius = 300}
+    local home = AICharacter.get_home(ch.surface) or ch.position
+    out.spawners_home = ch.surface.count_entities_filtered{type = "unit-spawner", force = "enemy", position = home, radius = 150}
+  end
+  local rf = storage.ai_player and storage.ai_player.reflex
+  if rf then                           -- plain data only (see reflexes.lua)
+    out.reflex = {state = rf.state, deaths = rf.deaths, nests_cleared = rf.nests_cleared, hunts_done = rf.hunts_done,
+                  bridge_offline = rf.bridge_offline, last_research = rf.last_research, last_tend = rf.last_tend,
+                  death = rf.death, since = rf.since}
+  end
+  out.combat_mode = AIReflexes.mode()
+  pcall(function()               -- enemies the AI's force killed (turrets count too), summed over kinds
+    local f = game.forces[storage.ai_player.force_name]
+    local ks = f.get_kill_count_statistics(game.surfaces["nauvis"])
+    local i, o = 0, 0
+    for _, n in pairs(ks.input_counts) do i = i + n end
+    for _, n in pairs(ks.output_counts) do o = o + n end
+    out.kills_in, out.kills_out = i, o
+  end)
+  local mags = 0
+  if ch and ch.valid then
+    mags = ch.get_inventory(defines.inventory.character_main).get_item_count("firearm-magazine")
+         + ch.get_inventory(defines.inventory.character_ammo).get_item_count("firearm-magazine")
+  end
+  out.magazines = mags
+  out.furnaces_unfuelled = 0          -- AI-owned furnaces / boilers with ore or a load but no fuel
+  if ch and ch.valid then
+    for _, e in ipairs(AIRegistry.owned(ch.surface, {"furnace", "boiler", "mining-drill"})) do
+      local fb = e.get_fuel_inventory and e.get_fuel_inventory()
+      if fb and fb.valid and fb.is_empty() and e.energy < 1 and e.burner then out.furnaces_unfuelled = out.furnaces_unfuelled + 1 end
+    end
   end
   helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json(out), false, 0)
 end
@@ -644,6 +743,52 @@ local function soak_command(name, fn)
 end
 
 soak_command("ai-soak-start", function() soak_start() end)
+
+-- /ai-soak-nests <count> <distance>: small nests (a spawner and two small worms) on a ring
+-- around home, for the hunt soak. Natural nests sit 150+ tiles out on the soak maps. The AI
+-- also gets a submachine gun and 100 magazines: the soak economy has no iron to spare for them.
+soak_command("ai-soak-nests", function(cmd)
+  local n, d = (cmd.parameter or ""):match("(%d+)%s+(%d+)")
+  local ch = storage.ai_player and storage.ai_player.character
+  if not (n and ch and ch.valid) then return end
+  local s = ch.surface
+  local home = AICharacter.get_home(s) or ch.position
+  local inv = ch.get_inventory(defines.inventory.character_main)
+  inv.insert{name = "submachine-gun", count = 1}
+  inv.insert{name = "firearm-magazine", count = 100}
+  for i = 1, tonumber(n) do
+    local a = i * 2 * math.pi / tonumber(n) + 0.7
+    local at = s.find_non_colliding_position("biter-spawner", {home.x + math.cos(a) * d, home.y + math.sin(a) * d}, 30, 2)
+    if at then
+      s.create_entity{name = "biter-spawner", position = at, force = "enemy"}
+      for k = -1, 1, 2 do
+        local w = s.find_non_colliding_position("small-worm-turret", {at.x + k * 7, at.y + 5}, 8, 1)
+        if w then s.create_entity{name = "small-worm-turret", position = w, force = "enemy"} end
+      end
+    end
+  end
+end)
+
+-- /ai-soak-raid <small> [<medium>]: biters 45 tiles from home on a side that changes every
+-- call, sent at home. (Medium ones shrug off firearm magazines: the AI can only run from those.)
+soak_command("ai-soak-raid", function(cmd)
+  local n, m = (cmd.parameter or ""):match("(%d+)%s*(%d*)")
+  n, m = tonumber(n) or 4, tonumber(m) or 0
+  local ch = storage.ai_player and storage.ai_player.character
+  if not (ch and ch.valid) then return end
+  local s = ch.surface
+  local home = AICharacter.get_home(s) or ch.position
+  local a = (game.tick / 3600) * 2.4
+  for i = 1, n + m do
+    local name = i <= n and "small-biter" or "medium-biter"
+    local at = s.find_non_colliding_position(name, {home.x + math.cos(a) * 45 + i, home.y + math.sin(a) * 45}, 12, 1)
+    local u = at and s.create_entity{name = name, position = at, force = "enemy"}
+    if u then
+      u.commandable.set_command{type = defines.command.attack_area, destination = home, radius = 25,
+                                distraction = defines.distraction.by_enemy}
+    end
+  end
+end)
 soak_command("ai-soak-snapshot", function()
   local ok, err = pcall(soak_snapshot)
   if not ok then helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json({error = tostring(err)}), false, 0) end

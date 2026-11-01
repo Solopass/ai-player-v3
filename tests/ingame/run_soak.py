@@ -2,6 +2,7 @@ r"""Headless soak test: the AI plays a normal generated map from the start.
 
     .venv/Scripts/python tests/ingame/run_soak.py [--no-llm | --llm] [--minutes 60]
         [--speed 4] [--seed 424242] [--enemies] [--keep] [--out DIR] [--label NAME]
+        [--combat defend|hunt] [--kill-bridge-at MINUTE] [--raids] [--mediums] [--nests N] [--nests-at MINUTE]
 
 Like run_selftest.py (temp write-data, temp mods folder, loopback RCON with a random
 password, refuses to start while any factorio.exe runs, never touches saves) but on a
@@ -12,6 +13,15 @@ mod's snapshot and, at the end, writes soak-report.md/.json plus copies of the l
 
   --no-llm (default)  AI_PROVIDER=stub: every decision is the autopilot or the planner.
   --llm               the real router model; game speed is forced to 1.
+  --combat hunt       switch the AI to hunt mode (clears nests near home) after it spawns.
+  --raids             every 10 game minutes send a few small biters at home (more each time).
+  --mediums           with --raids: add medium biters (1 per raid from minute 20, 2 from 40).
+  --nests N           put N small nests 90 tiles from home (the soak maps have none within 150
+                      tiles), for the hunt mode; --nests-at MINUTE delays that (default: the start;
+                      early nests wreck a 10-minute-old base). The AI is given a submachine gun and 100
+                      magazines with the nests: the soak economy has no iron to craft them.
+  --kill-bridge-at N  kill the bridge process at game minute N and play on: the reflexes
+                      (guard, light tend, auto-research) must carry the AI without it.
 """
 
 from __future__ import annotations
@@ -129,6 +139,9 @@ def sample_from(snap: dict) -> dict | None:
         "position": (p.get("character") or {}).get("position"),
         "assembler_products": snap.get("assembler_products") or {},
         "enemies_seen": snap.get("enemies_seen"), "lost": snap.get("lost") or {},
+        "spawners_home": snap.get("spawners_home"), "reflex": snap.get("reflex") or {},
+        "kills": snap.get("kills_in"), "kills_out": snap.get("kills_out"), "magazines": snap.get("magazines"),
+        "unfuelled": snap.get("furnaces_unfuelled"), "combat_mode": snap.get("combat_mode"),
         "inventory": {i["name"]: i["count"] for i in (p.get("inventory") or [])[:40]
                       if isinstance(i, dict) and i.get("name")},
     }
@@ -227,6 +240,46 @@ def skill_failures(out_dir: Path) -> dict:
     return fails
 
 
+def kill_summary(samples: list[dict], killed_at: float | None) -> dict | None:
+    """What the AI did after the bridge was killed (reflexes only)."""
+    if killed_at is None:
+        return None
+    before = [s for s in samples if s["minute"] <= killed_at]
+    after = [s for s in samples if s["minute"] > killed_at]
+    if not before or not after:
+        return {"killed_at": killed_at, "note": "no samples on one side of the kill"}
+    first, last = before[-1], after[-1]
+    return {
+        "killed_at": killed_at, "minutes_after": round(last["minute"] - killed_at, 1),
+        "techs_at_kill": first["techs"], "techs_end": last["techs"],
+        "research_queued_samples": f"{sum(1 for s in after if s['research_current'])}/{len(after)}",
+        "unfuelled_max_after": max((s["unfuelled"] or 0) for s in after),
+        "unfuelled_end": last["unfuelled"],
+        "kills_at_kill": first["kills"], "kills_end": last["kills"],
+        "bridge_offline_seen": any((s["reflex"] or {}).get("bridge_offline") for s in after),
+        "reflex_states_after": sorted({(s["reflex"] or {}).get("state", "?") for s in after}),
+        "ai_deaths_after": ((last["reflex"] or {}).get("deaths") or 0) - ((first["reflex"] or {}).get("deaths") or 0),
+        "last_research": (last["reflex"] or {}).get("last_research"),
+        "magazines_at_kill": first["magazines"], "magazines_end": last["magazines"],
+    }
+
+
+def combat_summary(samples: list[dict]) -> dict:
+    """Entities lost, AI deaths and nests over the whole run."""
+    if not samples:
+        return {}
+    last = samples[-1]
+    rf = last["reflex"] or {}
+    homes = [s["spawners_home"] for s in samples if s["spawners_home"] is not None]
+    return {
+        "entities_lost": last["lost"], "entities_lost_total": sum((last["lost"] or {}).values()),
+        "ai_deaths": rf.get("deaths", 0), "nests_cleared": rf.get("nests_cleared", 0),
+        "hunts_done": rf.get("hunts_done", 0), "combat_mode": last["combat_mode"],
+        "spawners_near_home_start": homes[0] if homes else None, "spawners_near_home_end": homes[-1] if homes else None,
+        "kills": last["kills"], "reflex_states_seen": sorted({(s["reflex"] or {}).get("state", "?") for s in samples}),
+    }
+
+
 # --- report -------------------------------------------------------------------
 
 def evaluate(samples: list[dict], times: dict) -> dict:
@@ -243,7 +296,8 @@ def evaluate(samples: list[dict], times: dict) -> dict:
             ("minute", "goal", "iron_per_min", "copper_per_min", "red_per_min", "techs", "factory_total")}}
 
 
-def write_report(out_dir: Path, out: Path, args, samples, bstats, times, ev, errors, stall, notes) -> Path:
+def write_report(out_dir: Path, out: Path, args, samples, bstats, times, ev, errors, stall, notes,
+                 killed_at=None) -> Path:
     fails = [{**v, "what": k, "kind": "bridge"} for k, v in bstats["failures"].items()]
     sfails = [{**v, "what": k, "kind": "skill"} for k, v in skill_failures(out_dir).items()]
     # The bridge sees each failure one turn after the mod logs it: show one list, preferring the mod's.
@@ -251,6 +305,7 @@ def write_report(out_dir: Path, out: Path, args, samples, bstats, times, ev, err
     data = {"label": args.label, "mode": "llm" if args.llm else "no-llm", "seed": args.seed,
             "enemies": args.enemies, "speed": args.speed, "milestones": times, "evaluation": ev,
             "bridge": {k: v for k, v in bstats.items() if k != "failures"}, "stall": stall,
+            "combat": combat_summary(samples), "bridge_killed": kill_summary(samples, killed_at),
             "top_failures": top, "mod_errors": errors, "notes": notes, "samples": samples}
     (out / f"soak-report-{args.label}.json").write_text(json.dumps(data, indent=1), encoding="utf8")
 
@@ -275,6 +330,9 @@ def write_report(out_dir: Path, out: Path, args, samples, bstats, times, ev, err
         L.append(f"| {s['minute']} | {s['goal']} | {s['iron_per_min']} | {s['copper_per_min']} | "
                  f"{s['red_per_min']} | {s['green_per_min']} | {s['techs']} | {s['factory_total']} | "
                  f"{', '.join(a for a in s['assemblers'] if 'science' in a) or '-'} |")
+    L += ["", "## Combat and reflexes"] + [f"- {k}: {v}" for k, v in data["combat"].items()]
+    if data["bridge_killed"]:
+        L += ["", "## After the bridge was killed"] + [f"- {k}: {v}" for k, v in data["bridge_killed"].items()]
     L += ["", "## Top failures"]
     for f in top:
         L.append(f"- x{f['count']} [{f['kind']}] {f['what']} -- e.g. {f['sample']}")
@@ -301,6 +359,12 @@ def main() -> int:
     ap.add_argument("--speed", type=float, default=4)
     ap.add_argument("--seed", type=int, default=SEEDS[0])
     ap.add_argument("--enemies", action="store_true")
+    ap.add_argument("--combat", choices=["defend", "hunt"], default="defend")
+    ap.add_argument("--kill-bridge-at", type=float, default=0, help="kill the bridge at this game minute (0 = never)")
+    ap.add_argument("--raids", action="store_true")
+    ap.add_argument("--mediums", action="store_true", help="--raids also sends medium biters (1 at minute 20, 2 from 40)")
+    ap.add_argument("--nests", type=int, default=0)
+    ap.add_argument("--nests-at", type=float, default=0)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--label", default=time.strftime("%H%M%S"))
@@ -362,6 +426,7 @@ def main() -> int:
     bridge_log = None
     samples: list[dict] = []
     notes: list[str] = []
+    killed_at = None
     try:
         client = None
         t0 = time.time()
@@ -388,17 +453,21 @@ def main() -> int:
         client.send_command("/ai-soak-start")
         client.send_command("/spawn-ai-player")
         client.send_command(f"/ai-soak-speed {args.speed}")
+        if args.combat == "hunt":
+            client.send_command("/sc rcon.print(remote.call('ai_player','set_combat_mode','hunt'))")
         print(f"soak {args.label}: seed {args.seed}, {args.minutes} game min at {args.speed}x "
               f"({'llm' if args.llm else 'stub'}), enemies={args.enemies}", flush=True)
 
         snap_file = out_dir / "soak_snapshot.json"
         next_tick = TICKS_PER_MIN
+        next_raid = 10 * TICKS_PER_MIN
+        nests_sent = not args.nests
         started = time.time()
         while True:
             if server.poll() is not None:
                 notes.append("server exited during the soak (Lua crash?): " + " | ".join(tail(tmp / "server.log", 6))[:500])
                 break
-            if bridge.poll() is not None:
+            if bridge.poll() is not None and killed_at is None:
                 notes.append("bridge process exited during the soak")
                 break
             if time.time() - started > args.max_real_min * 60:
@@ -414,6 +483,14 @@ def main() -> int:
                 except Exception:
                     break
                 continue
+            if not nests_sent and tick >= args.nests_at * TICKS_PER_MIN:
+                client.send_command(f"/ai-soak-nests {args.nests} 90")
+                nests_sent = True
+                notes.append(f"{args.nests} nest(s) placed 90 tiles from home at game minute {args.nests_at:g}")
+            if args.raids and tick >= next_raid:
+                med = (0 if tick < 20 * TICKS_PER_MIN else 1 if tick < 40 * TICKS_PER_MIN else 2) if args.mediums else 0
+                client.send_command(f"/ai-soak-raid {4 + tick // (10 * TICKS_PER_MIN)} {med}")
+                next_raid += 10 * TICKS_PER_MIN
             if tick >= next_tick:
                 snap_file.unlink(missing_ok=True)
                 client.send_command("/ai-soak-snapshot")
@@ -424,6 +501,11 @@ def main() -> int:
                         break
                     time.sleep(0.25)
                 s = sample_from(snap) if snap else None
+                if s and args.kill_bridge_at and killed_at is None and s["minute"] >= args.kill_bridge_at:
+                    bridge.kill()                  # no goodbye: the mod just stops hearing from it
+                    killed_at = s["minute"]
+                    notes.append(f"bridge killed at game minute {killed_at}")
+                    print(f"  bridge killed at minute {killed_at}", flush=True)
                 if s:
                     samples.append(s)
                     if len(samples) % 5 == 0 or len(samples) == 1:
@@ -468,7 +550,7 @@ def main() -> int:
     ev = evaluate(samples, times)
     stall = longest_stall(samples)
     errors = mod_errors(out_dir)
-    path = write_report(out_dir, out, args, samples, bstats, times, ev, errors, stall, notes)
+    path = write_report(out_dir, out, args, samples, bstats, times, ev, errors, stall, notes, killed_at)
     for name in ("bridge.log", "debug.jsonl", "metrics.jsonl", "errors.log"):
         if (out_dir / name).exists():
             shutil.copyfile(out_dir / name, out / f"{args.label}-{name}")
@@ -478,6 +560,9 @@ def main() -> int:
                 if "Program arguments" not in l and password not in l), encoding="utf8")
     print(f"report: {path}")
     print("pass bar " + ("MET" if ev["passed"] else "NOT MET") + "  " + json.dumps(ev["bar"]))
+    print("combat " + json.dumps(combat_summary(samples)))
+    if killed_at is not None:
+        print("after bridge kill " + json.dumps(kill_summary(samples, killed_at)))
     if args.keep:
         print(f"kept {tmp}")
     else:

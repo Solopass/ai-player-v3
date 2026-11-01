@@ -10,6 +10,8 @@ Date: 2026-10-30
     - /ai-selftest (self-test maps only; see tests/ingame/run_selftest.py).
     - build_green_cell (green science from assembler units) and build_defense (gun turrets with ammo); tend loads turret ammo.
     - /ai-soak-start, /ai-soak-speed, /ai-soak-snapshot (self-test maps only; see tests/ingame/run_soak.py).
+    - Reflexes (scripts/reflexes.lua), always on, no bridge needed: the AI shoots enemies near itself, the players and its attacked machines, keeps gun and ammo stocked, eats fish, retreats when badly hurt; light upkeep of its machines (fuel, outputs, turret ammo); queues research when idle. Settings ai-player-reflexes, ai-player-combat-mode, ai-player-auto-research.
+    - Hunt mode (opt-in: setting or chat "ai: hunt" / "ai: defend"): clears nests within 120 tiles of home when well armed.
   Changes:
     - tend now looks after every AI-built machine on the surface, wires unpowered labs/assemblers to the grid, and picks up drills whose ore ran out.
     - craft_for reports hand-crafts to the force statistics so "craft a lab" research triggers fire for the AI.

@@ -41,6 +41,9 @@ PASSIVE = {"chat", "summary", "wait", "add_note", "note"}
 # those as failures. Repeating them with no progress still blocks tend.
 NO_FAIL_BLOCK = {"skill:tend", "skill:build_ghosts"}
 NO_REPEAT_BLOCK = {"skill:build_ghosts"}
+# The mod's reflexes took the character for a fight and cancelled the turn: not the model's fault.
+CANCELLED_COMBAT = "cancelled: combat"
+
 # Blocks that never grow past BLOCK_TURNS: tend is how the base keeps running, so a
 # long block on it (it repeats by design) just idles the AI.
 NO_ESCALATE = {"skill:tend"}
@@ -126,6 +129,10 @@ class Coach:
                 if not isinstance(r, dict):
                     continue
                 k = result_key(r)
+                if str(r.get("detail") or "").startswith(CANCELLED_COMBAT):
+                    line.append(f"CANCELLED (combat) {k}")
+                    self.sent.clear()           # the same moves again is not a loop, the fight stopped them
+                    continue
                 line.append(f"{'OK' if r.get('ok') else 'FAILED'} {k}")
                 if r.get("ok"):
                     b = self.blocks.get(k)

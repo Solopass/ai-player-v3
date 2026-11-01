@@ -101,6 +101,7 @@ local function build(player)
   heading(body, "Status")
   r.char = label(body, nil, "", true)
   r.brain = label(body, nil, "", true)
+  r.reflex = label(body, nil, "", true)
   r.goal = label(body, nil, "", true)
   r.model = label(body, nil, "", true)
   r.summary = label(body, nil, "", true)
@@ -119,6 +120,8 @@ local function build(player)
                    tooltip = "Share your force and base (on) or play solo (off)"}
   row.add{type = "button", name = "aip_clear", caption = "Unstick",
           tooltip = "Drop in-flight requests if it seems stuck waiting"}
+  r.mode = row.add{type = "button", name = "aip_mode", caption = "Defend",
+                   tooltip = "Combat mode: defend (only fight what attacks) or hunt (also clear nests near home)"}
 
   heading(body, "Tell the AI")
   local talk = body.add{type = "flow", direction = "horizontal"}
@@ -220,6 +223,16 @@ function AIGui.update(player)
     r.brain.caption = string.format("Brain: idle — next decision in %ds", math.ceil(left / 60))
   end
   r.pause.caption = ap.autonomy_enabled == false and "Resume" or "Pause"
+  local rf = AIReflexes.status()
+  r.mode.caption = rf.mode == "hunt" and "Hunt" or "Defend"
+  if rf.bridge_offline then
+    r.reflex.caption = "Bridge offline: reflexes only (" .. rf.state .. ")"
+    r.reflex.style.font_color = {r = 1, g = 0.6, b = 0.3}
+  else
+    r.reflex.caption = string.format("Reflexes: %s%s · mode %s", rf.state,
+      rf.target and (" — " .. rf.target) or "", rf.mode)
+    r.reflex.style.font_color = {r = 1, g = 1, b = 1}
+  end
   r.coop.caption = ap.force_name == "player" and "Co-op: on" or "Co-op: off"
 
   local st = ap.bridge_status
@@ -315,6 +328,10 @@ local HANDLERS = {
     if not is_admin(player) then return end
     local r = AICharacter.set_coop(storage.ai_player.force_name ~= "player")
     say(player, r.coop and "co-op on: the AI shares your base" or "co-op off: the AI plays solo")
+  end,
+  aip_mode = function(player)
+    if not is_admin(player) then return end
+    AIReflexes.set_mode(AIReflexes.mode() == "hunt" and "defend" or "hunt")
   end,
   aip_clear = function(player)
     if not is_admin(player) then return end

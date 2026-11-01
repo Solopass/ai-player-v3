@@ -125,4 +125,28 @@ data:extend({
     order = "o"
   },
 
+  -- Reflexes (scripts/reflexes.lua): they run in the mod, with or without the bridge
+  {
+    type = "bool-setting",
+    name = "ai-player-reflexes",
+    setting_type = "runtime-global",
+    default_value = true,
+    order = "p"
+  },
+  {
+    type = "string-setting",
+    name = "ai-player-combat-mode",
+    setting_type = "runtime-global",
+    default_value = "defend",
+    allowed_values = {"defend", "hunt"},
+    order = "q"
+  },
+  {
+    type = "bool-setting",
+    name = "ai-player-auto-research",
+    setting_type = "runtime-global",
+    default_value = true,
+    order = "r"
+  },
+
 })

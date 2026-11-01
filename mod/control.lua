@@ -13,7 +13,9 @@ require("scripts.brain")
 require("scripts.blueprints")
 require("scripts.layout")
 require("scripts.skills")
+require("scripts.reflexes")
 require("scripts.selftest")
+require("scripts.selftest_reflex")
 require("scripts.gui")
 
 -- -------------------------------------------------------------------------
@@ -108,6 +110,7 @@ remote.add_interface("ai_player", {
       blueprints = lib, blueprints_measured = locked,
       placed = ap.placed_blueprints and { table.unpack(ap.placed_blueprints, math.max(1, #ap.placed_blueprints - 4)) } or {},
       bridge_status = ap.bridge_status, events = ap.events or {},
+      reflex = AIReflexes.status(),
     }
   end,
 
@@ -136,6 +139,12 @@ remote.add_interface("ai_player", {
       return { error = "no ai character — /spawn-ai-player first" }
     end
     return AIPerception.factory_state(character)
+  end,
+  -- Combat mode, as `ai: hunt` / `ai: defend` in chat (soak harness: tests/ingame/run_soak.py).
+  set_combat_mode = function(mode)
+    if mode ~= "hunt" and mode ~= "defend" then return "mode must be hunt or defend" end
+    AIReflexes.set_mode(mode)
+    return mode
   end,
   -- Toggle the autonomous on_tick decision loop. enabled: boolean.
   -- Returns the new state so the caller can confirm.
@@ -425,6 +434,9 @@ script.on_load(function()
 end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
+  if event.setting == "ai-player-combat-mode" and storage.ai_player then
+    storage.ai_player.combat_mode = nil          -- the setting wins over an earlier "ai: hunt" in chat
+  end
   local bridge_settings = {
     "ai-player-provider", "ai-player-model-name", "ai-player-lm-studio-url",
     "ai-player-openai-api-key", "ai-player-openai-api-base", "ai-player-custom-url",
@@ -582,11 +594,13 @@ script.on_event(defines.events.on_entity_damaged, function(event)
   local e = event.entity
   if ai_owned_target(e) then
     storage.ai_player.last_attack = {tick = event.tick, x = math.floor(e.position.x),
-                                     y = math.floor(e.position.y), name = e.name}
+                                     y = math.floor(e.position.y), name = e.name, surface = e.surface.index}
   end
 end, {{filter = "turret"}, {filter = "crafting-machine", mode = "or"}, {filter = "type", type = "mining-drill", mode = "or"},
       {filter = "type", type = "lab", mode = "or"}, {filter = "type", type = "character", mode = "or"},
-      {filter = "type", type = "container", mode = "or"}})
+      {filter = "type", type = "container", mode = "or"}, {filter = "type", type = "boiler", mode = "or"},
+      {filter = "type", type = "generator", mode = "or"}, {filter = "type", type = "offshore-pump", mode = "or"},
+      {filter = "type", type = "electric-pole", mode = "or"}, {filter = "type", type = "inserter", mode = "or"}})
 
 script.on_event(defines.events.on_entity_died, function(event)
   on_machine_removed(event)
@@ -598,12 +612,13 @@ script.on_event(defines.events.on_entity_died, function(event)
     lost[event.entity.name] = (lost[event.entity.name] or 0) + 1
   end
   if event.entity == storage.ai_player.character then
-    game.print("[AI] Character died — respawning in 5s", {r=1, g=0.5, b=0})
+    local delay = AIReflexes.on_death(event.entity)
+    game.print(string.format("[AI] Character died — respawning in %ds", math.floor(delay / 60)), {r=1, g=0.5, b=0})
     -- Respawn on the planet it died on, not Nauvis.
     AICharacter.remember_surface(event.entity.surface)
     storage.ai_player.character = nil
     if settings.global["ai-player-auto-respawn"].value then
-      storage.ai_player.respawn_tick = event.tick + 300
+      storage.ai_player.respawn_tick = event.tick + delay
     end
   end
 end, death_filters)
@@ -668,6 +683,9 @@ script.on_event(defines.events.on_console_chat, function(event)
                  or msg:match("^%s*![Aa][Ii]%s+(.-)%s*$")
 
   if not directive or directive == "" then return end
+  -- "ai: hunt" / "ai: defend" switch the combat mode (reflexes.lua) instead of being an order.
+  local mode = directive:lower()
+  if mode == "hunt" or mode == "defend" then return AIReflexes.set_mode(mode) end
   give_directive(directive)
 end)
 

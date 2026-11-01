@@ -588,6 +588,18 @@ local PREFERRED_TECH = {
   "fast-inserter", "logistic-science-pack",
 }
 
+-- Techs to queue, in order, whenever nothing is being researched (the reflexes' auto-research
+-- and, via perception.research.order, the bridge planner use this one list). {tech, needs_green}:
+-- green-pack techs wait until green science has been made.
+AISkills.RESEARCH_ORDER = {
+  {"automation", false}, {"logistics", false}, {"logistic-science-pack", false},
+  {"gun-turret", false}, {"military", false}, {"steel-processing", false},
+  {"fast-inserter", false}, {"stone-wall", false},
+  {"physical-projectile-damage-1", false}, {"weapon-shooting-speed-1", false},
+  {"automation-2", true}, {"engine", true}, {"electric-energy-distribution-1", true},
+  {"toolbelt", true}, {"advanced-material-processing", true},
+}
+
 local function prereqs_met(tech)
   for _, pre in pairs(tech.prerequisites) do
     if not pre.researched then return false end
@@ -602,6 +614,14 @@ local function try_queue(force, tech)
   if not (tech and tech.enabled and not tech.researched and prereqs_met(tech)) then return false end
   if tech.prototype.research_trigger ~= nil then return false end
   return force.add_research(tech)
+end
+
+-- Queue the first tech of RESEARCH_ORDER that can be queued now; returns its name or nil.
+function AISkills.queue_next_research(force, green_made)
+  for _, e in ipairs(AISkills.RESEARCH_ORDER) do
+    if (green_made or not e[2]) and try_queue(force, force.technologies[e[1]]) then return e[1] end
+  end
+  return nil
 end
 
 -- "craft 1 lab" etc. for a tech whose research_trigger unlocks it; nil when it
@@ -1204,6 +1224,75 @@ local function take_all(from, inv, got)
   end
 end
 
+AISkills.take_all = take_all
+
+-- Furnace results, and the chests that drills / assembler inserters fill, into `inv`
+-- (other chests may be storage the AI deposited into on purpose). got: item -> count.
+function AISkills.collect_outputs(inv, own, got)
+  for _, e in ipairs(own) do
+    if e.valid and e.last_user ~= nil then
+      -- a human's machine (it may sit in the owned set after they took it over): hands off
+    elseif e.valid and e.type == "furnace" then
+      take_all(e.get_inventory(defines.inventory.crafter_output), inv, got)
+    elseif e.valid and (e.type == "mining-drill" or e.type == "inserter") and e.drop_target
+           and e.drop_target.type == "container" and e.drop_target.last_user == nil then
+      take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
+    end
+  end
+end
+
+-- Coal into every burner of `own` that runs low, and into the furnaces a drill feeds.
+-- Returns how many were refuelled.
+function AISkills.refuel(inv, own)
+  local fueled = 0
+  for _, e in ipairs(own) do
+    local fb = e.valid and e.last_user == nil and e.get_fuel_inventory and e.get_fuel_inventory()
+    -- Boilers run the whole base: keep them at 20 coal, not 5.
+    local boiler = e.valid and e.type == "boiler"
+    if fb and fb.valid and fb.get_item_count("coal") < (boiler and 10 or 5) then
+      local n = math.min(boiler and (20 - fb.get_item_count("coal")) or 10, inv.get_item_count("coal"))
+      if n > 0 then
+        local ins = fb.insert{name = "coal", count = n}
+        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
+      end
+    end
+  end
+  for _, d in ipairs(own) do
+    local tgt = d.valid and d.type == "mining-drill" and d.drop_target
+    if tgt and tgt.type == "furnace" and tgt.last_user == nil then
+      local fb = tgt.get_fuel_inventory()
+      if fb and fb.get_item_count("coal") < 5 and inv.get_item_count("coal") > 0 then
+        local ins = fb.insert{name = "coal", count = math.min(10, inv.get_item_count("coal"))}
+        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
+      end
+    end
+  end
+  return fueled
+end
+
+-- Gun turrets of `own` back up to TURRET_REFILL magazines from the inventory; with `craft`,
+-- hand-craft magazines when the inventory has none. Returns the magazines given.
+function AISkills.top_up_turrets(character, inv, own, craft)
+  local given = 0
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "ammo-turret" then
+      local ai = e.get_inventory(defines.inventory.turret_ammo)
+      local short = TURRET_REFILL - (ai and ai.get_item_count("firearm-magazine") or 0)
+      if ai and short > 0 then
+        if craft and inv.get_item_count("firearm-magazine") == 0 then
+          character.begin_crafting{recipe = "firearm-magazine", count = 5, silent = true}
+        end
+        local n = math.min(short, inv.get_item_count("firearm-magazine"))
+        if n > 0 then
+          local ins = ai.insert{name = "firearm-magazine", count = n}
+          if ins > 0 then inv.remove{name = "firearm-magazine", count = ins}; given = given + ins end
+        end
+      end
+    end
+  end
+  return given
+end
+
 -- What a drill mines: its current target, else the ore under it.
 function AISkills.drill_resource(drill)
   local t = drill.mining_target
@@ -1233,14 +1322,7 @@ local function skill_tend(character, _)
 
   -- 1. collect output: furnace results, and chests a drill fills (other chests
   -- may be storage the AI deposited into on purpose)
-  for _, e in ipairs(own) do
-    if e.type == "furnace" then
-      take_all(e.get_inventory(defines.inventory.crafter_output), inv, got)
-    elseif (e.type == "mining-drill" or e.type == "inserter") and e.drop_target
-           and e.drop_target.type == "container" then
-      take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
-    end
-  end
+  AISkills.collect_outputs(inv, own, got)
 
   -- 1a. what assembler units made: the output chest of each unit goes into the inventory
   -- (the next unit's input chest is filled from it in step 5; science packs go to the labs)
@@ -1328,28 +1410,7 @@ local function skill_tend(character, _)
   character.teleport(origin)
 
   -- 3. refuel (furnaces placed in step 2 included)
-  for _, e in ipairs(own) do
-    local fb = e.valid and e.get_fuel_inventory and e.get_fuel_inventory()
-    -- Boilers run the whole base: keep them at 20 coal, not 5.
-    local boiler = e.valid and e.type == "boiler"
-    if fb and fb.valid and fb.get_item_count("coal") < (boiler and 10 or 5) then
-      local n = math.min(boiler and (20 - fb.get_item_count("coal")) or 10, inv.get_item_count("coal"))
-      if n > 0 then
-        local ins = fb.insert{name = "coal", count = n}
-        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
-      end
-    end
-  end
-  for _, d in ipairs(own) do
-    local tgt = d.valid and d.type == "mining-drill" and d.drop_target
-    if tgt and tgt.type == "furnace" then
-      local fb = tgt.get_fuel_inventory()
-      if fb and fb.get_item_count("coal") < 5 and inv.get_item_count("coal") > 0 then
-        local ins = fb.insert{name = "coal", count = math.min(10, inv.get_item_count("coal"))}
-        if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
-      end
-    end
-  end
+  fueled = AISkills.refuel(inv, own)
 
   -- 4. feed idle furnaces with matching ore (never mix: output must be empty or
   -- the same plate). Furnaces a drill feeds are left to the drill.
@@ -1420,23 +1481,7 @@ local function skill_tend(character, _)
   end
 
   -- 5b. gun turrets: top their ammo up from the inventory, crafting magazines when out
-  local ammo_given = 0
-  for _, e in ipairs(own) do
-    if e.valid and e.type == "ammo-turret" then
-      local ai = e.get_inventory(defines.inventory.turret_ammo)
-      local short = TURRET_REFILL - (ai and ai.get_item_count("firearm-magazine") or 0)
-      if ai and short > 0 then
-        if inv.get_item_count("firearm-magazine") == 0 then
-          character.begin_crafting{recipe = "firearm-magazine", count = 5, silent = true}
-        end
-        local n = math.min(short, inv.get_item_count("firearm-magazine"))
-        if n > 0 then
-          local ins = ai.insert{name = "firearm-magazine", count = n}
-          if ins > 0 then inv.remove{name = "firearm-magazine", count = ins}; ammo_given = ammo_given + ins end
-        end
-      end
-    end
-  end
+  local ammo_given = AISkills.top_up_turrets(character, inv, own, true)
 
   -- 6. wire consumers no pole reaches (the lab went down before the grid got there)
   local wired = 0
@@ -1570,6 +1615,17 @@ local TURN_WAIT_TICKS = 600
 local FAST_DECIDE_TICKS = 60      -- at least 1 s between a finished turn and the next request
 
 function AISkills.queue_turn(character, entries, source_id)
+  -- A fight is on: the reflexes hold the character, the turn starts when it is over.
+  if AIReflexes.in_combat() then
+    local held = storage.ai_player.held_turn          -- a second reply joins the first, none is lost
+    if held then
+      for _, e in ipairs(entries) do held.entries[#held.entries + 1] = e end
+      held.source_id = source_id
+    else
+      storage.ai_player.held_turn = {entries = entries, source_id = source_id}
+    end
+    return
+  end
   storage.ai_player.turn = {entries = entries, i = 1, results = {}, source_id = source_id,
                             waited_from = nil}
   AISkills.step_turn(game.tick)

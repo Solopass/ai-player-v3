@@ -38,3 +38,39 @@ def test_mod_config_cannot_override_env_file_rcon(tmp_path, monkeypatch):
     monkeypatch.setenv("BRIDGE_ENV_FILE", str(env))
     cfg = ConfigLoader().get()
     assert (cfg.provider, cfg.rcon.host, cfg.rcon.port, cfg.rcon.password) == ("stub", "127.0.0.1", 4242, "pw")
+
+
+def _soak():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent / "ingame"))
+    import run_soak
+    return run_soak
+
+
+def _sample(minute, **kw):
+    s = {"minute": minute, "techs": 3, "research_current": "logistics", "unfuelled": 0, "kills": 5,
+         "magazines": 100, "reflex": {"state": "idle", "deaths": 0}, "lost": {}, "spawners_home": 2,
+         "combat_mode": "defend"}
+    s.update(kw)
+    return s
+
+
+def test_kill_summary_compares_before_and_after_the_kill():
+    soak = _soak()
+    samples = [_sample(19), _sample(21, kills=9, techs=4, reflex={"state": "fighting", "deaths": 0, "bridge_offline": True}),
+               _sample(30, kills=20, techs=6, unfuelled=1, reflex={"state": "idle", "deaths": 1})]
+    k = soak.kill_summary(samples, 20)
+    assert (k["techs_at_kill"], k["techs_end"], k["kills_end"], k["unfuelled_max_after"]) == (3, 6, 20, 1)
+    assert k["bridge_offline_seen"] and k["ai_deaths_after"] == 1
+    assert k["reflex_states_after"] == ["fighting", "idle"]
+    assert soak.kill_summary(samples, None) is None
+
+
+def test_combat_summary_totals_losses_and_nests():
+    soak = _soak()
+    samples = [_sample(1), _sample(60, lost={"stone-furnace": 2, "lab": 1}, spawners_home=0,
+                                   reflex={"state": "idle", "deaths": 1, "nests_cleared": 3})]
+    c = soak.combat_summary(samples)
+    assert c["entities_lost_total"] == 3 and c["ai_deaths"] == 1 and c["nests_cleared"] == 3
+    assert (c["spawners_near_home_start"], c["spawners_near_home_end"]) == (2, 0)

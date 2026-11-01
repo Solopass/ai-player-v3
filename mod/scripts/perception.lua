@@ -742,6 +742,12 @@ function AIPerception.gather(character)
     end
   end
   perception.research.triggers = triggers
+  -- The queue order the reflexes use when nothing is being researched (the planner reads it).
+  local order = {}
+  for _, e in ipairs(AISkills.RESEARCH_ORDER) do order[#order + 1] = {tech = e[1], green = e[2]} end
+  perception.research.order = order
+  -- What the reflexes are doing (fighting / retreating cancels the turn with reason "combat").
+  perception.reflex = AIReflexes.status()
 
   -- Whole-base machine view (scale-aware) + factory-wide maintenance needs.
   -- factory.summary scales to hundreds of machines (aggregate counts +

@@ -670,3 +670,64 @@ def test_tend_blocks_do_not_escalate():
             spans.append((key, b["until"] - c.turn))
     assert [n for k, n in spans if k == "skill:tend"] == [6, 6, 6, 6]
     assert [n for k, n in spans if k == "skill:gather"] == [6, 12, 24, 48]
+
+
+# --- reflexes (the mod fights and tends by itself) ------------------------------
+
+def reflexive(p: dict) -> dict:
+    p["reflex"] = {"state": "idle", "mode": "defend", "enabled": True}
+    return p
+
+
+def test_reflexes_take_over_refuelling_and_emptying():
+    p = stuck_fuel_all()
+    p["needs"] = {"burners_low_fuel": [{"name": "burner-mining-drill"}],
+                  "outputs_full": [{"name": "stone-furnace", "drop": "furnace"},
+                                   {"name": "iron-chest", "drop": "container"}]}
+    assert planner.next_step(p)[0] == {"skill": "tend"}                  # old mod: the planner tends
+    assert not any(e.get("skill") == "tend" and "fuel" in r for e, r in planner.next_steps(reflexive(p), limit=8))
+
+
+def test_tend_stays_for_drills_spilling_on_the_ground():
+    p = reflexive(stuck_fuel_all())                                      # one drill drops on the ground
+    assert planner.next_step(p)[0] == {"skill": "tend"}
+
+
+def test_low_coal_gathers_instead_of_tending_with_reflexes():
+    p = reflexive(stuck_fuel_all())
+    p["inventory"] = [i for i in p["inventory"] if i["name"] != "coal"]
+    p["needs"]["outputs_full"] = []
+    entry, _ = planner.next_step(p)
+    assert entry == {"skill": "gather", "item": "coal", "count": 50}
+
+
+def test_research_order_comes_from_the_mod_when_it_reports_one():
+    p = labbed()
+    p["research"]["order"] = [{"tech": "toolbelt", "green": False}, {"tech": "logistics", "green": False}]
+    assert research_moves(p)[0] == {"skill": "research", "tech": "toolbelt"}
+    p["research"]["order"] = []
+    assert research_moves(p)[0] == {"skill": "research", "tech": "logistics"}    # falls back to the built-in list
+
+
+def test_a_turn_cancelled_by_combat_is_not_a_failure():
+    c, p = Coach(), lab_trigger()
+    cancelled = {**FAIL, "detail": "cancelled: combat"}
+    for rid in ("r1", "r2", "r3"):
+        c.observe(payload(p, [cancelled], rid))
+    assert not c.blocked() and not c.blocks
+    assert "CANCELLED (combat)" in c.prompt_text(None)
+
+
+def test_combat_cancels_do_not_make_the_same_moves_a_loop():
+    c, p = Coach(), lab_trigger()
+    move = [{"skill": "gather", "item": "coal", "count": 50}]
+    for i in range(6):
+        c.guard(move, payload(p), None)
+        c.observe(payload(p, [{"action": "skill:gather", "item": "coal", "count": 50, "ok": False,
+                               "detail": "cancelled: combat"}], f"r{i}"))
+    assert not c.blocked()
+
+
+def test_prompt_tells_the_model_about_reflexes():
+    from bridge.prompt import SYSTEM_PROMPT
+    assert "REFLEXES" in SYSTEM_PROMPT and "cancelled: combat" in SYSTEM_PROMPT

@@ -38,6 +38,8 @@ GATHER_NEAR = 35  # tiles; gather only searches 40 around the character
 # Techs to queue, in order, whenever nothing is being researched: the ladder's own
 # needs first (automation -> logistics -> green science), then defence and quality of
 # life. (tech, needs_green): green-pack techs wait until green science is made.
+# The mod owns this list now (skills.lua RESEARCH_ORDER, reported as perception.research.order,
+# which its reflexes also use); this copy is the fallback for a mod that doesn't report it.
 RESEARCH_ORDER = [
     ("automation", False), ("logistics", False), ("logistic-science-pack", False),
     ("gun-turret", False), ("military", False), ("steel-processing", False),
@@ -104,6 +106,19 @@ def _labs(p: dict) -> list[dict]:
 
 def _by_type(p: dict, name: str) -> int:
     return int(((p.get("factory") or {}).get("by_type") or {}).get(name, 0))
+
+
+def research_order(p: dict) -> list[tuple[str, bool]]:
+    """The mod's queue order (perception.research.order), else the built-in copy."""
+    order = (p.get("research") or {}).get("order") or []
+    out = [(str(o["tech"]), bool(o.get("green"))) for o in order if isinstance(o, dict) and o.get("tech")]
+    return out or RESEARCH_ORDER
+
+
+def _reflexes(p: dict) -> bool:
+    """True when the mod's reflexes are on: they refuel, empty full furnaces/chests and reload
+    turrets by themselves, so the planner doesn't spend moves on those."""
+    return bool((p.get("reflex") or {}).get("enabled"))
 
 
 def _tech(p: dict, name: str) -> bool:
@@ -206,14 +221,18 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     if _count(p.get("deconstruction")) > 0:
         yield {"skill": "deconstruct"}, "the player marked things for removal", True
 
-    # 1. Keep the burner base running.
-    stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in ("ground", "container", "furnace")]
-    if needs.get("burners_low_fuel") or stalled:
+    # 1. Keep the burner base running. With the mod's reflexes on, refuelling and emptying
+    # furnaces/chests happen on their own; tend stays for what they don't do (a drill spilling
+    # onto the ground needs a collector placed).
+    reflexes = _reflexes(p)
+    drops = ("ground",) if reflexes else ("ground", "container", "furnace")
+    stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in drops]
+    if (needs.get("burners_low_fuel") and not reflexes) or stalled:
         yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
     elif (p.get("power") or {}).get("machines_no_power") and _lab_count(p) + _by_type(p, "assembling-machine"):
         yield {"skill": "tend"}, "a lab or assembler has no power: tend wires it to the grid", True
     if inv.get("coal", 0) < 5:
-        if (factory.get("miners_by_resource") or {}).get("coal"):
+        if (factory.get("miners_by_resource") or {}).get("coal") and not reflexes:
             yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
         yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
@@ -283,7 +302,7 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
         pending = {t.get("tech") for t in research.get("triggers") or []}
         queued = False
         if _lab_count(p):
-            for tech, needs_green in RESEARCH_ORDER:
+            for tech, needs_green in research_order(p):
                 if _tech(p, tech) or tech in pending or (needs_green and not _rate(p, "logistic-science-pack")):
                     continue
                 entry = {"skill": "research", "tech": tech}

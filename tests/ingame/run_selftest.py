@@ -29,7 +29,7 @@ REAL_MODS = Path(os.environ["APPDATA"]) / "Factorio" / "mods"     # only mod-lis
 
 FACINGS = ["north", "east", "south", "west"]
 FACING_CASES = {"miner_furnace", "miner_chest", "miner_belt", "power", "electric_miner"}
-ALL_CASES = ["miner_furnace", "miner_chest", "miner_belt", "power", "assembler", "red_cell", "electric_miner", "tend_far", "lab_trigger", "tend_wire", "tend_depleted", "green_cell", "defense", "tend_registry"]
+ALL_CASES = ["miner_furnace", "miner_chest", "miner_belt", "power", "assembler", "red_cell", "electric_miner", "tend_far", "lab_trigger", "tend_wire", "tend_depleted", "green_cell", "defense", "tend_registry", "shoot_probe", "guard", "protect", "retreat", "hunt", "reflex_tend", "reflex_research", "death_backoff", "hold_cap", "far_player"]
 CASE_TIMEOUT = 240
 BOOT_TIMEOUT = 240
 

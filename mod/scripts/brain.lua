@@ -124,6 +124,17 @@ function AIBrain.request_decision(character, user_message)
   -- it still reaches the bridge as a user_message (and gets a chat reply).
   user_message = user_message or mem.pending_user_message
 
+  -- The reflexes hold the character while it fights or retreats: the order waits, and the
+  -- decision tick asks again once it is calm (reflexes.lua).
+  if AIReflexes.in_combat() then
+    mem.pending_user_message = user_message
+    if user_message and not mem.pending_order_tick then       -- reflexes.lua drops the fight after 30 s
+      mem.pending_order_tick = game.tick
+      game.print("[AI] Fighting right now - I'll do that next", {r = 0.5, g = 0.9, b = 1})
+    end
+    return
+  end
+
   -- Only one pending request at a time, and none while the last turn's moves
   -- are still running. Keep the queued message for next time.
   if storage.ai_player.turn then
@@ -139,6 +150,7 @@ function AIBrain.request_decision(character, user_message)
 
   -- We are committing to a request now — consume the queued message.
   mem.pending_user_message = nil
+  mem.pending_order_tick = nil
 
   -- The AI hand-crafts 5x faster than a player (its own character only), so
   -- a turn like "craft a drill, then place it" doesn't stall.
@@ -197,6 +209,7 @@ function AIBrain.handle_response(req_id, actions_json)
                              reply = actions_json})
 
   storage.ai_player.pending_requests[req_id] = nil
+  storage.ai_player.last_bridge_tick = game.tick
 
   if setting("ai-player-debug-chat") then
     game.print("[AI Brain] Response for " .. req_id .. ": " .. actions_json:sub(1, 120))
@@ -217,7 +230,7 @@ function AIBrain.handle_response(req_id, actions_json)
   -- Entries may be skills {skill=...} or primitives {action=...}; the unified
   -- executor dispatches each and records E1 results.
   AISkills.queue_turn(storage.ai_player.character, entries, req_id)
-  local turn = storage.ai_player.turn
+  local turn = storage.ai_player.turn or storage.ai_player.held_turn      -- held during a fight
   if turn then turn.autopilot = (entries[1].source == "autopilot") end
 end
 
