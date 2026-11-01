@@ -183,6 +183,15 @@ class Coach:
             moves = json.dumps([e for e, _ in steps])
             why = "; ".join(r for _, r in steps)
             lines.append(f"SUGGESTED MOVES (send these unless the player asked for something else): {moves} — {why}")
+        try:
+            from bridge.speedrun import load_playbook
+            playbook = load_playbook()
+            if playbook:
+                lines.append("LESSONS FROM PREVIOUS RUNS (speedrun winning heuristics):")
+                for rule in playbook[:4]:
+                    lines.append(f"  • {rule}")
+        except Exception:
+            pass
         return "\n".join(lines)
 
     # -- per answer -------------------------------------------------------
