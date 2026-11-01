@@ -1,0 +1,34 @@
+{
+  "name": "tileable-sulfur",
+  "string": "0eNqFkk1LxDAQQP9KmZNCKtuvxfbqWRA8ikjajhqYJiFJxaX0vzttl6q0q6eQybw3mUwGqKlH65QOUA2gGqM9VE8DePWmJU0xLTuECpp37FQjKbYkOXkUoHSLn1Al47MA1EEFhQs7b04vuu9qdJwgLjgEWOMZM3qqw6r0phBwmlf2O2yUnTDf02vvuORGna5qO6VuhMlZeGDhDp79g2d/4/mKK+3RBY5tFPmvllrFTS2n+Y6wWIXBSe2tcSGukXZeqrikvd3RHlet7yRRjMTZTjWxNbTT9eFn1zxbFbBj9vujCCDJ1+LYvWl7ki56nCcUPUxjja6S6O486CVyzcQHOj+XKI5pmZdlkeVpkiXpOH4BxofR9Q==",
+  "hash": "fac660a70e0aa9c8",
+  "source": "repo",
+  "category": "oil-processing",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Sulfur Plant (1 Chemical Plant)",
+  "entities": 6,
+  "cost": {
+    "pipe": 2,
+    "chemical-plant": 1,
+    "inserter": 1,
+    "transport-belt": 1,
+    "small-electric-pole": 1
+  },
+  "size": {
+    "w": 7,
+    "h": 4
+  },
+  "recipes": [
+    "sulfur"
+  ],
+  "tileable": true,
+  "tile_offset": {
+    "x": 0,
+    "y": 6
+  },
+  "snap_grid": {
+    "x": 7,
+    "y": 6
+  }
+}

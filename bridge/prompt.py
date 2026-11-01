@@ -36,6 +36,9 @@ Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no 
 - {"skill":"place_blueprint","name":"<library name>"[,"position":{"x":N,"y":N}]}   Stamp a proven build from the blueprint library as ghosts; the spot (clear ground, ore patch or shoreline) is found for you. Then build_ghosts builds it. Prefer this over placing buildings one by one.
 - {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) until you HOLD count in total; tells you which raw materials are still missing. Plates and steel can't be hand-crafted — smelt them. To craft NEW ones when you already hold some (e.g. a research trigger), set count = what you hold + how many more.
 - {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner's output to a smelter's input.
+- {"skill":"connect_pipe","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay fluid pipes (as ghosts) along an L-shaped path between two fluid ports, e.g. from a pumpjack to an oil refinery, or refinery to chemical plant.
+- {"skill":"build_pumpjack"[,"position":{"x":N,"y":N}]}   Place an electric pumpjack on the nearest crude-oil node to extract oil and wire it to the power grid.
+- {"skill":"build_radar"}                 Place a radar near base to continuously survey surrounding chunks and reveal distant ore, oil patches and biter nests.
 
 === PRIMITIVE ACTIONS (fallback only) ===
 move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,direction]}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}.

@@ -782,6 +782,12 @@ function AIPerception.gather(character)
     conns[#conns + 1] = {from = c.from, to = c.to}
   end
   perception.connected_belts = conns
+
+  local pipes = {}
+  for _, c in ipairs(storage.ai_player.connected_pipes or {}) do
+    pipes[#pipes + 1] = {from = c.from, to = c.to}
+  end
+  perception.connected_pipes = pipes
   -- blueprint_library: blueprints whose every building is unlocked for this
   -- force. blueprint_locked: the rest, with up to 3 items still locked (the
   -- bridge turns those into research hints and keeps both out of the raw

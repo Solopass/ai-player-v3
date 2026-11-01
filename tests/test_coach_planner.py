@@ -899,4 +899,50 @@ def test_planner_selects_and_connects_modular_steel_smelter():
     assert {"skill": "place_blueprint", "name": "tileable-steel"} in moves
 
 
+def test_planner_selects_radar_when_oil_undiscovered():
+    p = green_ready()
+    p["production"]["items"].update({"logistic-science-pack": {"per_min": 5}, "steel-plate": {"per_min": 2}})
+    p["research"]["done"].extend(["steel-processing", "oil-processing"])
+    p["landmarks"]["resources"] = []
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "build_radar"} in moves
+
+
+def test_planner_selects_pumpjack_and_refinery_when_oil_known():
+    p = green_ready()
+    p["production"]["items"].update({"logistic-science-pack": {"per_min": 5}, "steel-plate": {"per_min": 2}})
+    p["research"]["done"].extend(["steel-processing", "oil-processing"])
+    p["landmarks"]["resources"] = [{"name": "crude-oil", "x": 20, "y": 30, "distance": 36}]
+    p["blueprint_library"] = ["tileable-oil-basic"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "build_pumpjack"} in moves
+    assert {"skill": "place_blueprint", "name": "tileable-oil-basic"} in moves
+
+
+def test_planner_connects_pipe_from_crude_to_refinery():
+    p = green_ready()
+    p["production"]["items"].update({"logistic-science-pack": {"per_min": 5}, "steel-plate": {"per_min": 2}})
+    p["research"]["done"].extend(["steel-processing", "oil-processing"])
+    p["landmarks"]["resources"] = [{"name": "crude-oil", "x": 20, "y": 30, "distance": 36}]
+    p["factory"]["machines"] = [{"type": "pumpjack", "position": {"x": 20, "y": 30}}]
+    p["blueprint_library"] = ["tileable-oil-basic"]
+    p["placed_blueprints"] = [{"name": "tileable-oil-basic", "position": {"x": 10, "y": 10}}]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "connect_pipe", "from": {"x": 20, "y": 30}, "to": {"x": 12.0, "y": 10}} in moves
+
+
+def test_planner_selects_plastic_and_connects_petroleum():
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"].update({"logistic-science-pack": {"per_min": 5}, "steel-plate": {"per_min": 2}})
+    # Satisfy oil milestone: 1 pumpjack and 1 refinery
+    p["factory"].setdefault("by_type", {})
+    p["factory"]["by_type"].update({"pumpjack": 1, "oil-refinery": 1, "boiler": 1})
+    p["research"]["done"].extend(["steel-processing", "oil-processing", "plastics", "sulfur-processing"])
+    p["blueprint_library"] = ["tileable-plastic", "tileable-sulfur"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-plastic"} in moves
+
+
+
 

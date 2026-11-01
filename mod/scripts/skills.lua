@@ -958,6 +958,205 @@ local function skill_connect_belt(character, p)
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
+-- -------------------------------------------------------------------------
+-- connect_pipe(from, to) — lay pipe ghosts along an L-shaped path.
+-- Trees/rocks on the path are marked for deconstruction.
+-- -------------------------------------------------------------------------
+local function pipe_path(a, b, horizontal_first)
+  local ax, ay = math.floor(a.x) + 0.5, math.floor(a.y) + 0.5
+  local bx, by = math.floor(b.x) + 0.5, math.floor(b.y) + 0.5
+  local pts = {{x = ax, y = ay}}
+  local function walk_to(tx, ty)
+    local cur = pts[#pts]
+    local dx = (tx > cur.x and 1) or (tx < cur.x and -1) or 0
+    local dy = (ty > cur.y and 1) or (ty < cur.y and -1) or 0
+    while (cur.x ~= tx or cur.y ~= ty) and #pts <= MAX_BELT do
+      cur = {x = cur.x + dx, y = cur.y + dy}
+      pts[#pts + 1] = cur
+    end
+  end
+  if horizontal_first then walk_to(bx, ay); walk_to(bx, by)
+  else walk_to(ax, by); walk_to(bx, by) end
+  return pts
+end
+
+local function skill_connect_pipe(character, p)
+  local a, b = p.from, p.to
+  if not (a and b and a.x and a.y and b.x and b.y) then
+    return false, "connect_pipe: 'from' and 'to' must be {x=N, y=N}"
+  end
+  local surface, force = character.surface, character.force
+  local blocked_at
+  for _, hfirst in ipairs({true, false}) do
+    local pts = pipe_path(a, b, hfirst)
+    if #pts > MAX_BELT then return false, "connect_pipe: path longer than " .. MAX_BELT .. " tiles" end
+    local ok = true
+    for _, pt in ipairs(pts) do
+      if not surface.can_place_entity{name = "pipe", position = pt, force = force,
+                                      build_check_type = defines.build_check_type.manual_ghost, forced = true} then
+        ok = false; blocked_at = pt; break
+      end
+    end
+    if ok then
+      local placed, marked = 0, 0
+      for _, pt in ipairs(pts) do
+        local x, y = pt.x, pt.y
+        for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
+                                                          type = {"tree", "simple-entity"}}) do
+          if e.order_deconstruction(force) then marked = marked + 1 end
+        end
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
+                                        position = pt, force = force}
+        if g then placed = placed + 1 end
+      end
+      if placed > 0 and storage.ai_player then
+        storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
+        table.insert(storage.ai_player.connected_pipes, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
+                                                         to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
+        AIDebug.event("connect_pipe", {from = a, to = b, tiles = #pts})
+      end
+      local next_step = marked > 0
+        and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
+        or "build_ghosts next"
+      return placed > 0, string.format("connect_pipe: placed %d/%d pipe ghost(s) — %s (needs %d pipe)",
+                                       placed, #pts, next_step, placed)
+    end
+  end
+  return false, string.format("connect_pipe: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
+                              blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
+end
+
+-- -------------------------------------------------------------------------
+-- build_pumpjack — places a pumpjack on the nearest unmined crude-oil node.
+-- -------------------------------------------------------------------------
+local function skill_build_pumpjack(character, p)
+  local surface, force = character.surface, character.force
+  local target_pos = p and p.position
+  local node = nil
+  if target_pos then
+    node = surface.find_entities_filtered{name = "crude-oil", position = target_pos, radius = 4, limit = 1}[1]
+  end
+  if not node then
+    local center = character.position
+    local nodes = surface.find_entities_filtered{name = "crude-oil", position = center, radius = 96}
+    for _, n in ipairs(nodes) do
+      if surface.count_entities_filtered{name = {"pumpjack", "entity-ghost"}, position = n.position, radius = 2} == 0 then
+        node = n; break
+      end
+    end
+  end
+  if not node then
+    local lm = nil
+    for _, r in ipairs((AIPerception.landmarks(surface, character.position) or {}).resources or {}) do
+      if r.name == "crude-oil" then lm = r; break end
+    end
+    if lm then
+      return false, string.format("build_pumpjack: nearest crude-oil is at {%d,%d} (%d tiles away) — goto it first",
+                                  lm.x, lm.y, math.floor(lm.distance or 0))
+    end
+    return false, "build_pumpjack: no crude-oil patch discovered yet — explore or build a radar first"
+  end
+
+  local pos = node.position
+  local inv = inv_of(character)
+  local recipe = force.recipes["pumpjack"]
+  if recipe and not recipe.enabled then
+    return false, "build_pumpjack: oil-processing technology not yet researched"
+  end
+
+  for _, e in ipairs(surface.find_entities_filtered{area = {{pos.x - 2, pos.y - 2}, {pos.x + 2, pos.y + 2}},
+                                                    type = {"tree", "simple-entity"}}) do
+    e.destroy()
+  end
+
+  if inv.get_item_count("pumpjack") == 0 then
+    if recipe and character.get_craftable_count(recipe) > 0 then
+      character.begin_crafting{recipe = "pumpjack", count = 1, silent = true}
+      surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      return true, string.format("build_pumpjack: placed pumpjack ghost at {%.1f, %.1f} and began crafting", pos.x, pos.y)
+    else
+      surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      return true, string.format("build_pumpjack: placed pumpjack ghost at {%.1f, %.1f} — build_ghosts once crafted", pos.x, pos.y)
+    end
+  end
+
+  inv.remove{name = "pumpjack", count = 1}
+  local pj = surface.create_entity{name = "pumpjack", position = pos, force = force}
+  if not pj then
+    inv.insert{name = "pumpjack", count = 1}
+    return false, string.format("build_pumpjack: could not place pumpjack at {%.1f, %.1f}", pos.x, pos.y)
+  end
+  AIRegistry.register(pj)
+
+  if surface.count_entities_filtered{type = "electric-pole", position = pos, radius = 7} == 0 then
+    local pole_pos = surface.find_non_colliding_position("small-electric-pole", {x = pos.x + 2, y = pos.y + 2}, 5, 0.5)
+    if pole_pos then
+      if inv.get_item_count("small-electric-pole") > 0 then
+        inv.remove{name = "small-electric-pole", count = 1}
+        local pole = surface.create_entity{name = "small-electric-pole", position = pole_pos, force = force}
+        if pole then AIRegistry.register(pole) end
+      else
+        surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+      end
+    end
+  end
+
+  return true, string.format("built pumpjack at {%.1f, %.1f}", pos.x, pos.y)
+end
+
+-- -------------------------------------------------------------------------
+-- build_radar — places a radar to survey distant chunks.
+-- -------------------------------------------------------------------------
+local function skill_build_radar(character, p)
+  local surface, force = character.surface, character.force
+  local center = character.position
+  local home = AICharacter.get_home(surface) or center
+
+  if surface.count_entities_filtered{name = "radar", force = force, position = home, radius = 50, limit = 1} > 0 then
+    return false, "build_radar: a radar is already surveying near home"
+  end
+
+  local inv = inv_of(character)
+  local recipe = force.recipes["radar"]
+  if recipe and not recipe.enabled then
+    return false, "build_radar: radar technology not yet researched"
+  end
+
+  local spot = surface.find_non_colliding_position("radar", {x = home.x + 10, y = home.y + 10}, 20, 1)
+  if not spot then return false, "build_radar: no clear spot for radar near home" end
+
+  if inv.get_item_count("radar") == 0 then
+    if recipe and character.get_craftable_count(recipe) > 0 then
+      character.begin_crafting{recipe = "radar", count = 1, silent = true}
+    end
+    surface.create_entity{name = "entity-ghost", inner_name = "radar", position = spot, force = force}
+    return true, string.format("build_radar: placed radar ghost at {%.1f, %.1f} — build_ghosts next", spot.x, spot.y)
+  end
+
+  inv.remove{name = "radar", count = 1}
+  local radar = surface.create_entity{name = "radar", position = spot, force = force}
+  if not radar then
+    inv.insert{name = "radar", count = 1}
+    return false, "build_radar: failed to place radar"
+  end
+  AIRegistry.register(radar)
+
+  if surface.count_entities_filtered{type = "electric-pole", position = spot, radius = 7} == 0 then
+    local pole_pos = surface.find_non_colliding_position("small-electric-pole", {x = spot.x + 2, y = spot.y + 2}, 4, 0.5)
+    if pole_pos then
+      if inv.get_item_count("small-electric-pole") > 0 then
+        inv.remove{name = "small-electric-pole", count = 1}
+        local pole = surface.create_entity{name = "small-electric-pole", position = pole_pos, force = force}
+        if pole then AIRegistry.register(pole) end
+      else
+        surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+      end
+    end
+  end
+
+  return true, string.format("built radar at {%.1f, %.1f} to survey surrounding terrain", spot.x, spot.y)
+end
+
 -- A chest item for plans that need `n`: what the AI holds enough of, else
 -- wooden when there's wood for it, else iron.
 local function chest_for(character, n)
@@ -1575,6 +1774,9 @@ AISkills.REGISTRY = {
   place_blueprint  = skill_place_blueprint,
   craft_for        = skill_craft_for,
   connect_belt     = skill_connect_belt,
+  connect_pipe     = skill_connect_pipe,
+  build_pumpjack   = skill_build_pumpjack,
+  build_radar      = skill_build_radar,
 }
 
 -- -------------------------------------------------------------------------

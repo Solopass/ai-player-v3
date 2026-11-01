@@ -345,6 +345,72 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                                "connect iron plate belt to steel smelter input belt", True)
 
                 yield {"skill": "tend"}, "keep steel smelters fueled and fed with iron plates", True
+    elif goal_id == "oil":
+        if _tech(p, "oil-processing"):
+            crude = _landmark(p, "crude-oil")
+            if not crude and _by_type(p, "radar") == 0:
+                yield {"skill": "build_radar"}, "survey surrounding territory to locate crude oil", True
+            if _by_type(p, "pumpjack") == 0:
+                if crude and crude.get("distance", 0) > FAR:
+                    yield ({"skill": "goto", "position": {"x": crude["x"], "y": crude["y"]}},
+                           f"crude oil is {crude['distance']} tiles away", True)
+                yield {"skill": "build_pumpjack"}, "extract crude oil with a pumpjack", True
+            bp_name = "tileable-oil-basic"
+            if bp_name in unlocked_bps and _by_type(p, "oil-refinery") == 0:
+                yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular basic oil refinery", True
+            pipes = p.get("connected_pipes") or []
+            ref_pos = _find_placed(p, bp_name)
+            if ref_pos and crude:
+                crude_pt = {"x": crude["x"], "y": crude["y"]}
+                ref_in = {"x": ref_pos["x"] + 2.0, "y": ref_pos["y"]}
+                if not _is_connected(pipes, crude_pt, ref_in):
+                    yield ({"skill": "connect_pipe", "from": crude_pt, "to": ref_in},
+                           "pipe crude oil from pumpjack to refinery", True)
+            yield {"skill": "tend"}, "maintain power and upkeep around oil operations", True
+    elif goal_id == "plastic":
+        if _tech(p, "plastics"):
+            plas_bp = "tileable-plastic"
+            if plas_bp in unlocked_bps and plas_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": plas_bp}, "stamp modular plastic plant", True
+            sulf_bp = "tileable-sulfur"
+            if _tech(p, "sulfur-processing") and sulf_bp in unlocked_bps and sulf_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": sulf_bp}, "stamp modular sulfur plant", True
+
+            pipes = p.get("connected_pipes") or []
+            conns = p.get("connected_belts") or []
+            ref_pos = _find_placed(p, "tileable-oil-basic")
+            plas_pos = _find_placed(p, plas_bp)
+            if ref_pos and plas_pos:
+                petro_out = {"x": ref_pos["x"] + 3.0, "y": ref_pos["y"] + 6.0}
+                plas_petro_in = {"x": plas_pos["x"] + 1.5, "y": plas_pos["y"] + 0.5}
+                if not _is_connected(pipes, petro_out, plas_petro_in):
+                    yield ({"skill": "connect_pipe", "from": petro_out, "to": plas_petro_in},
+                           "pipe petroleum gas from refinery to plastic plant", True)
+
+            coal_lm = _landmark(p, "coal")
+            if coal_lm and plas_pos:
+                coal_pt = {"x": coal_lm["x"], "y": coal_lm["y"]}
+                plas_coal_in = {"x": plas_pos["x"] - 0.5, "y": plas_pos["y"] + 2.5}
+                if not _is_connected(conns, coal_pt, plas_coal_in):
+                    yield ({"skill": "connect_belt", "from": coal_pt, "to": plas_coal_in},
+                           "belt coal into plastic plant", True)
+
+            sulf_pos = _find_placed(p, sulf_bp)
+            if ref_pos and sulf_pos:
+                petro_out = {"x": ref_pos["x"] + 3.0, "y": ref_pos["y"] + 6.0}
+                sulf_petro_in = {"x": sulf_pos["x"] + 1.5, "y": sulf_pos["y"] + 0.5}
+                if not _is_connected(pipes, petro_out, sulf_petro_in):
+                    yield ({"skill": "connect_pipe", "from": petro_out, "to": sulf_petro_in},
+                           "pipe petroleum gas to sulfur plant", True)
+            water = (p.get("landmarks") or {}).get("water")
+            if water and sulf_pos:
+                water_pt = {"x": water["x"], "y": water["y"]}
+                sulf_water_in = {"x": sulf_pos["x"] + 3.5, "y": sulf_pos["y"] + 0.5}
+                if not _is_connected(pipes, water_pt, sulf_water_in):
+                    yield ({"skill": "connect_pipe", "from": water_pt, "to": sulf_water_in},
+                           "pipe water to sulfur plant", True)
+
+            yield {"skill": "tend"}, "maintain chemical plants and petrochemical feeds", True
 
 
 def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:

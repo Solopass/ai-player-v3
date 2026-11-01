@@ -1,0 +1,32 @@
+{
+  "name": "tileable-oil-basic",
+  "string": "0eNqFkU1rxCAQhv9KmFMLZklMspAcey+FXkspxp0uA0ZFTWkI+e/VdOtlAz35gc/zzowrjGpG60gHGFYgabSH4W0FT1ctVLrTYkIYwJAqHX6SRrfAxoD0Bb9hqLd3BqgDBcJfcj8sH3qeRnTxATs0MLDGR8jolBFFzalisOxrtDuUZBM0Ck+yTKh1RqL3pK8x/i6G5xibwDs9v+mrqD/Am3/wv+rOx3ibcT8JpUpUKIOLhVujDmzVqcu9pvlRwCn1mr+CgRIjxvHDs7nMSrjiKc2heCFVvN5GWDzUef8YiS90fo/ozrxv+75rWl43Nd+2H+C+nro=",
+  "hash": "c8d570a2658d9dfe",
+  "source": "repo",
+  "category": "oil-processing",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Basic Oil Refinery (1 Refinery)",
+  "entities": 4,
+  "cost": {
+    "pipe": 2,
+    "oil-refinery": 1,
+    "small-electric-pole": 1
+  },
+  "size": {
+    "w": 4,
+    "h": 8
+  },
+  "recipes": [
+    "basic-oil-processing"
+  ],
+  "tileable": true,
+  "tile_offset": {
+    "x": 6,
+    "y": 0
+  },
+  "snap_grid": {
+    "x": 6,
+    "y": 7
+  }
+}
