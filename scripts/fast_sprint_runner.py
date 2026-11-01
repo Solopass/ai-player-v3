@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tests" / "ingame"))
 
 import run_selftest as rs                                    # noqa: E402
+from factorio_rcon import RCONClient                          # noqa: E402
 from bridge.speedrun import Leaderboard, reflect_sprint       # noqa: E402
 
 PYTHON = str(REPO / ".venv" / "Scripts" / "python.exe")
@@ -53,6 +54,22 @@ SPRINT_TARGETS = {
 }
 
 
+def make_map_settings(seed: int, enemies: bool = True) -> dict:
+    s = json.loads((rs.FACTORIO_DIR / "data" / "map-gen-settings.example.json").read_text(encoding="utf-8"))
+    s["seed"] = seed
+    ctl = s.setdefault("autoplace_controls", {})
+    ctl["enemy-base"] = {"frequency": 1, "size": 1 if enemies else 0, "richness": 1}
+    return s
+
+
+def make_server_settings() -> dict:
+    settings = json.loads((rs.FACTORIO_DIR / "data" / "server-settings.example.json").read_text(encoding="utf-8"))
+    settings.update(auto_pause=False, require_user_verification=False, autosave_interval=0,
+                    max_players=0, autosave_only_on_server=True)
+    settings["visibility"] = {"public": False, "lan": False}
+    return settings
+
+
 def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
                       use_llm: bool = True, max_real_sec: float = 240.0) -> dict:
     target = SPRINT_TARGETS.get(sprint_key, SPRINT_TARGETS["red"])
@@ -73,12 +90,22 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
     rates = {}
 
     try:
+        write_data = tmp / "data"
+        write_data.mkdir(parents=True, exist_ok=True)
+        out_dir = write_data / "script-output" / "ai-player"
+        cfg = tmp / "config.ini"
+        cfg.write_text(f"[path]\nread-data={rs.FACTORIO_DIR / 'data'}\nwrite-data={write_data}\n", encoding="utf-8")
+        common = [str(rs.EXE), "-c", str(cfg), "--mod-directory", str(rs.prepare_mods(tmp))]
+
         save = tmp / "sprint.zip"
-        if not rs.create_map(save, seed, enemies=True):
+        (tmp / "map-gen-settings.json").write_text(json.dumps(make_map_settings(seed, enemies=True)), encoding="utf-8")
+        r = subprocess.run(common + ["--create", str(save), "--map-gen-settings", str(tmp / "map-gen-settings.json")],
+                           capture_output=True, text=True, timeout=300)
+        if r.returncode != 0 or not save.exists():
+            print("Map creation failed:\n" + (r.stdout + r.stderr)[-1000:], flush=True)
             return {"ok": False, "reason": "create_map_failed"}
 
-        common = rs.common_args(tmp)
-        settings = rs.default_server_settings()
+        settings = make_server_settings()
         (tmp / "server-settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
         port, rport = rs.free_port(udp=True), rs.free_port()
@@ -92,11 +119,11 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
 
         # Wait for RCON
         boot_t0 = time.time()
-        while time.time() - boot_t0 < 20:
+        while time.time() - boot_t0 < 25:
             if server.poll() is not None:
                 return {"ok": False, "reason": "server_exit_early"}
             try:
-                client = rs.RCONClient("127.0.0.1", rport, password)
+                client = RCONClient("127.0.0.1", rport, password)
                 break
             except Exception:
                 time.sleep(1)
@@ -106,14 +133,20 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
 
         # Write bridge .env
         env_file = tmp / "bridge.env"
-        env_content = (
-            f"FACTORIO_RCON_HOST=127.0.0.1\nFACTORIO_RCON_PORT={rport}\n"
-            f"FACTORIO_RCON_PASSWORD={password}\nFACTORIO_OUTPUT_DIR={tmp}\n"
-            f"AI_PROVIDER={'openai' if use_llm else 'stub'}\n"
-            f"OPENAI_BASE_URL={ROUTER}\nOPENAI_MODEL=sol-fast\n"
-            f"BRIDGE_AUTOPILOT=true\nAI_TIMEOUT=120\n"
-        )
-        env_file.write_text(env_content, encoding="utf-8")
+        lines = [
+            f"FACTORIO_OUTPUT_DIR={out_dir}",
+            f"FACTORIO_RCON_HOST=127.0.0.1",
+            f"FACTORIO_RCON_PORT={rport}",
+            f"FACTORIO_RCON_PASSWORD={password}",
+            f"AI_PROVIDER={'lmstudio' if use_llm else 'stub'}",
+            f"AI_MODEL=sol-fast",
+            f"LM_STUDIO_URL={ROUTER}",
+            f"AI_ENABLE_THINKING=false",
+            f"BRIDGE_AUTOPILOT=true",
+            f"AI_TIMEOUT={int(120 * max(speed, 1.0))}",
+            f"BRIDGE_VERBOSE=0"
+        ]
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         bridge_env = {**os.environ, "BRIDGE_ENV_FILE": str(env_file), "PYTHONIOENCODING": "utf-8"}
         bridge_log = open(tmp / "bridge.log", "w", encoding="utf-8")
