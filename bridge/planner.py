@@ -143,6 +143,23 @@ def _goto_far(p: dict, lm: dict | None, what: str,
                f"nearest {what} is {lm['distance']} tiles away", True)
 
 
+def _find_placed(p: dict, bp_name: str) -> dict | None:
+    for b in p.get("placed_blueprints") or []:
+        if isinstance(b, dict) and b.get("name") == bp_name and b.get("position"):
+            return b.get("position")
+    return None
+
+
+def _is_connected(connected: list[dict], pt1: dict, pt2: dict) -> bool:
+    for c in connected:
+        f = c.get("from") or {}
+        t = c.get("to") or {}
+        if abs(f.get("x", 0) - pt1["x"]) < 1.0 and abs(f.get("y", 0) - pt1["y"]) < 1.0 \
+           and abs(t.get("x", 0) - pt2["x"]) < 1.0 and abs(t.get("y", 0) - pt2["y"]) < 1.0:
+            return True
+    return False
+
+
 def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tuple[dict, str, bool]]:
     """Build-order rules past the bootstrap: power, automation, smelting, red cell, green cell."""
     power = p.get("power") or {}
@@ -201,8 +218,19 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
     elif goal_id == "red":
         if _tech(p, "automation"):
             bp_name = "tileable-science-red"
+            lab_bp = "tileable-labs"
+            lib = blueprints.load_library()
+            if lab_bp in unlocked_bps and power.get("has_grid"):
+                lab_entry = lib.get(lab_bp, {})
+                if lab_bp not in placed_names and _lab_count(p) < 2:
+                    yield {"skill": "place_blueprint", "name": lab_bp}, "stamp modular tileable lab array", True
+                elif lab_bp in placed_names and _lab_count(p) < 6 and _rate(p, "automation-science-pack") >= 10:
+                    snap = blueprints.get_tile_target(placed_bps, lab_entry)
+                    if snap:
+                        yield ({"skill": "place_blueprint", "name": lab_bp, "position": snap},
+                               "tile modular lab array for faster research", True)
+
             if bp_name in unlocked_bps:
-                lib = blueprints.load_library()
                 bp_entry = lib.get(bp_name, {})
                 if bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular red science unit", True
@@ -211,6 +239,26 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                     if snap and _rate(p, "automation-science-pack") > 0:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
                                "tile modular red science for higher output", True)
+
+                # Connect belts between modular units if placed and not yet connected
+                conns = p.get("connected_belts") or []
+                red_pos = _find_placed(p, bp_name)
+                smelt_pos = _find_placed(p, "tileable-smelter-stone")
+                if smelt_pos and red_pos:
+                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
+                    red_in = {"x": red_pos["x"] + 0.5, "y": red_pos["y"] + 5.5}
+                    if not _is_connected(conns, smelt_out, red_in):
+                        yield ({"skill": "connect_belt", "from": smelt_out, "to": red_in},
+                               "connect smelter output belt to red science input belt", True)
+
+                lab_pos = _find_placed(p, lab_bp)
+                if red_pos and lab_pos:
+                    red_out = {"x": red_pos["x"] + 6.0, "y": red_pos["y"] + 0.5}
+                    lab_in = {"x": lab_pos["x"] + 0.5, "y": lab_pos["y"] + 0.5}
+                    if not _is_connected(conns, red_out, lab_in):
+                        yield ({"skill": "connect_belt", "from": red_out, "to": lab_in},
+                               "connect red science output belt to lab input belt", True)
+
                 yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
             else:
                 cells = [a for a in (factory.get("assemblers") or [])
@@ -304,7 +352,8 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
             else:
                 need = DEFENSE_TURRETS - _by_type(p, "ammo-turret")
                 yield from _craft(inv, "gun-turret", need, f"{need} gun turret(s) against the nearby enemies")
-                yield from _craft(inv, "firearm-magazine", 10 * need, "ammo for the turrets")
+                ammo_item = "piercing-rounds-magazine" if _tech(p, "military-2") else "firearm-magazine"
+                yield from _craft(inv, ammo_item, 10 * need, f"{ammo_item} for the turrets")
                 defense_entry = {"skill": "build_defense", "count": DEFENSE_TURRETS}
                 if attacked_power:
                     defense_entry["site"] = "power"

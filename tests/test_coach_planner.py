@@ -812,3 +812,55 @@ def test_next_plan_suppresses_redundant_pack_insert_after_tend():
     assert any(e.get("skill") == "tend" for e in moves)
     assert not any(e.get("action") == "insert" and e.get("item") == "automation-science-pack" for e in moves)
 
+
+def test_planner_selects_modular_labs_when_unlocked():
+    p = labbed()
+    p["power"] = {"has_grid": True}
+    p["factory"]["labs"] = {"count": 0, "without_packs": 0}
+    p["factory"]["machines"] = []
+    p["blueprint_library"] = ["tileable-labs", "tileable-science-red"]
+    p["research"]["done"] = ["automation"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 35}, "copper-plate": {"per_min": 20}})
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-labs"} in moves
+
+
+def test_planner_connects_belt_between_red_science_and_labs():
+    p = labbed()
+    p["power"] = {"has_grid": True}
+    p["research"]["done"] = ["automation"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 35}, "copper-plate": {"per_min": 20},
+                                     "automation-science-pack": {"per_min": 0}})
+    p["blueprint_library"] = ["tileable-science-red", "tileable-labs"]
+    p["placed_blueprints"] = [
+        {"name": "tileable-science-red", "position": {"x": 10, "y": 0}},
+        {"name": "tileable-labs", "position": {"x": 30, "y": 0}}
+    ]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "connect_belt", "from": {"x": 16.0, "y": 0.5}, "to": {"x": 30.5, "y": 0.5}} in moves
+
+
+def test_planner_connects_belt_between_smelter_and_red_science():
+    p = labbed()
+    p["power"] = {"has_grid": True}
+    p["research"]["done"] = ["automation"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 35}, "copper-plate": {"per_min": 20},
+                                     "automation-science-pack": {"per_min": 0}})
+    p["blueprint_library"] = ["tileable-smelter-stone", "tileable-science-red"]
+    p["placed_blueprints"] = [
+        {"name": "tileable-smelter-stone", "position": {"x": 0, "y": 0}},
+        {"name": "tileable-science-red", "position": {"x": 10, "y": 10}}
+    ]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "connect_belt", "from": {"x": 5.0, "y": 0.5}, "to": {"x": 10.5, "y": 15.5}} in moves
+
+
+def test_military_escalation_crafts_red_ammo_when_researched():
+    p = labbed()
+    p["threat"] = {"attack": {"name": "boiler", "count": 1, "position": {"x": 0, "y": 0}}}
+    p["research"]["done"] = ["gun-turret", "military-2"]
+    moves = [e for e, _ in planner.next_steps(p)]
+    ammo_crafts = [e for e in moves if e.get("skill") == "craft_for" and "magazine" in e.get("item", "")]
+    assert any(e.get("item") == "piercing-rounds-magazine" for e in ammo_crafts)
+
+

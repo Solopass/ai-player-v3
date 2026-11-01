@@ -1,0 +1,31 @@
+{
+  "name": "tileable-labs",
+  "string": "0eNqV1FtqwzAQBdCthPlqQS6R/EjsNaQrKKXI8RAEsmQkpTQE771jJ4SEPJC+9PC9B32YOUKr9zg4ZQI0R9CyRQ0NfNpur6VbbGS72CiDizcx7f07MFBbazw0X0fwameknnrhMCDVVMCeEkb204kwGClvOvyDho/fDLyRQxZstnOqm3p0v2ZwgKakIJqggsKTPR8OP2bft+iofaMyGKynrDVnRHyUM5N/LMeR3bXF63b1up1f2sp4dIHunj6AE8GgUw63p6/rB2ARAVYpYHkBfS+1zlBT2qltNliN93ZxZT/QqosWnDR+sC5k9FuEe2h5hmi9fWTxgF1FszyFXUezIoWto9k8heXLaLdIcnm0Wya5Itqtktw82l09d2mizCOnuZpiDH7R+TlQVqIu6rrMC8FzLsbxHwtLmes=",
+  "hash": "1f9e00d29d4bea40",
+  "source": "repo",
+  "category": "research",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Lab Line (2 Labs)",
+  "entities": 13,
+  "cost": {
+    "transport-belt": 8,
+    "lab": 2,
+    "inserter": 2,
+    "small-electric-pole": 1
+  },
+  "size": {
+    "w": 9,
+    "h": 4
+  },
+  "recipes": [],
+  "tileable": true,
+  "tile_offset": {
+    "x": 8,
+    "y": 0
+  },
+  "snap_grid": {
+    "x": 8,
+    "y": 5
+  }
+}

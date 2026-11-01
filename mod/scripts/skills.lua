@@ -941,6 +941,12 @@ local function skill_connect_belt(character, p)
                                         position = t.position, direction = t.direction, force = force}
         if g then placed = placed + 1 end
       end
+      if placed > 0 and storage.ai_player then
+        storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
+        table.insert(storage.ai_player.connected_belts, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
+                                                        to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
+        AIDebug.event("connect_belt", {from = a, to = b, tiles = #tiles})
+      end
       local next_step = marked > 0
         and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
         or "build_ghosts next"
@@ -1283,21 +1289,38 @@ function AISkills.refuel(inv, own)
 end
 
 -- Gun turrets of `own` back up to TURRET_REFILL magazines from the inventory; with `craft`,
--- hand-craft magazines when the inventory has none. Returns the magazines given.
+-- hand-craft magazines when the inventory has none. Prioritizes piercing (red) ammo when available.
 function AISkills.top_up_turrets(character, inv, own, craft)
   local given = 0
+  local ammos = {"piercing-rounds-magazine", "firearm-magazine"}
   for _, e in ipairs(own) do
     if e.valid and e.type == "ammo-turret" then
       local ai = e.get_inventory(defines.inventory.turret_ammo)
-      local short = TURRET_REFILL - (ai and ai.get_item_count("firearm-magazine") or 0)
-      if ai and short > 0 then
-        if craft and inv.get_item_count("firearm-magazine") == 0 then
-          character.begin_crafting{recipe = "firearm-magazine", count = 5, silent = true}
-        end
-        local n = math.min(short, inv.get_item_count("firearm-magazine"))
-        if n > 0 then
-          local ins = ai.insert{name = "firearm-magazine", count = n}
-          if ins > 0 then inv.remove{name = "firearm-magazine", count = ins}; given = given + ins end
+      if ai then
+        local current_total = 0
+        for _, a in ipairs(ammos) do current_total = current_total + ai.get_item_count(a) end
+        local short = TURRET_REFILL - current_total
+        if short > 0 then
+          if craft and inv.get_item_count("firearm-magazine") == 0 and inv.get_item_count("piercing-rounds-magazine") == 0 then
+            local red_r = character.force.recipes["piercing-rounds-magazine"]
+            if red_r and red_r.enabled and character.get_craftable_count(red_r) > 0 then
+              character.begin_crafting{recipe = "piercing-rounds-magazine", count = 5, silent = true}
+            else
+              character.begin_crafting{recipe = "firearm-magazine", count = 5, silent = true}
+            end
+          end
+          for _, a in ipairs(ammos) do
+            local avail = inv.get_item_count(a)
+            if avail > 0 and short > 0 then
+              local n = math.min(short, avail)
+              local ins = ai.insert{name = a, count = n}
+              if ins > 0 then
+                inv.remove{name = a, count = ins}
+                given = given + ins
+                short = short - ins
+              end
+            end
+          end
         end
       end
     end

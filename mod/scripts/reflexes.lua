@@ -181,6 +181,14 @@ local function restock(ch, r, hunting)
   local main = main_inv(ch)
   local have = count_ammo(ch)
   local goal = hunting and MAG_HUNT or MAG_LOW
+  local red_recipe = ch.force.recipes["piercing-rounds-magazine"]
+  if have < goal and red_recipe and red_recipe.enabled then
+    local craftable = ch.get_craftable_count(red_recipe)
+    if craftable > 0 then
+      local n = math.min(10, goal - have, craftable)
+      if n >= 1 then ch.begin_crafting{recipe = "piercing-rounds-magazine", count = n, silent = true}; return end
+    end
+  end
   local recipe = ch.force.recipes["firearm-magazine"]
   if have < goal and recipe and recipe.enabled then
     local reserve = have < MAG_LOW and 0 or HUNT_IRON_RESERVE

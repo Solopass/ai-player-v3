@@ -83,7 +83,13 @@ end
 
 local function build(player)
   local frame = player.gui.screen.add{type = "frame", name = PANEL, direction = "vertical"}
-  frame.auto_center = true
+  local saved_loc = storage.ai_player and storage.ai_player.gui_location and storage.ai_player.gui_location[player.index]
+  if saved_loc then
+    frame.location = saved_loc
+    frame.auto_center = false
+  else
+    frame.auto_center = true
+  end
   local r = refs(player)
 
   local bar = frame.add{type = "flow", direction = "horizontal"}
@@ -93,6 +99,20 @@ local function build(player)
   drag.style.horizontally_stretchable = true
   drag.style.height = 24
   drag.drag_target = frame
+
+  local pinned = storage.ai_player and storage.ai_player.gui_pinned and storage.ai_player.gui_pinned[player.index]
+  if pinned then
+    if player.opened == frame then player.opened = nil end
+  else
+    player.opened = frame
+  end
+  bar.add{
+    type = "sprite-button",
+    name = "aip_pin",
+    sprite = pinned and "utility/favorite_server_icon" or "utility/unfavorite_server_icon",
+    style = "frame_action_button",
+    tooltip = pinned and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
+  }
   bar.add{type = "sprite-button", name = "aip_close", sprite = "utility/close", style = "frame_action_button"}
 
   local body = frame.add{type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding"}
@@ -133,8 +153,9 @@ local function build(player)
   heading(body, "Blueprints")
   local bp = body.add{type = "flow", direction = "horizontal"}
   r.bp_list = bp.add{type = "drop-down", name = "aip_bp_list"}
-  r.bp_list.style.width = 200
-  bp.add{type = "button", name = "aip_bp_place", caption = "AI place", tooltip = "AI picks a spot and places ghosts"}
+  r.bp_list.style.width = 170
+  bp.add{type = "button", name = "aip_bp_place", caption = "Place", tooltip = "AI picks a spot and places ghosts"}
+  bp.add{type = "button", name = "aip_bp_tile", caption = "Tile +1", tooltip = "Snaps another slice of this modular blueprint adjacent to existing ones"}
   bp.add{type = "button", name = "aip_bp_test", caption = "Preview", tooltip = "Ghosts right next to you, to check it"}
   local bp2 = body.add{type = "flow", direction = "horizontal"}
   bp2.add{type = "button", name = "aip_bp_add", caption = "Add held blueprint",
@@ -275,6 +296,10 @@ end
 function AIGui.toggle(player)
   local f = player.gui.screen[PANEL]
   if f then
+    if f.valid and storage.ai_player then
+      storage.ai_player.gui_location = storage.ai_player.gui_location or {}
+      storage.ai_player.gui_location[player.index] = f.location
+    end
     f.destroy()
     refs(player).frame = nil
   else
@@ -341,6 +366,48 @@ local HANDLERS = {
     say(player, "cleared " .. n .. " pending request(s)")
   end,
   aip_send = function(player) send_talk(player) end,
+  aip_pin = function(player)
+    storage.ai_player.gui_pinned = storage.ai_player.gui_pinned or {}
+    local p = not storage.ai_player.gui_pinned[player.index]
+    storage.ai_player.gui_pinned[player.index] = p
+    local f = player.gui.screen[PANEL]
+    if f and f.valid then
+      storage.ai_player.gui_location = storage.ai_player.gui_location or {}
+      storage.ai_player.gui_location[player.index] = f.location
+      if p then
+        if player.opened == f then player.opened = nil end
+      else
+        player.opened = f
+      end
+      local bar = f.children[1]
+      local btn = bar and bar.aip_pin
+      if btn then
+        btn.sprite = p and "utility/favorite_server_icon" or "utility/unfavorite_server_icon"
+        btn.tooltip = p and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
+      end
+    end
+  end,
+  aip_bp_tile = function(player)
+    if not is_admin(player) then return end
+    local c = need_character(player); if not c then return end
+    local name = selected(refs(player).bp_list)
+    if not name then return say(player, "library is empty", false) end
+    local last_pos = nil
+    for _, b in ipairs(storage.ai_player.placed_blueprints or {}) do
+      if b.name == name and b.surface == c.surface.name then
+        last_pos = b.position
+      end
+    end
+    local bp_entry = (storage.ai_player.blueprints or {})[name]
+    local meta = bp_entry and bp_entry.meta or {}
+    local offset = meta.tile_offset or meta.snap_grid
+    local pos = nil
+    if last_pos and offset then
+      pos = {x = last_pos.x + (offset.x or 0), y = last_pos.y + (offset.y or 0)}
+    end
+    local ok, res = AIBlueprints.place(c, name, {position = pos})
+    say(player, res, ok)
+  end,
   aip_bp_place = function(player)
     if not is_admin(player) then return end
     local c = need_character(player); if not c then return end
@@ -394,6 +461,28 @@ end)
 
 script.on_event(defines.events.on_player_created, function(event)
   AIGui.ensure_button(game.get_player(event.player_index))
+end)
+
+script.on_event(defines.events.on_gui_location_changed, function(event)
+  local el = event.element
+  if el and el.valid and el.name == PANEL and storage.ai_player then
+    storage.ai_player.gui_location = storage.ai_player.gui_location or {}
+    storage.ai_player.gui_location[event.player_index] = el.location
+  end
+end)
+
+script.on_event(defines.events.on_gui_closed, function(event)
+  local el = event.element
+  if el and el.valid and el.name == PANEL and storage.ai_player then
+    local pinned = storage.ai_player.gui_pinned and storage.ai_player.gui_pinned[event.player_index]
+    if not pinned then
+      storage.ai_player.gui_location = storage.ai_player.gui_location or {}
+      storage.ai_player.gui_location[event.player_index] = el.location
+      el.destroy()
+      local player = game.get_player(event.player_index)
+      if player then refs(player).frame = nil end
+    end
+  end
 end)
 
 script.on_nth_tick(60, function()

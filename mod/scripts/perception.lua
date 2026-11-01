@@ -776,6 +776,12 @@ function AIPerception.gather(character)
   end
   while #placed > 15 do table.remove(placed, 1) end
   perception.placed_blueprints = placed
+
+  local conns = {}
+  for _, c in ipairs(storage.ai_player.connected_belts or {}) do
+    conns[#conns + 1] = {from = c.from, to = c.to}
+  end
+  perception.connected_belts = conns
   -- blueprint_library: blueprints whose every building is unlocked for this
   -- force. blueprint_locked: the rest, with up to 3 items still locked (the
   -- bridge turns those into research hints and keeps both out of the raw
