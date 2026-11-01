@@ -66,7 +66,7 @@ try {
         $elapsedStr = "{0:D2}:{1:D2}:{2:D2}" -f $elapsedSoFar.Hours, $elapsedSoFar.Minutes, $elapsedSoFar.Seconds
         $remainStr = "{0:D2}:{1:D2}:{2:D2}" -f $remaining.Hours, $remaining.Minutes, $remaining.Seconds
 
-        Write-Host "[$elapsedStr elapsed | $remainStr left] Run #$Iteration: Sprint '$sprintKey' (Seed $seed)" -ForegroundColor White
+        Write-Host "[$elapsedStr elapsed | $remainStr left] Run #${Iteration}: Sprint '$sprintKey' (Seed $seed)" -ForegroundColor White
 
         $llmFlag = if ($NoLLM) { "--no-llm" } else { "" }
         $cmd = "& `"$Python`" `"$RepoRoot\scripts\fast_sprint_runner.py`" --sprint $sprintKey --seed $seed --speed $Speed $llmFlag --max-sec 200"
