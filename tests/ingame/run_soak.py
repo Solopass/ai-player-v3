@@ -50,7 +50,7 @@ from bridge import goals                                     # noqa: E402
 SEEDS = [424242, 2476103329, 1873625901, 3598211047]                   # must match SEEDS in selftest.lua
 DEFAULT_OUT = HERE / "soak-out"            # git-ignored
 ROUTER = "http://127.0.0.1:11440/v1"
-LLM_MODEL = "sol-qwen9b"
+LLM_MODEL = "sol-fast"
 BASE_TIMEOUT = 240            # bridge AI_TIMEOUT at speed 1 (seconds)
 TICKS_PER_MIN = 3600
 PYTHON = str(rs.REPO / ".venv" / "Scripts" / "python.exe")

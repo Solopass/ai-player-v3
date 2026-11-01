@@ -864,3 +864,39 @@ def test_military_escalation_crafts_red_ammo_when_researched():
     assert any(e.get("item") == "piercing-rounds-magazine" for e in ammo_crafts)
 
 
+def test_planner_connects_belt_between_smelter_and_green_science():
+    p = green_ready()
+    p["blueprint_library"] = ["tileable-smelter-stone", "tileable-science-green"]
+    p["placed_blueprints"] = [
+        {"name": "tileable-smelter-stone", "position": {"x": 0, "y": 0}},
+        {"name": "tileable-science-green", "position": {"x": 10, "y": 10}}
+    ]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "connect_belt", "from": {"x": 5.0, "y": 0.5}, "to": {"x": 10.5, "y": 15.5}} in moves
+
+
+def test_planner_sideloads_green_science_into_labs():
+    p = green_ready()
+    p["blueprint_library"] = ["tileable-science-green", "tileable-labs"]
+    p["placed_blueprints"] = [
+        {"name": "tileable-science-green", "position": {"x": 10, "y": 0}},
+        {"name": "tileable-labs", "position": {"x": 30, "y": 0}}
+    ]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "connect_belt", "from": {"x": 16.0, "y": 0.5}, "to": {"x": 31.5, "y": 0.5}} in moves
+
+
+def test_planner_selects_and_connects_modular_steel_smelter():
+    p = green_ready()
+    # Fulfill green milestone so goal ladder advances to steel
+    p["production"]["items"]["logistic-science-pack"] = {"per_min": 5}
+    p["research"]["done"].append("steel-processing")
+    p["blueprint_library"] = ["tileable-smelter-stone", "tileable-steel"]
+    p["placed_blueprints"] = [
+        {"name": "tileable-smelter-stone", "position": {"x": 0, "y": 0}}
+    ]
+    moves = [e for e, _ in planner.next_steps(p)]
+    assert {"skill": "place_blueprint", "name": "tileable-steel"} in moves
+
+
+

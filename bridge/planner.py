@@ -282,6 +282,26 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                     if snap and _rate(p, "logistic-science-pack") > 0:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
                                "tile modular green science for higher output", True)
+
+                # Connect belts: smelter -> green science, and green science -> lab bus (side-load)
+                conns = p.get("connected_belts") or []
+                green_pos = _find_placed(p, bp_name)
+                smelt_pos = _find_placed(p, "tileable-smelter-stone")
+                if smelt_pos and green_pos:
+                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
+                    green_in = {"x": green_pos["x"] + 0.5, "y": green_pos["y"] + 5.5}
+                    if not _is_connected(conns, smelt_out, green_in):
+                        yield ({"skill": "connect_belt", "from": smelt_out, "to": green_in},
+                               "connect smelter output belt to green science input belt", True)
+
+                lab_pos = _find_placed(p, "tileable-labs")
+                if green_pos and lab_pos:
+                    green_out = {"x": green_pos["x"] + 6.0, "y": green_pos["y"] + 0.5}
+                    lab_side_in = {"x": lab_pos["x"] + 1.5, "y": lab_pos["y"] + 0.5}
+                    if not _is_connected(conns, green_out, lab_side_in):
+                        yield ({"skill": "connect_belt", "from": green_out, "to": lab_side_in},
+                               "side-load green science onto lab dual-science bus", True)
+
                 yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
             else:
                 have = [a.get("recipe") for a in (factory.get("assemblers") or []) if isinstance(a, dict)]
@@ -299,6 +319,32 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                     yield from _craft(inv, "inserter", 2 * n, f"{n} more green-science unit(s) need inserters")
                     yield {"skill": "build_green_cell"}, f"{len(missing)} green-science unit(s) still to build", True
                 yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
+    elif goal_id == "steel":
+        if _tech(p, "steel-processing"):
+            bp_name = "tileable-steel"
+            if bp_name in unlocked_bps:
+                lib = blueprints.load_library()
+                bp_entry = lib.get(bp_name, {})
+                if bp_name not in placed_names:
+                    yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular steel smelter column", True
+                elif _rate(p, "steel-plate") < 5:
+                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                    if snap and _rate(p, "steel-plate") > 0:
+                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
+                               "tile modular steel column for more steel output", True)
+
+                # Connect belts: smelter iron plate output -> steel smelter input
+                conns = p.get("connected_belts") or []
+                steel_pos = _find_placed(p, bp_name)
+                smelt_pos = _find_placed(p, "tileable-smelter-stone")
+                if smelt_pos and steel_pos:
+                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
+                    steel_in = {"x": steel_pos["x"] + 0.5, "y": steel_pos["y"] + 5.5}
+                    if not _is_connected(conns, smelt_out, steel_in):
+                        yield ({"skill": "connect_belt", "from": smelt_out, "to": steel_in},
+                               "connect iron plate belt to steel smelter input belt", True)
+
+                yield {"skill": "tend"}, "keep steel smelters fueled and fed with iron plates", True
 
 
 def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:

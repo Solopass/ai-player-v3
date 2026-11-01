@@ -123,6 +123,7 @@ local function build(player)
   r.brain = label(body, nil, "", true)
   r.reflex = label(body, nil, "", true)
   r.goal = label(body, nil, "", true)
+  r.rates = label(body, nil, "", true)
   r.model = label(body, nil, "", true)
   r.summary = label(body, nil, "", true)
   r.directive = label(body, nil, "", true)
@@ -266,6 +267,19 @@ function AIGui.update(player)
   else
     r.goal.caption = "Goal: (no word from the bridge yet — is it running?)"
     r.model.caption = ""
+  end
+  if c and c.valid and r.rates then
+    local stats = c.force.get_item_production_statistics(c.surface)
+    if stats then
+      local function rate(item)
+        local flow = stats.get_flow_count{name = item, count = true, category = "input",
+                                          precision_index = defines.flow_precision_index.one_minute}
+        return math.floor(flow + 0.5)
+      end
+      r.rates.caption = string.format("Rates (/min): Fe %d | Cu %d | Coal %d | 🔴 %d | 🟢 %d | Steel %d",
+        rate("iron-plate"), rate("copper-plate"), rate("coal"),
+        rate("automation-science-pack"), rate("logistic-science-pack"), rate("steel-plate"))
+    end
   end
   local mem = ap.memory or {}
   r.summary.caption = mem.previous_summary and ("Last turn: " .. mem.previous_summary) or ""

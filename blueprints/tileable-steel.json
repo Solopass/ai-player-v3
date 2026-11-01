@@ -1,0 +1,31 @@
+{
+  "name": "tileable-steel",
+  "string": "0eNqV182O2jAUBeBXQV61UoLiX5I8QHezmmVVVQFuR5YcJ7LNqAjl3esAolQk1b0rBNhfrs4RxLmwvTvBGKxPrL0w1+3BsZa9DceT68LmPQG4zXsPLkHYfDGbb6fguwPEr6xg9jD4yNrvFxbth+/cDKTzCHm/TdDnFb7r53cxDR7KX7etbMo7/RF+s5ZPPwoWfTeWaSg/gj3Owvw5L9iZtSavBJ9ssnC7zPXN+ac/9XsIednKBQo2DjHvGvzdE1t9Bfm2mqbixRFYZ/d/Rz4c6yOEnNgrobbVgyjY0QY43L7lYkFUCNGsiWoB1AiQk0Y0CLGhjLijtiqX26ipra44DaFViYqMV4RaJSYzzgm9IocUhGJxQ0pqs3q5Ea6o1a5BmtCtxsVmCN1qVGw7QrfIIWtCt7gh//5KUuh8HIeQynwrSa9ude8kv/7r1kt/zRXa1fd5cS5Hu7wiwYIcBEe5khwEzlX0IHCwJgchUK4hB4Fzd/QgcHBNDkKi3IYcBMqVFT0IHMzJQSiUK8hB4FxJDwIHK3IQGuVqchA419CDwMFPZ72+c64El5cHeyjHwcH6rVisnL9rGmcepS1zDY17Pl8tneUrGvd8tpqfk66PVO3T41rBPiHE6wZtRKOaRksluMy3/OkPSJaCPg==",
+  "hash": "d293921f9675f136",
+  "source": "repo",
+  "category": "smelting",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Steel Smelter (6 Furnaces)",
+  "entities": 40,
+  "cost": {
+    "transport-belt": 18,
+    "inserter": 12,
+    "stone-furnace": 6,
+    "small-electric-pole": 4
+  },
+  "size": {
+    "w": 11,
+    "h": 7
+  },
+  "recipes": [],
+  "tileable": true,
+  "tile_offset": {
+    "x": 0,
+    "y": 6
+  },
+  "snap_grid": {
+    "x": 11,
+    "y": 6
+  }
+}
