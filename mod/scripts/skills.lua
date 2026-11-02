@@ -152,7 +152,7 @@ local function skill_build_miner(character, p)
   local is_electric = character.force.recipes["electric-mining-drill"]
     and character.force.recipes["electric-mining-drill"].enabled
   if out_kind == "furnace" or out_kind == "chest" or is_electric then
-    local ok, detail = build_electric_miner(character, resource, want, out_kind == "belt" and "chest" or out_kind)
+    local ok, detail = build_electric_miner(character, resource, want, out_kind)
     if ok ~= nil then return ok, detail end
   end
   if is_electric then
@@ -914,6 +914,13 @@ local function step_dir(dx, dy)
   return defines.direction.north
 end
 
+local OPPOSITE_DIR = {
+  [defines.direction.north] = defines.direction.south,
+  [defines.direction.south] = defines.direction.north,
+  [defines.direction.east]  = defines.direction.west,
+  [defines.direction.west]  = defines.direction.east,
+}
+
 local function snap_endpoint_outside_buildings(surface, pt, name)
   local x, y = math.floor(pt.x) + 0.5, math.floor(pt.y) + 0.5
   -- If current tile is already traversable/passable, keep it
@@ -1017,7 +1024,7 @@ end
 -- A* Grid Pathfinder fallback when L-paths are obstructed. Binary-heap open set, closed set,
 -- search box around start/goal, and a node cap (each node costs tile checks).
 local ASTAR_MARGIN, ASTAR_MAX_NODES = 12, 400
-local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
+local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, opts)
   local sx, sy = math.floor(start_pt.x) + 0.5, math.floor(start_pt.y) + 0.5
   local gx, gy = math.floor(goal_pt.x) + 0.5, math.floor(goal_pt.y) + 0.5
   local start_key = tile_key(sx, sy)
@@ -1028,6 +1035,12 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
   local ends = {[start_key] = true, [goal_key] = true}
   local min_x, max_x = math.min(sx, gx) - ASTAR_MARGIN, math.max(sx, gx) + ASTAR_MARGIN
   local min_y, max_y = math.min(sy, gy) - ASTAR_MARGIN, math.max(sy, gy) + ASTAR_MARGIN
+
+  local allow_ug = (opts == nil) or (opts.underground ~= false)
+  local ug_name = (name == "transport-belt") and "underground-belt"
+    or ((name == "pipe") and "pipe-to-ground" or nil)
+  local is_ug = allow_ug and ug_name and force.recipes[ug_name] and force.recipes[ug_name].enabled
+  local ug_max_span = (name == "transport-belt") and 5 or ((name == "pipe") and 11 or 0)
 
   local function heuristic(x, y)
     return math.abs(x - gx) + math.abs(y - gy)
@@ -1066,6 +1079,7 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
   local g_score = {[start_key] = 0}
   local came_from = {}
   local came_dir = {}
+  local came_ug = {}
   local closed = {}
   local tile_ok = {}     -- per-call cache of tile checks
 
@@ -1088,28 +1102,38 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
         -- Reconstruct path
         local path = {}
         local cur_key = goal_key
+        local cur_pt = {x = gx, y = gy}
         while cur_key do
           local node = came_from[cur_key]
           if node then
-            table.insert(path, 1, {x = node.x, y = node.y})
+            if node.ug then
+              cur_pt.ug = "output"
+              cur_pt.ug_dir = node.ug_dir
+              table.insert(path, 1, cur_pt)
+              cur_pt = {x = node.x, y = node.y, ug = "input", ug_dir = node.ug_dir}
+            else
+              table.insert(path, 1, cur_pt)
+              cur_pt = {x = node.x, y = node.y}
+            end
             cur_key = node.prev_key
           else
+            table.insert(path, 1, cur_pt)
             break
           end
         end
-        table.insert(path, {x = gx, y = gy})
         return path
       end
 
       local cur_g = g_score[current.key]
       local cur_dir = came_dir[current.key]
+      local cur_is_exit = (came_ug[current.key] == "exit")
 
       for _, d in ipairs(DIRS) do
         local nx, ny = current.x + d.dx, current.y + d.dy
         local nkey = tile_key(nx, ny)
+        local traversable = false
         if not closed[nkey] and nx >= min_x and nx <= max_x and ny >= min_y and ny <= max_y then
-          -- Goal tile is always considered; others must be traversable (cached per tile)
-          local traversable = (nkey == goal_key)
+          traversable = (nkey == goal_key)
           if not traversable then
             traversable = tile_ok[nkey]
             if traversable == nil then
@@ -1127,6 +1151,49 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
                 came_from[nkey] = {x = current.x, y = current.y, prev_key = current.key}
                 came_dir[nkey] = d.dir
                 push({x = nx, y = ny, key = nkey, f = tent_g + h})
+              end
+            end
+          end
+        end
+
+        -- Underground hops when unlocked and current is not an underground exit tile
+        if is_ug and not cur_is_exit then
+          for k = 2, ug_max_span do
+            local ex, ey = current.x + k * d.dx, current.y + k * d.dy
+            if ex < min_x or ex > max_x or ey < min_y or ey > max_y then break end
+            local ekey = tile_key(ex, ey)
+            if not closed[ekey] then
+              local ex_ok = (ekey == goal_key)
+              if not ex_ok then
+                ex_ok = tile_ok[ekey]
+                if ex_ok == nil then
+                  ex_ok = tile_traversable(surface, force, name, {x = ex, y = ey}, d.dir, ends)
+                  tile_ok[ekey] = ex_ok
+                end
+              end
+              if ex_ok then
+                local mid_ok = true
+                for j = 1, k - 1 do
+                  local mx, my = current.x + j * d.dx, current.y + j * d.dy
+                  local mt = surface.get_tile(mx, my)
+                  if not mt or mt.collides_with("water_tile") then mid_ok = false; break end
+                  local collides = surface.find_entities_filtered{area = {{mx - 0.4, my - 0.4}, {mx + 0.4, my + 0.4}}, type = {"cliff", ug_name}}
+                  if #collides > 0 then mid_ok = false; break end
+                end
+                if mid_ok then
+                  local hop_cost = (name == "pipe") and (k * 0.9) or (k + (traversable and 1.0 or 0.25))
+                  local tent_g = cur_g + hop_cost
+                  if tent_g < (g_score[ekey] or math.huge) then
+                    local h = heuristic(ex, ey)
+                    if (tent_g + h) <= (max_tiles or MAX_BELT) then
+                      g_score[ekey] = tent_g
+                      came_from[ekey] = {x = current.x, y = current.y, prev_key = current.key, ug = true, ug_dir = d.dir}
+                      came_dir[ekey] = d.dir
+                      came_ug[ekey] = "exit"
+                      push({x = ex, y = ey, key = ekey, f = tent_g + h})
+                    end
+                  end
+                end
               end
             end
           end
@@ -1194,15 +1261,24 @@ local function skill_connect_belt(character, p)
 
   -- 2. Fall back to A* pathfinder if L-paths are blocked
   if not chosen_tiles then
-    local astar_pts = astar_path(surface, force, "transport-belt", a, b, MAX_BELT)
+    local astar_pts = astar_path(surface, force, "transport-belt", a, b, MAX_BELT, {underground = p.underground ~= false})
     if astar_pts and #astar_pts > 0 then
       local tiles = {}
       for i, pt in ipairs(astar_pts) do
-        local nxt = astar_pts[i + 1]
-        local d
-        if nxt then d = step_dir(nxt.x - pt.x, nxt.y - pt.y)
-        else d = tiles[#tiles] and tiles[#tiles].direction or step_dir(b.x - a.x, b.y - a.y) end
-        tiles[#tiles + 1] = {position = pt, direction = d}
+        if pt.ug == "input" then
+          tiles[#tiles + 1] = {position = {x = pt.x, y = pt.y}, direction = pt.ug_dir, name = "underground-belt", ug_type = "input"}
+        elseif pt.ug == "output" then
+          tiles[#tiles + 1] = {position = {x = pt.x, y = pt.y}, direction = pt.ug_dir, name = "underground-belt", ug_type = "output"}
+        else
+          local nxt = astar_pts[i + 1]
+          local d
+          if nxt then
+            d = (nxt.ug == "output") and nxt.ug_dir or step_dir(nxt.x - pt.x, nxt.y - pt.y)
+          else
+            d = tiles[#tiles] and tiles[#tiles].direction or step_dir(b.x - a.x, b.y - a.y)
+          end
+          tiles[#tiles + 1] = {position = {x = pt.x, y = pt.y}, direction = d, name = "transport-belt"}
+        end
       end
       chosen_tiles = tiles
     end
@@ -1219,15 +1295,29 @@ local function skill_connect_belt(character, p)
       end
       local existing = surface.find_entities_filtered{position = t.position, radius = 0.4}
       local already_has = false
-      for _, ex in ipairs(existing) do
-        if ex.name == "transport-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "transport-belt") then
-          already_has = true; break
+      if t.name == "underground-belt" then
+        for _, ex in ipairs(existing) do
+          if ex.name == "underground-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "underground-belt") then
+            already_has = true; break
+          end
         end
-      end
-      if not already_has then
-        local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
-                                        position = t.position, direction = t.direction, force = force}
-        if g then placed = placed + 1 end
+        if not already_has then
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "underground-belt",
+                                          position = t.position, direction = t.direction,
+                                          type = t.ug_type, force = force}
+          if g then placed = placed + 1 end
+        end
+      else
+        for _, ex in ipairs(existing) do
+          if ex.name == "transport-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "transport-belt") then
+            already_has = true; break
+          end
+        end
+        if not already_has then
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
+                                          position = t.position, direction = t.direction, force = force}
+          if g then placed = placed + 1 end
+        end
       end
     end
     if storage.ai_player then
@@ -1238,7 +1328,7 @@ local function skill_connect_belt(character, p)
     end
     -- If character has belts, try immediately building what is in inventory
     local inv = inv_of(character)
-    if inv.get_item_count("transport-belt") > 0 then
+    if inv.get_item_count("transport-belt") > 0 or inv.get_item_count("underground-belt") > 0 then
       skill_build_ghosts(character, {})
     end
     if placed == 0 then
@@ -1327,7 +1417,7 @@ local function skill_connect_pipe(character, p)
 
   -- 2. Fall back to A* pathfinder if L-paths are blocked
   if not chosen_pts then
-    local astar_pts = astar_path(surface, force, "pipe", a, b, MAX_BELT)
+    local astar_pts = astar_path(surface, force, "pipe", a, b, MAX_BELT, {underground = p.underground ~= false})
     if astar_pts and #astar_pts > 0 then
       chosen_pts = astar_pts
     end
@@ -1342,17 +1432,31 @@ local function skill_connect_pipe(character, p)
                                                         type = {"tree", "simple-entity"}}) do
         if e.order_deconstruction(force) then marked = marked + 1 end
       end
-      local existing = surface.find_entities_filtered{position = pt, radius = 0.4}
+      local existing = surface.find_entities_filtered{position = {x = x, y = y}, radius = 0.4}
       local already_has = false
-      for _, ex in ipairs(existing) do
-        if ex.name == "pipe" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe") then
-          already_has = true; break
+      if pt.ug then
+        for _, ex in ipairs(existing) do
+          if ex.name == "pipe-to-ground" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe-to-ground") then
+            already_has = true; break
+          end
         end
-      end
-      if not already_has then
-        local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
-                                        position = pt, force = force}
-        if g then placed = placed + 1 end
+        if not already_has then
+          local dir = (pt.ug == "input") and OPPOSITE_DIR[pt.ug_dir] or pt.ug_dir
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe-to-ground",
+                                          position = {x = x, y = y}, direction = dir, force = force}
+          if g then placed = placed + 1 end
+        end
+      else
+        for _, ex in ipairs(existing) do
+          if ex.name == "pipe" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe") then
+            already_has = true; break
+          end
+        end
+        if not already_has then
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
+                                          position = {x = x, y = y}, force = force}
+          if g then placed = placed + 1 end
+        end
       end
     end
     if storage.ai_player then
@@ -1363,7 +1467,7 @@ local function skill_connect_pipe(character, p)
     end
     -- If character has pipes, try immediately building what is in inventory
     local inv = inv_of(character)
-    if inv.get_item_count("pipe") > 0 then
+    if inv.get_item_count("pipe") > 0 or inv.get_item_count("pipe-to-ground") > 0 then
       skill_build_ghosts(character, {})
     end
     if placed == 0 then
@@ -1625,6 +1729,22 @@ function build_electric_miner(character, resource, want, out_kind)
     return false, "build_miner: electric drills need power — build_power or extend poles first"
   end
   local chest = chest_for(character, want)
+  if out_kind == "belt" then
+    local plan = AILayout.find_electric_row(character, resource, character.position, {count = math.max(2, want), chest = chest})
+    if not plan then
+      return false, "build_miner: no spot on the " .. resource .. " patch for an electric drill row — try output=furnace or chest"
+    end
+    local ready, why = stock_up(character, AILayout.items({plan}), "build_miner")
+    if not ready then return false, why end
+    local ok, res = AILayout.build(character, plan)
+    if not ok then return false, "build_miner: " .. tostring(res) end
+    local drills_placed = 0
+    for _, e in ipairs(res) do
+      if e.name == "electric-mining-drill" then drills_placed = drills_placed + 1 end
+    end
+    return true, string.format("built electric drill row (%d drills) on %s at {%d,%d}",
+      drills_placed, resource, math.floor(res[1].position.x), math.floor(res[1].position.y))
+  end
   local built, first, err = 0, nil, nil
   for _ = 1, want do
     local plan

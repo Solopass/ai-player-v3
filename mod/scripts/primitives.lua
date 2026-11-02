@@ -304,9 +304,41 @@ local function action_place(character, action)
     force     = character.force,
     build_check_type = defines.build_check_type.manual,
   } then
-    return false, string.format(
-      "place: '%s' cannot be legally placed at {%d,%d} (blocked, misaligned, or wrong tile)",
-      item_name, px, py)
+    -- Check if spot is blocked by clearable obstacles (ground items, trees, rocks, obsolete burner gear, friendly ghost)
+    local proto = prototypes.entity[item_name]
+    local w, h = proto and proto.tile_width or 1, proto and proto.tile_height or 1
+    local area = {{px - w / 2 + 0.1, py - h / 2 + 0.1}, {px + w / 2 - 0.1, py + h / 2 - 0.1}}
+    local ents = surface.find_entities_filtered{area = area}
+    local cleared_any = false
+    for _, e in ipairs(ents) do
+      if e.valid and e.type == "item-entity" then
+        if inv and e.stack and e.stack.valid_for_read then
+          inv.insert{name = e.stack.name, count = e.stack.count}
+        end
+        e.destroy()
+        cleared_any = true
+      elseif e.valid and (e.type == "tree" or e.type == "simple-entity") then
+        character.mine_entity(e)
+        cleared_any = true
+      elseif e.valid and (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
+        character.mine_entity(e)
+        cleared_any = true
+      elseif e.valid and e.type == "entity-ghost" and e.force == character.force then
+        e.destroy()
+        cleared_any = true
+      end
+    end
+    if not (cleared_any and surface.can_place_entity{
+      name      = item_name,
+      position  = action.position,
+      direction = dir,
+      force     = character.force,
+      build_check_type = defines.build_check_type.manual,
+    }) then
+      return false, string.format(
+        "place: '%s' cannot be legally placed at {%d,%d} (blocked, misaligned, or wrong tile)",
+        item_name, px, py)
+    end
   end
 
   local entity = surface.create_entity{

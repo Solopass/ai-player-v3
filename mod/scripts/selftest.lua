@@ -308,6 +308,37 @@ CASES.electric_miner = {
 
 -- Machines 100+ tiles from the AI (ore patches lie far apart on a real map): tend
 -- must still empty their furnaces and refuel their drills.
+CASES.electric_row = {
+  delay = 2400,
+  setup = function(c)
+    local d = STEP[c.facing or "south"]
+    free_power(c.surface, c.force, -d[1] * 16 - 3, -d[2] * 16 - 3)
+    paint_ore(c.surface, "iron-ore", 12 * d[1], 12 * d[2], 8)
+    -- Place obstacles on the ore patch: dropped items, a tree, and an obsolete AI burner drill
+    local ox, oy = 12 * d[1], 12 * d[2]
+    c.surface.spill_item_stack{position = {ox, oy}, stack = {name = "iron-plate", count = 5}}
+    c.surface.create_entity{name = "tree-01", position = {ox + 1, oy + 1}}
+    local old_drill = c.surface.create_entity{name = "burner-mining-drill", position = {ox - 1, oy - 1}, force = c.force}
+    if old_drill then AIRegistry.own(old_drill) end
+    give(c.character, {["electric-mining-drill"] = 4, ["transport-belt"] = 30, ["small-electric-pole"] = 10, ["wooden-chest"] = 2, inserter = 2})
+  end,
+  run = function(c)
+    return {{skill = "build_miner", resource = "iron-ore", output = "belt", count = 2}}
+  end,
+  check = function(c, add)
+    local s = c.surface
+    add("build_miner row ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local drills = s.find_entities_filtered{name = "electric-mining-drill"}
+    add("at least 2 electric drills built", #drills >= 2, #drills)
+    local belts = s.find_entities_filtered{name = "transport-belt"}
+    add("belts placed along row", #belts >= 4, #belts)
+    for _, d in ipairs(drills) do
+      add("drill is powered", d.status ~= defines.entity_status.no_power
+          and d.status ~= defines.entity_status.not_plugged_in_electric_network, d.status)
+    end
+  end,
+}
+
 CASES.tend_far = {
   delay = 120,
   setup = function(c)
@@ -554,13 +585,29 @@ CASES.connect_pipe = {
     end
     c.surface.create_entity{name = "stone-wall", position = {12.5, 9.5}, force = c.force}
     c.surface.create_entity{name = "stone-wall", position = {12.5, 21.5}, force = c.force}
+
+    -- Foreign perpendicular pipe line across x = 18.5 from y = 20 to 35
+    for y = 20, 35 do
+      c.surface.create_entity{name = "pipe", position = {18.5, y + 0.5}, force = c.force}
+    end
+    -- Enclose room from x = 16 to 22, y = 22 to 30
+    for x = 16, 22 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 22.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 30.5}, force = c.force}
+    end
+    for y = 22, 30 do
+      c.surface.create_entity{name = "stone-wall", position = {16.5, y + 0.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {22.5, y + 0.5}, force = c.force}
+    end
   end,
   run = function(c)
     -- 1. Route around obstacle from (10.5, 5.5) to (10.5, 20.5) (clean detour)
     local r1 = {skill = "connect_pipe", from = {x = 10.5, y = 5.5}, to = {x = 10.5, y = 20.5}}
-    -- 2. Route through walled corridor containing foreign pipe: must be refused (cannot merge)
-    local r2 = {skill = "connect_pipe", from = {x = 12.5, y = 10.5}, to = {x = 12.5, y = 20.5}}
-    return {r1, r2}
+    -- 2. Route through walled corridor containing foreign pipe: must be refused without underground (cannot merge)
+    local r2 = {skill = "connect_pipe", from = {x = 12.5, y = 10.5}, to = {x = 12.5, y = 20.5}, underground = false}
+    -- 3. Route crossing perpendicular pipe using underground pipes: from (17.5, 25.5) to (20.5, 25.5)
+    local r3 = {skill = "connect_pipe", from = {x = 17.5, y = 25.5}, to = {x = 20.5, y = 25.5}}
+    return {r1, r2, r3}
   end,
   check = function(c, add)
     add("route around obstacle placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
@@ -577,6 +624,9 @@ CASES.connect_pipe = {
     end
     add("foreign pipe not merged", #conns == 0, #conns .. " connections to foreign pipe")
     add("route through foreign fluid corridor refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
+    add("pipe route with underground placed", c.results[3] and c.results[3].ok, c.results[3] and c.results[3].detail)
+    local ptgs = c.surface.find_entities_filtered{type = "entity-ghost", ghost_name = "pipe-to-ground"}
+    add("pipe to ground ghosts placed", #ptgs >= 2, #ptgs .. " pipe-to-ground ghosts")
   end,
 }
 
@@ -603,12 +653,17 @@ CASES.connect_belt = {
     -- Clean route without crossing: from (5.5, 5.5) to (12.5, 15.5)
     local r1 = {skill = "connect_belt", from = {x = 2.5, y = 2.5}, to = {x = 7.5, y = 12.5}}
     -- Route that would cross or join the existing belt at x = 15.5 without undergrounds: from (10.5, 5.5) to (20.5, 5.5)
-    local r2 = {skill = "connect_belt", from = {x = 10.5, y = 5.5}, to = {x = 20.5, y = 5.5}}
-    return {r1, r2}
+    local r2 = {skill = "connect_belt", from = {x = 10.5, y = 5.5}, to = {x = 20.5, y = 5.5}, underground = false}
+    -- Route crossing perpendicular belt using underground belts: from (10.5, 8.5) to (20.5, 8.5)
+    local r3 = {skill = "connect_belt", from = {x = 10.5, y = 8.5}, to = {x = 20.5, y = 8.5}}
+    return {r1, r2, r3}
   end,
   check = function(c, add)
     add("clean route placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
     add("crossing existing belt refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
+    add("crossing with underground belt placed", c.results[3] and c.results[3].ok, c.results[3] and c.results[3].detail)
+    local ugs = c.surface.find_entities_filtered{type = "entity-ghost", ghost_name = "underground-belt"}
+    add("underground belts placed", #ugs >= 2, #ugs .. " underground belt ghosts")
     local mid = c.surface.find_entities_filtered{position = {15.5, 5.5}, radius = 0.3}[1]
     add("existing belt intact", mid and mid.direction == defines.direction.south, mid and mid.direction)
   end,

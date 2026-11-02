@@ -66,9 +66,31 @@ local function free(boxes, b)
 end
 
 local function can_place(character, name, x, y, facing)
-  return character.surface.can_place_entity{name = name, position = {x, y},
-    direction = DIRS[facing or "north"], force = character.force,
-    build_check_type = defines.build_check_type.manual}
+  local surface, force = character.surface, character.force
+  local dir = DIRS[facing or "north"]
+  if surface.can_place_entity{name = name, position = {x, y}, direction = dir,
+                              force = force, build_check_type = defines.build_check_type.manual} then
+    return true
+  end
+  local tile = surface.get_tile(x, y)
+  if tile and tile.collides_with("water_tile") then return false end
+  local p = prototypes.entity[name]
+  local w, h = p and p.tile_width or 1, p and p.tile_height or 1
+  local area = {{x - w / 2 + 0.1, y - h / 2 + 0.1}, {x + w / 2 - 0.1, y + h / 2 - 0.1}}
+  local ents = surface.find_entities_filtered{area = area}
+  if #ents == 0 then return false end
+  for _, e in ipairs(ents) do
+    if e.type == "tree" or e.type == "simple-entity" or e.type == "item-entity" then
+      -- tree, rock, or dropped items can be cleared/picked up
+    elseif (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
+      -- obsolete burner gear can be replaced
+    elseif e.type == "entity-ghost" and e.force == force then
+      -- ghost can be replaced
+    else
+      return false
+    end
+  end
+  return true
 end
 
 -- Where a drill facing `facing` at (x, y) drops its output.
@@ -712,6 +734,85 @@ function AILayout.find_electric_chest(character, resource, center, opts)
   return nil
 end
 
+-- Row of electric mining drills (dw=3, dh=3) along an ore patch outputting onto a shared belt.
+-- Powered by small electric poles wired back to the nearest power grid pole.
+function AILayout.find_electric_row(character, resource, center, opts)
+  local surface = character.surface
+  local drill = "electric-mining-drill"
+  local dw, dh = footprint(drill)
+  local n = math.max(2, math.min((opts and opts.count) or 2, 4))
+  local chest = (opts and opts.chest) or "wooden-chest"
+  local tried = 0
+  for _, c in ipairs(candidates(surface, drill, resource, center, (opts and opts.radius) or 64)) do
+    tried = tried + 1
+    if tried > 150 then break end
+    for _, facing in ipairs(facings({"south", "north", "east", "west"})) do
+      local fx, fy = FORWARD[facing][1], FORWARD[facing][2]
+      local ax, ay = math.abs(fy), math.abs(fx)          -- row axis (perpendicular to drill facing)
+      local flow = ax == 1 and "east" or "south"
+      local ok, place, boxes = true, {}, {}
+      for i = 0, n - 1 do
+        local x, y = c.x + ax * dw * i, c.y + ay * dw * i
+        if coverage(surface, drill, x, y, resource) < ((opts and opts.min_cover) or 0.5)
+           or not can_place(character, drill, x, y, facing) then ok = false; break end
+        place[#place + 1] = {name = drill, position = {x = x, y = y}, direction = facing, role = "drill"}
+        boxes[#boxes + 1] = box(x, y, dw, dh)
+      end
+      if ok then
+        -- Belt tiles: from the first drill's drop tile along the row to 1 tile past the last drill's edge
+        local px, py = AILayout.drop_point(drill, c.x, c.y, facing)
+        local bx, by = math.floor(px) + 0.5, math.floor(py) + 0.5
+        local last_x = c.x + ax * dw * (n - 1) + ax * dw / 2
+        local last_y = c.y + ay * dw * (n - 1) + ay * dw / 2
+        local tiles = 0
+        local tx, ty = bx, by
+        while (ax == 1 and tx <= last_x + 1) or (ay == 1 and ty <= last_y + 1) do
+          if not can_place(character, "transport-belt", tx, ty, flow) then ok = false; break end
+          place[#place + 1] = {name = "transport-belt", position = {x = tx, y = ty}, direction = flow, role = "belt"}
+          boxes[#boxes + 1] = box(tx, ty, 1, 1)
+          tiles = tiles + 1
+          tx, ty = tx + ax, ty + ay
+          if tiles > 2 * n * dw + 4 then ok = false; break end
+        end
+        if ok then
+          -- Place collector chest + inserter at belt exit if chest specified
+          local ix, iy = tx, ty
+          local cx, cy = tx + ax, ty + ay
+          if can_place(character, "inserter", ix, iy, flow) and can_place(character, chest, cx, cy) then
+            place[#place + 1] = {name = "inserter", position = {x = ix, y = iy}, direction = flow,
+                                 role = "inserter", from = {x = ix - ax, y = iy - ay}, to = {x = cx, y = cy}}
+            place[#place + 1] = {name = chest, position = {x = cx, y = cy}, role = "chest"}
+            boxes[#boxes + 1] = box(ix, iy, 1, 1)
+            boxes[#boxes + 1] = box(cx, cy, 1, 1)
+          end
+          -- Place power poles behind the drills to power the entire row
+          local pole_spot = nil
+          for i = 0, n - 1 do
+            local test_px = c.x + ax * dw * i - fx * 2
+            local test_py = c.y + ay * dw * i - fy * 2
+            if can_place(character, "small-electric-pole", test_px, test_py) then
+              place[#place + 1] = {name = "small-electric-pole", position = {x = test_px, y = test_py}, role = "pole"}
+              boxes[#boxes + 1] = box(test_px, test_py, 1, 1)
+              pole_spot = pole_spot or {x = test_px, y = test_py}
+            end
+          end
+          if pole_spot then
+            local grid = AILayout.nearest_pole(character, pole_spot)
+            if grid then
+              local poles, joined = AILayout.pole_chain(character, pole_spot, grid.position, boxes)
+              if poles then
+                for _, pole in ipairs(poles) do place[#place + 1] = pole end
+                return {facing = facing, flow = flow, place = place, joined = joined}
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
 -- Poles that wire an unpowered consumer (a lab placed before the grid reached it, ...):
 -- one beside the machine, then a chain to the nearest pole on a network with a
 -- generator. Returns a plan {place = poles}, or nil when a pole already covers the
@@ -843,8 +944,32 @@ function AILayout.build(character, plan)
   end
   if away then character.teleport(away) end
 
+  local function clear_spot_for_placement(p)
+    local proto = prototypes.entity[p.name]
+    local w, h = proto and proto.tile_width or 1, proto and proto.tile_height or 1
+    local x, y = p.position.x, p.position.y
+    local area = {{x - w / 2 + 0.1, y - h / 2 + 0.1}, {x + w / 2 - 0.1, y + h / 2 - 0.1}}
+    local ents = surface.find_entities_filtered{area = area}
+    local inv = character.get_inventory(defines.inventory.character_main)
+    for _, e in ipairs(ents) do
+      if e.valid and e.type == "item-entity" then
+        if inv and e.stack and e.stack.valid_for_read then
+          inv.insert{name = e.stack.name, count = e.stack.count}
+        end
+        e.destroy()
+      elseif e.valid and (e.type == "tree" or e.type == "simple-entity") then
+        character.mine_entity(e)
+      elseif e.valid and (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
+        character.mine_entity(e)
+      elseif e.valid and e.type == "entity-ghost" and e.force == character.force then
+        e.destroy()
+      end
+    end
+  end
+
   local placed = {}
   for _, p in ipairs(plan.place) do
+    clear_spot_for_placement(p)
     local ok, detail = AIActions.run(character, {action = "place", item = p.name,
                                                  position = p.position, direction = p.direction})
     local e = ok and find_placed(surface, p)
