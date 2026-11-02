@@ -148,7 +148,8 @@ class Agent:
                  ", ".join(e.get("skill") or e.get("action", "?") for e in entries))
         log_exchange(config.output_dir, req.req_id, messages, content, elapsed, entries)
         record_exchange(config.output_dir, req.req_id, payload, entries, STATUS_OK,
-                        elapsed, provider_cfg.provider, provider_cfg.model)
+                        elapsed, provider_cfg.provider, provider_cfg.model,
+                        guard_rewrites=dict(self.coach.rewrites))
         return entries
 
     def _autopilot(self, req: PendingRequest, payload: dict, plan: list, config: BridgeConfig):

@@ -173,6 +173,12 @@ def collect(n_events: int = 25) -> dict:
         report["turns"] = {"last_n": len(turns), "status": dict(Counter(t.get("status") for t in turns)),
                            "avg_s": round(sum(lat) / len(lat), 1), "max_s": max(lat),
                            "source": dict(Counter(t.get("source") or "llm" for t in turns))}
+        rewrites = Counter()
+        for t in turns:
+            for k, v in (t.get("guard_rewrites") or {}).items():
+                rewrites[k] += v
+        if rewrites:
+            report["turns"]["rewrites"] = dict(rewrites)
     return report
 
 
@@ -253,6 +259,8 @@ def _print(report: dict) -> None:
         print(f"last {t['last_n']}: {t['status']}  avg {t['avg_s']}s, max {t['max_s']}s")
         if t.get("source"):
             print(f"decided by: {t['source']}")
+        if t.get("rewrites"):
+            print(f"coach rewrites: {t['rewrites']}")
 
 
 def main() -> None:

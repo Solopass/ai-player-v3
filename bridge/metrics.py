@@ -41,6 +41,7 @@ def record_exchange(
     provider: str,
     model: str,
     source: str = "llm",
+    guard_rewrites: dict | None = None,
 ) -> None:
     """Append one exchange's metrics row to metrics.jsonl. Never raises."""
     try:
@@ -88,6 +89,7 @@ def record_exchange(
             "elapsed_s": round(elapsed, 1),
             "actions": [e.get("skill") or e.get("action") or "?" for e in entries]
                        if entries else None,
+            "guard_rewrites": guard_rewrites,
         }
 
         path = Path(output_dir) / FILENAME

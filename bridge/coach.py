@@ -97,6 +97,12 @@ class Coach:
         self._miners = 0
         self.sig_since = 0                      # turn of the last progress
         self.last_fail_turn = -1
+        self.rewrites: dict[str, int] = {
+            "drop_fuel_all": 0,
+            "rewrite_craft_smelted": 0,
+            "drop_redundant_research": 0,
+            "drop_empty_build_ghosts": 0,
+        }
 
     def _note_progress(self, p: dict) -> None:
         names = {i.get("name") for i in p.get("inventory") or [] if isinstance(i, dict)}
@@ -202,8 +208,41 @@ class Coach:
         use the planner's moves, but never against a player directive /
         forced skill. Returns (entries, reason-if-overridden)."""
         mem = payload.get("memory") or {}
+        p = payload.get("perception") or {}
         blocked = self.blocked()
         player_led = mem.get("user_directive") or mem.get("force_skill")
+
+        cleaned_entries = []
+        for e in (entries or []):
+            if not isinstance(e, dict):
+                continue
+            skill = e.get("skill") or e.get("action")
+            if skill == "fuel_all":
+                self.rewrites["drop_fuel_all"] += 1
+                continue
+            if skill == "craft_for" and e.get("item") in ("iron-plate", "copper-plate", "steel-plate"):
+                self.rewrites["rewrite_craft_smelted"] += 1
+                res = "copper-ore" if e.get("item") == "copper-plate" else "iron-ore"
+                cnt = 1 if e.get("item") == "copper-plate" else 2
+                cleaned_entries.append({"skill": "build_miner", "resource": res, "output": "furnace", "count": cnt})
+                continue
+            if skill == "research":
+                r_info = p.get("research") or {}
+                tech = e.get("tech")
+                cur = r_info.get("current")
+                done = set(r_info.get("done") or [])
+                if (tech and (tech in done or tech == cur)) or (not tech and cur is not None):
+                    self.rewrites["drop_redundant_research"] += 1
+                    continue
+            if skill == "build_ghosts":
+                g_val = p.get("ghosts")
+                g_cnt = int(g_val.get("count") or 0) if isinstance(g_val, dict) else int(g_val or 0)
+                if g_cnt == 0:
+                    self.rewrites["drop_empty_build_ghosts"] += 1
+                    continue
+            cleaned_entries.append(e)
+        entries = cleaned_entries
+
         plan = [e for e, _ in steps or [] if entry_key(e) not in blocked]
         entries = list(entries or [])
         kept = [e for e in entries if _passive(e) or entry_key(e) not in blocked]

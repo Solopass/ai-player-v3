@@ -337,12 +337,52 @@ def test_directive_suppresses_substitution():
 
 def test_repeating_an_ok_move_without_progress_blocks_it():
     c, p = Coach(), stuck_fuel_all()
-    move = {"skill": "fuel_all"}
+    move = {"skill": "gather", "item": "stone", "count": 20}
     for i in range(3):
         c.observe(payload(p, [], f"r{i}"))
         c.guard([move], payload(p), None)
     c.observe(payload(p, [], "r9"))
     assert planner.entry_key(move) in c.blocked()
+
+
+def test_guard_drops_fuel_all():
+    c, p = Coach(), spawn()
+    out, _ = c.guard([{"skill": "fuel_all"}], payload(p), None)
+    assert c.rewrites["drop_fuel_all"] == 1
+    assert out == [{"action": "wait"}]
+
+
+def test_guard_rewrites_craft_smelted():
+    c, p = Coach(), spawn()
+    out, _ = c.guard([{"skill": "craft_for", "item": "iron-plate", "count": 20}], payload(p), None)
+    assert c.rewrites["rewrite_craft_smelted"] == 1
+    assert out == [{"skill": "build_miner", "resource": "iron-ore", "output": "furnace", "count": 2}]
+
+    out2, _ = c.guard([{"skill": "craft_for", "item": "copper-plate", "count": 10}], payload(p), None)
+    assert c.rewrites["rewrite_craft_smelted"] == 2
+    assert out2 == [{"skill": "build_miner", "resource": "copper-ore", "output": "furnace", "count": 1}]
+
+
+def test_guard_drops_redundant_research():
+    c, p = Coach(), labbed()
+    p["research"]["current"] = "automation"
+    p["research"]["done"] = ["logistics"]
+    out, _ = c.guard([{"skill": "research", "tech": "automation"}], payload(p), None)
+    assert c.rewrites["drop_redundant_research"] == 1
+    assert out == [{"action": "wait"}]
+
+    out2, _ = c.guard([{"skill": "research", "tech": "logistics"}], payload(p), None)
+    assert c.rewrites["drop_redundant_research"] == 2
+    assert out2 == [{"action": "wait"}]
+
+
+def test_guard_drops_empty_build_ghosts():
+    c, p = Coach(), spawn()
+    p["ghosts"] = {"count": 0}
+    out, _ = c.guard([{"skill": "build_ghosts"}], payload(p), None)
+    assert c.rewrites["drop_empty_build_ghosts"] == 1
+    assert out == [{"action": "wait"}]
+
 
 
 def test_idle_tend_is_not_a_failure_but_repeats_block():
