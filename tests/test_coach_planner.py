@@ -1185,3 +1185,26 @@ def test_prompt_strips_heavy_perception_fields():
     assert "connected_belts" not in user_content
     assert "connected_pipes" not in user_content
 
+
+def test_demand_targets_scaling():
+    p = spawn()
+    t0 = planner.demand_targets(p)
+    assert t0["iron-ore"] == ("iron-plate", 45.0)
+    assert t0["copper-ore"] == ("copper-plate", 22.5)
+
+    p["research"]["done"] = ["automation"]
+    t1 = planner.demand_targets(p)
+    assert t1["iron-ore"] == ("iron-plate", 60.0)
+    assert t1["copper-ore"] == ("copper-plate", 30.0)
+
+    p["research"]["done"] += ["logistic-science-pack"]
+    t2 = planner.demand_targets(p)
+    assert t2["iron-ore"] == ("iron-plate", 101.2)
+    assert t2["copper-ore"] == ("copper-plate", 41.2)
+
+    p["research"]["done"] += ["steel-processing"]
+    t3 = planner.demand_targets(p)
+    assert t3["iron-ore"] == ("iron-plate", 138.8)
+    assert t3["copper-ore"] == ("copper-plate", 41.2)
+
+

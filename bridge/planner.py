@@ -25,6 +25,25 @@ from .blueprints import _ENTITY_ITEM
 PAIR_PLATES_PER_MIN = 18
 SMELT_TARGET = {"iron-ore": ("iron-plate", 30), "copper-ore": ("copper-plate", 15)}
 
+
+def demand_targets(p: dict) -> dict[str, tuple[str, float]]:
+    """Compute plate targets dynamically from active science goals and base buffer."""
+    iron_need = 30.0
+    copper_need = 15.0
+    if _tech(p, "automation"):
+        iron_need += 10.0
+        copper_need += 5.0
+    if _tech(p, "logistic-science-pack"):
+        iron_need += 27.5
+        copper_need += 7.5
+    if _tech(p, "steel-processing"):
+        iron_need += 25.0
+    return {
+        "iron-ore": ("iron-plate", round(iron_need * 1.5, 1)),
+        "copper-ore": ("copper-plate", round(copper_need * 1.5, 1)),
+    }
+
+
 # (resource, drills wanted, output) — the burner bootstrap, coal first so
 # everything else has fuel. Thresholds match the bootstrap milestone.
 BOOTSTRAP = [("coal", 1, "chest"), ("iron-ore", 2, "furnace"),

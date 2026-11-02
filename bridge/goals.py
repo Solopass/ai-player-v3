@@ -34,6 +34,23 @@ def _tech(p: dict, name: str) -> bool:
     return name in ((p.get("research") or {}).get("done") or [])
 
 
+def demand_targets(p: dict) -> dict[str, tuple[str, float]]:
+    iron_need = 30.0
+    copper_need = 15.0
+    if _tech(p, "automation"):
+        iron_need += 10.0
+        copper_need += 5.0
+    if _tech(p, "logistic-science-pack"):
+        iron_need += 27.5
+        copper_need += 7.5
+    if _tech(p, "steel-processing"):
+        iron_need += 25.0
+    return {
+        "iron-ore": ("iron-plate", round(iron_need * 1.5, 1)),
+        "copper-ore": ("copper-plate", round(copper_need * 1.5, 1)),
+    }
+
+
 @dataclass
 class Milestone:
     id: str
@@ -74,7 +91,7 @@ LADDER: list[Milestone] = [
     Milestone(
         "smelting", "Automated iron and copper smelting",
         lambda p: _per_min(p, "iron-plate") >= 30 and _per_min(p, "copper-plate") >= 15,
-        lambda p: f"iron {_per_min(p, 'iron-plate')}/min (want 30), copper {_per_min(p, 'copper-plate')}/min (want 15)",
+        lambda p: f"iron {_per_min(p, 'iron-plate')}/min (want {demand_targets(p)['iron-ore'][1]:.0f}), copper {_per_min(p, 'copper-plate')}/min (want {demand_targets(p)['copper-ore'][1]:.0f})",
         "Miners on iron and copper ore feeding furnaces; keep coal flowing to them.",
         ["mining", "smelting"]),
     Milestone(

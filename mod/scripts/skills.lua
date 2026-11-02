@@ -1774,6 +1774,18 @@ function build_electric_miner(character, resource, want, out_kind)
     return false, "build_miner: electric drills need power — build_power or extend poles first"
   end
   local chest = chest_for(character, want)
+  if out_kind == "field" then
+    local plan = AILayout.find_mining_field(character, resource, character.position, {rate = (want or 2) * 18.75, chest = chest})
+    if not plan then
+      return false, "build_miner: no spot on the " .. resource .. " patch for an electric mining field"
+    end
+    local ready, why = stock_up(character, AILayout.items({plan}), "build_miner")
+    if not ready then return false, why end
+    local ok, res = AILayout.build(character, plan)
+    if not ok then return false, "build_miner: " .. tostring(res) end
+    return true, string.format("built electric mining field on %s (%d drills, %d furnaces)",
+      resource, plan.drills or 0, plan.furnaces or 0)
+  end
   if out_kind == "belt" then
     local plan = AILayout.find_electric_row(character, resource, character.position, {count = math.max(2, want), chest = chest})
     if not plan then

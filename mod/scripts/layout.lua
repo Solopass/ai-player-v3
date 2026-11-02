@@ -817,6 +817,173 @@ function AILayout.find_electric_row(character, resource, center, opts)
   return nil
 end
 
+function AILayout.field_sizing(plates_per_min)
+  local furnaces = math.max(1, math.ceil((plates_per_min or 18.75) / 18.75))
+  local drills = math.max(1, math.ceil(furnaces * 18.75 / 30))
+  local coal_drills = math.max(1, math.ceil(furnaces / 8))
+  return {furnaces = furnaces, drills = drills, coal_drills = coal_drills}
+end
+
+function AILayout.field_resource_remaining(surface, bounds, resource)
+  local total = 0
+  for _, e in ipairs(surface.find_entities_filtered{area = bounds, name = resource}) do
+    total = total + (e.amount or 0)
+  end
+  return total
+end
+
+function AILayout.find_mining_field(character, resource, center, opts)
+  local surface = character.surface
+  local size = AILayout.field_sizing((opts and opts.rate) or 37.5)
+  local n_furnaces = (opts and opts.furnaces) or size.furnaces
+  local n_drills = (opts and opts.drills) or size.drills
+  local chest = (opts and opts.chest) or "iron-chest"
+  local drill = "electric-mining-drill"
+  local dw, dh = footprint(drill)
+  local tried = 0
+
+  for _, c in ipairs(candidates(surface, drill, resource, center, (opts and opts.radius) or 64)) do
+    tried = tried + 1
+    if tried > 150 then break end
+
+    for _, facing in ipairs(facings({"south", "north", "east", "west"})) do
+      local fx, fy = FORWARD[facing][1], FORWARD[facing][2]
+      local ax, ay = math.abs(fy), math.abs(fx)
+      local flow = (ax == 1) and "east" or "south"
+      local ok, place, boxes = true, {}, {}
+
+      local min_x, max_x = c.x - 2, c.x + 2
+      local min_y, max_y = c.y - 2, c.y + 2
+      for i = 0, n_drills - 1 do
+        local dx, dy = c.x + ax * dw * i, c.y + ay * dw * i
+        if coverage(surface, drill, dx, dy, resource) < ((opts and opts.min_cover) or 0.3)
+           or not can_place(character, drill, dx, dy, facing) then
+          ok = false; break
+        end
+        place[#place + 1] = {name = drill, position = {x = dx, y = dy}, direction = facing, role = "drill"}
+        boxes[#boxes + 1] = box(dx, dy, dw, dh)
+        min_x = math.min(min_x, dx - dw/2)
+        max_x = math.max(max_x, dx + dw/2)
+        min_y = math.min(min_y, dy - dh/2)
+        max_y = math.max(max_y, dy + dh/2)
+      end
+
+      if ok then
+        local pole_spots = {}
+        for i = 0, n_drills - 1 do
+          local px = c.x + ax * dw * i - fx * 2
+          local py = c.y + ay * dw * i - fy * 2
+          if can_place(character, "small-electric-pole", px, py) then
+            place[#place + 1] = {name = "small-electric-pole", position = {x = px, y = py}, role = "pole"}
+            boxes[#boxes + 1] = box(px, py, 1, 1)
+            pole_spots[#pole_spots + 1] = {x = px, y = py}
+          end
+        end
+
+        local px, py = AILayout.drop_point(drill, c.x, c.y, facing)
+        local start_belt_x = math.floor(px) + 0.5
+        local start_belt_y = math.floor(py) + 0.5
+        local total_span = n_drills * dw + 2 + n_furnaces * 2 + 1
+        for step = 0, total_span do
+          local bx = start_belt_x + ax * step
+          local by = start_belt_y + ay * step
+          if not can_place(character, "transport-belt", bx, by, flow) then
+            ok = false; break
+          end
+          place[#place + 1] = {name = "transport-belt", position = {x = bx, y = by}, direction = flow, role = "ore_belt"}
+          boxes[#boxes + 1] = box(bx, by, 1, 1)
+        end
+
+        if ok then
+          local coal_step = n_drills * dw
+          local jx = start_belt_x + ax * coal_step
+          local jy = start_belt_y + ay * coal_step
+          local side_dir = (fx ~= 0) and ((fx > 0) and "north" or "south") or ((fy > 0) and "west" or "east")
+          for s = 1, 2 do
+            local sx = jx + fx * s
+            local sy = jy + fy * s
+            if not can_place(character, "transport-belt", sx, sy, side_dir) then
+              ok = false; break
+            end
+            place[#place + 1] = {name = "transport-belt", position = {x = sx, y = sy}, direction = side_dir, role = "coal_belt"}
+            boxes[#boxes + 1] = box(sx, sy, 1, 1)
+          end
+        end
+
+        if ok then
+          local col_start = n_drills * dw + 2
+          for f_idx = 0, n_furnaces - 1 do
+            local step = col_start + f_idx * 2
+            local bx = start_belt_x + ax * step
+            local by = start_belt_y + ay * step
+
+            local in_x = bx + fx * 1
+            local in_y = by + fy * 1
+            local fn_x = math.floor(bx + fx * 2.5 + ax * 0.5)
+            local fn_y = math.floor(by + fy * 2.5 + ay * 0.5)
+            local out_x = bx + fx * 4
+            local out_y = by + fy * 4
+            local ch_x = bx + fx * 5
+            local ch_y = by + fy * 5
+
+            if can_place(character, "inserter", in_x, in_y, facing)
+               and can_place(character, "stone-furnace", fn_x, fn_y)
+               and can_place(character, "inserter", out_x, out_y, facing)
+               and can_place(character, chest, ch_x, ch_y) then
+              place[#place + 1] = {name = "inserter", position = {x = in_x, y = in_y}, direction = facing,
+                                   role = "furnace_in", from = {x = bx, y = by}, to = {x = fn_x, y = fn_y}}
+              place[#place + 1] = {name = "stone-furnace", position = {x = fn_x, y = fn_y}, role = "furnace"}
+              place[#place + 1] = {name = "inserter", position = {x = out_x, y = out_y}, direction = facing,
+                                   role = "furnace_out", from = {x = fn_x, y = fn_y}, to = {x = ch_x, y = ch_y}}
+              place[#place + 1] = {name = chest, position = {x = ch_x, y = ch_y}, role = "chest"}
+              boxes[#boxes + 1] = box(in_x, in_y, 1, 1)
+              boxes[#boxes + 1] = box(fn_x, fn_y, 2, 2)
+              boxes[#boxes + 1] = box(out_x, out_y, 1, 1)
+              boxes[#boxes + 1] = box(ch_x, ch_y, 1, 1)
+
+              local col_px = in_x + ax * 1
+              local col_py = in_y + ay * 1
+              if can_place(character, "small-electric-pole", col_px, col_py) then
+                place[#place + 1] = {name = "small-electric-pole", position = {x = col_px, y = col_py}, role = "pole"}
+                boxes[#boxes + 1] = box(col_px, col_py, 1, 1)
+              end
+            else
+              ok = false; break
+            end
+          end
+        end
+
+        if ok then
+          local pole_spot = pole_spots and pole_spots[1]
+          if pole_spot then
+            local grid = AILayout.nearest_pole(character, pole_spot)
+            if grid then
+              local poles = AILayout.pole_chain(character, pole_spot, grid.position, boxes)
+              if poles then
+                for _, pole in ipairs(poles) do place[#place + 1] = pole end
+              end
+            end
+          end
+
+          local bounds = {{min_x, min_y}, {max_x, max_y}}
+          return {
+            facing = facing,
+            flow = flow,
+            place = place,
+            boxes = boxes,
+            bounds = bounds,
+            resource = resource,
+            drills = n_drills,
+            furnaces = n_furnaces,
+          }
+        end
+      end
+    end
+  end
+
+  return nil
+end
+
 -- Poles that wire an unpowered consumer (a lab placed before the grid reached it, ...):
 -- one beside the machine, then a chain to the nearest pole on a network with a
 -- generator. Returns a plan {place = poles}, or nil when a pole already covers the
@@ -1018,7 +1185,7 @@ function AILayout.build(character, plan)
       local covered = false
       for _, q in ipairs(plan.place) do
         local o = q.entity
-        if o ~= e and o.valid and (q.role == "collector" or q.role == "belt") then
+        if o ~= e and o.valid and (q.role == "collector" or q.role == "belt" or q.role == "ore_belt" or o.type == "transport-belt") then
           local bb = o.bounding_box
           -- Burner drills drop right on the collision-box edge: allow a little slack.
           if dp.x >= bb.left_top.x - 0.05 and dp.x <= bb.right_bottom.x + 0.05
