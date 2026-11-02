@@ -49,6 +49,31 @@ function Get-RconPort {
 }
 $rconPort = Get-RconPort
 
+function Get-CurrentModel {
+    $line = Get-Content (Join-Path $repo "bridge\.env") -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match '^\s*AI_MODEL\s*=\s*(.+)$' } | Select-Object -First 1
+    if ($line -and $line -match '=\s*(.+)$') { $Matches[1].Trim() } else { "sol-fast" }
+}
+
+function Set-CurrentModel([string]$modelName) {
+    $envPath = Join-Path $repo "bridge\.env"
+    if (Test-Path $envPath) {
+        $lines = Get-Content $envPath
+        $newLines = @()
+        $found = $false
+        foreach ($l in $lines) {
+            if ($l -match '^\s*AI_MODEL\s*=') {
+                $newLines += "AI_MODEL=$modelName"
+                $found = $true
+            } else {
+                $newLines += $l
+            }
+        }
+        if (-not $found) { $newLines += "AI_MODEL=$modelName" }
+        $newLines | Set-Content -Path $envPath -Encoding utf8
+    }
+}
+
 # The game window holds UDP 34197 while it hosts a multiplayer game.
 function Test-GameHosting($game) {
     $ids = @($game | ForEach-Object ProcessId)
@@ -79,7 +104,7 @@ function Start-Window([string]$title, [string]$command) {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Factorio AI - control panel"
-$form.Size = New-Object System.Drawing.Size(560, 360)
+$form.Size = New-Object System.Drawing.Size(560, 400)
 $form.FormBorderStyle = 'FixedSingle'
 $form.MaximizeBox = $false
 $form.StartPosition = 'CenterScreen'
@@ -150,8 +175,25 @@ Get-ChildItem $saves -Filter *.zip -ErrorAction SilentlyContinue |
 if ($saveBox.Items.Count) { $saveBox.SelectedIndex = 0 }
 $form.Controls.Add($saveBox)
 
+# Model picker
+New-Label "Model" 16 172 70 | Out-Null
+$modelBox = New-Object System.Windows.Forms.ComboBox
+$modelBox.DropDownStyle = 'DropDownList'
+$modelBox.Location = "90,172"; $modelBox.Size = "430,24"
+$models = @("sol-fast", "sol-qwen9b", "sol-smart", "sol-long")
+$curModel = Get-CurrentModel
+foreach ($m in $models) { [void]$modelBox.Items.Add($m) }
+$idx = $models.IndexOf($curModel)
+if ($idx -ge 0) { $modelBox.SelectedIndex = $idx } else { $modelBox.SelectedIndex = 0 }
+$modelBox.Add_SelectedIndexChanged({
+    if ($modelBox.SelectedItem) {
+        Set-CurrentModel $modelBox.SelectedItem
+    }
+})
+$form.Controls.Add($modelBox)
+
 # Extras
-$null = New-Button "Start all" 16 180 120 {
+$null = New-Button "Start all" 16 216 120 {
     $p = Get-Pieces
     if (-not $p.Server.Count) {
         $arg = if ($saveBox.SelectedItem) { " -Save '$($saveBox.SelectedItem -replace "'", "''")'" } else { "" }
@@ -160,7 +202,7 @@ $null = New-Button "Start all" 16 180 120 {
     if (-not $p.Bridge.Count) { Start-Window "AI bridge" "& '$python' -m bridge.main" }
     if (-not $p.Game.Count)   { Start-Process "steam://rungameid/$steamId" }
 }
-$null = New-Button "Stop all" 146 180 120 {
+$null = New-Button "Stop all" 146 216 120 {
     $p = Get-Pieces
     foreach ($b in $p.Bridge) { Stop-WithParent $b 'bridge\.main' }
     if ($p.Server.Count) {
@@ -168,16 +210,16 @@ $null = New-Button "Stop all" 146 180 120 {
         Start-Process $python -ArgumentList '-m', 'bridge.servercmd', '--stop' -WorkingDirectory $repo -WindowStyle Hidden
     }
 }
-$null = New-Button "Diagnostics" 276 180 120 {
+$null = New-Button "Diagnostics" 276 216 120 {
     Start-Process powershell -ArgumentList '-NoExit', '-NoProfile', '-Command',
         "`$Host.UI.RawUI.WindowTitle = 'AI diagnostics'; Set-Location '$repo'; `$env:PYTHONIOENCODING='utf-8'; & '$python' -m bridge.diag"
 }
-$null = New-Button "Logs folder" 406 180 114 {
+$null = New-Button "Logs folder" 406 216 114 {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     Start-Process explorer.exe $outDir
 }
 
-$status = New-Label "" 16 228 504
+$status = New-Label "" 16 264 504
 $status.Size = "504,80"
 $status.TextAlign = 'TopLeft'
 
