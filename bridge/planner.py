@@ -42,12 +42,12 @@ GATHER_NEAR = 35  # tiles; gather only searches 40 around the character
 # The mod owns this list now (skills.lua RESEARCH_ORDER, reported as perception.research.order,
 # which its reflexes also use); this copy is the fallback for a mod that doesn't report it.
 RESEARCH_ORDER = [
-    ("automation", False), ("logistics", False), ("logistic-science-pack", False),
-    ("electric-mining-drill", False),
-    ("gun-turret", False), ("military", False), ("steel-processing", False),
-    ("fast-inserter", False), ("stone-wall", False),
+    ("automation", False), ("logistics", False), ("electronics", False),
+    ("logistic-science-pack", False), ("steel-processing", False),
+    ("automation-2", True), ("fast-inserter", True),
+    ("gun-turret", False), ("military", False), ("stone-wall", False),
     ("physical-projectile-damage-1", False), ("weapon-shooting-speed-1", False),
-    ("automation-2", True), ("engine", True), ("electric-energy-distribution-1", True),
+    ("engine", True), ("electric-energy-distribution-1", True),
     ("toolbelt", True), ("advanced-material-processing", True),
     ("oil-processing", True), ("plastics", True), ("advanced-circuit", True),
     ("sulfur-processing", True), ("chemical-science-pack", True),
@@ -121,7 +121,18 @@ def research_order(p: dict) -> list[tuple[str, bool]]:
     """The mod's queue order (perception.research.order), else the built-in copy."""
     order = (p.get("research") or {}).get("order") or []
     out = [(str(o["tech"]), bool(o.get("green"))) for o in order if isinstance(o, dict) and o.get("tech")]
-    return out or RESEARCH_ORDER
+    if out:
+        return out
+    threat = p.get("threat") or {}
+    near = (threat.get("nearest") or {}).get("distance")
+    atk = threat.get("attack") or {}
+    has_threat = (near is not None and near <= 150) or (atk and atk.get("seconds_ago", 9999) <= 600)
+    if has_threat:
+        mil_names = {"gun-turret", "military", "stone-wall", "physical-projectile-damage-1", "weapon-shooting-speed-1"}
+        mil = [t for t in RESEARCH_ORDER if t[0] in mil_names]
+        other = [t for t in RESEARCH_ORDER if t[0] not in mil_names]
+        return mil + other
+    return RESEARCH_ORDER
 
 
 def _reflexes(p: dict) -> bool:

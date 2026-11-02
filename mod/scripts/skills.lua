@@ -615,19 +615,53 @@ local PREFERRED_TECH = {
 
 -- Techs to queue, in order, whenever nothing is being researched (the reflexes' auto-research
 -- and, via perception.research.order, the bridge planner use this one list). {tech, needs_green}:
--- green-pack techs wait until green science has been made.
+-- green-pack techs wait until green science has been made. Economy first; military techs move to
+-- front only when threat is detected (nest within 150 tiles or attack in last 10 min).
 AISkills.RESEARCH_ORDER = {
-  {"automation", false}, {"logistics", false}, {"logistic-science-pack", false},
-  {"electric-mining-drill", false},
-  {"gun-turret", false}, {"military", false}, {"steel-processing", false},
-  {"fast-inserter", false}, {"stone-wall", false},
+  {"automation", false}, {"logistics", false}, {"electronics", false},
+  {"logistic-science-pack", false}, {"steel-processing", false},
+  {"automation-2", true}, {"fast-inserter", true},
+  {"gun-turret", false}, {"military", false}, {"stone-wall", false},
   {"physical-projectile-damage-1", false}, {"weapon-shooting-speed-1", false},
-  {"automation-2", true}, {"engine", true}, {"electric-energy-distribution-1", true},
+  {"engine", true}, {"electric-energy-distribution-1", true},
   {"toolbelt", true}, {"advanced-material-processing", true},
   {"oil-processing", true}, {"plastics", true}, {"advanced-circuit", true},
   {"sulfur-processing", true}, {"chemical-science-pack", true},
   {"robotics", true}, {"construction-robotics", true},
 }
+
+function AISkills.has_active_threat()
+  local s = storage.ai_player
+  if not s then return false end
+  local atk = s.last_attack
+  if atk and (game.tick - atk.tick < 36000) then return true end
+  local tc = s.threat_cache
+  if tc and tc.nd and tc.nd <= 150 then return true end
+  return false
+end
+
+function AISkills.get_research_order()
+  if not AISkills.has_active_threat() then
+    return AISkills.RESEARCH_ORDER
+  end
+  local mil = {}
+  local other = {}
+  local is_mil = {
+    ["gun-turret"] = true, ["military"] = true, ["stone-wall"] = true,
+    ["physical-projectile-damage-1"] = true, ["weapon-shooting-speed-1"] = true,
+  }
+  for _, e in ipairs(AISkills.RESEARCH_ORDER) do
+    if is_mil[e[1]] then
+      table.insert(mil, e)
+    else
+      table.insert(other, e)
+    end
+  end
+  local combined = {}
+  for _, e in ipairs(mil) do table.insert(combined, e) end
+  for _, e in ipairs(other) do table.insert(combined, e) end
+  return combined
+end
 
 local function prereqs_met(tech)
   for _, pre in pairs(tech.prerequisites) do
@@ -647,7 +681,7 @@ end
 
 -- Queue the first tech of RESEARCH_ORDER that can be queued now; returns its name or nil.
 function AISkills.queue_next_research(force, green_made)
-  for _, e in ipairs(AISkills.RESEARCH_ORDER) do
+  for _, e in ipairs(AISkills.get_research_order()) do
     if (green_made or not e[2]) and try_queue(force, force.technologies[e[1]]) then return e[1] end
   end
   return nil

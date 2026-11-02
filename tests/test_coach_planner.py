@@ -147,6 +147,15 @@ def test_research_order_is_quiet_while_researching_or_without_a_lab():
     assert all("tech" not in e for e in research_moves(p))
 
 
+def test_research_order_threat_moves_military_to_front():
+    p = labbed()
+    p["research"]["done"] = ["steam-power", "automation-science-pack", "automation"]
+    p["threat"] = {"nearest": {"name": "biter-spawner", "distance": 120}}
+    order = planner.research_order(p)
+    mil_first = order[0][0]
+    assert mil_first in ("gun-turret", "military", "stone-wall")
+
+
 def test_research_order_holds_green_techs_until_green_science_runs():
     p = labbed()
     p["research"]["done"] += [t for t, g in planner.RESEARCH_ORDER if not g]
