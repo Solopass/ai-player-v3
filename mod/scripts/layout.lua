@@ -659,6 +659,59 @@ function AILayout.find_electric_pair(character, resource, center, opts)
   return nil
 end
 
+-- Electric drill -> chest on a resource patch (e.g. coal or stone), wired to grid.
+function AILayout.find_electric_chest(character, resource, center, opts)
+  local surface = character.surface
+  local drill = "electric-mining-drill"
+  local chest = (opts and opts.chest) or "wooden-chest"
+  local dw, dh = footprint(drill)
+  local cw, ch = footprint(chest)
+  local tried = 0
+  for _, c in ipairs(candidates(surface, drill, resource, center, (opts and opts.radius) or 64)) do
+    tried = tried + 1
+    if tried > 200 then break end
+    local dbox = box(c.x, c.y, dw, dh)
+    if coverage(surface, drill, c.x, c.y, resource) >= ((opts and opts.min_cover) or 0.6) then
+      for _, facing in ipairs(facings({"south", "east", "north", "west"})) do
+        if can_place(character, drill, c.x, c.y, facing) then
+          local px, py = AILayout.drop_point(drill, c.x, c.y, facing)
+          local spot = collector_spot(px, py, cw, ch, dbox)
+          if spot then
+            local cx, cy = spot[1], spot[2]
+            local pole_spot = nil
+            for _, pdir in ipairs({{1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,-1},{1,-1},{-1,1}}) do
+              local test_qx, test_qy = cx + pdir[1], cy + pdir[2]
+              if can_place(character, "small-electric-pole", test_qx, test_qy)
+                 and not overlaps(box(test_qx, test_qy, 1, 1), dbox)
+                 and not overlaps(box(test_qx, test_qy, 1, 1), box(cx, cy, cw, ch)) then
+                pole_spot = {x = test_qx, y = test_qy}
+                break
+              end
+            end
+            if pole_spot and can_place(character, chest, cx, cy) then
+              local grid = AILayout.nearest_pole(character, pole_spot)
+              if grid then
+                local parts = {dbox, box(cx, cy, cw, ch), box(pole_spot.x, pole_spot.y, 1, 1)}
+                local poles, joined = AILayout.pole_chain(character, pole_spot, grid.position, parts)
+                if poles then
+                  local place = {
+                    {name = drill, position = {x = c.x, y = c.y}, direction = facing, role = "drill"},
+                    {name = chest, position = {x = cx, y = cy}, role = "chest"},
+                    {name = "small-electric-pole", position = pole_spot, role = "pole"},
+                  }
+                  for _, pole in ipairs(poles) do place[#place + 1] = pole end
+                  return {facing = facing, place = place, joined = joined}
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
 -- Poles that wire an unpowered consumer (a lab placed before the grid reached it, ...):
 -- one beside the machine, then a chain to the nearest pole on a network with a
 -- generator. Returns a plan {place = poles}, or nil when a pole already covers the

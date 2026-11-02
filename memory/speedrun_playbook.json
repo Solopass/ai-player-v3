@@ -1,9 +1,12 @@
 {
   "rules": [
+    "Prioritize iron plate production to prevent craft queue stalls.",
+    "Prioritize immediate iron plate production to prevent crafting stalls.",
+    "Prioritize iron plate production to prevent crafting queue stalls.",
     "Keep boiler fueled to ensure 100% electric uptime during steel.",
     "Keep boiler fueled to ensure 100% electric uptime during green.",
     "Keep boiler fueled to ensure 100% electric uptime during red.",
     "Pre-smelt iron plates before batch-crafting red assemblers."
   ],
-  "updated_at": 1793570800.6251862
+  "updated_at": 1793607488.0625658
 }

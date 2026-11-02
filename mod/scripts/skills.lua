@@ -148,9 +148,9 @@ local function skill_build_miner(character, p)
   local inv = inv_of(character)
 
   -- Past the burner stage (drill researched, drill in hand or craftable, a pole to
-  -- wire to): electric drills into furnaces, collected by an inserter into a chest.
-  if out_kind == "furnace" then
-    local ok, detail = build_electric_miner(character, resource, want)
+  -- wire to): electric drills into furnaces, or into chests for coal/stone.
+  if out_kind == "furnace" or out_kind == "chest" then
+    local ok, detail = build_electric_miner(character, resource, want, out_kind)
     if ok ~= nil then return ok, detail end
   end
   if p.drill == "electric" then
@@ -600,6 +600,7 @@ local PREFERRED_TECH = {
 -- green-pack techs wait until green science has been made.
 AISkills.RESEARCH_ORDER = {
   {"automation", false}, {"logistics", false}, {"logistic-science-pack", false},
+  {"electric-mining-drill", false},
   {"gun-turret", false}, {"military", false}, {"steel-processing", false},
   {"fast-inserter", false}, {"stone-wall", false},
   {"physical-projectile-damage-1", false}, {"weapon-shooting-speed-1", false},
@@ -921,6 +922,28 @@ local function belt_path(a, b, horizontal_first)
   return tiles
 end
 
+local function tile_traversable(surface, force, name, pt, dir)
+  if surface.can_place_entity{name = name, position = pt, direction = dir,
+                              force = force, build_check_type = defines.build_check_type.manual_ghost,
+                              forced = true} then
+    return true
+  end
+  local tile = surface.get_tile(pt.x, pt.y)
+  if tile and tile.collides_with("water_tile") then return false end
+  local ents = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}}
+  if #ents == 0 then return false end
+  for _, e in ipairs(ents) do
+    if e.type == "tree" or e.type == "simple-entity" then
+      -- tree/rock can be deconstructed
+    elseif e.name == name or (e.type == "entity-ghost" and e.ghost_name == name) then
+      -- matching belt/pipe or ghost
+    else
+      return false
+    end
+  end
+  return true
+end
+
 local function skill_connect_belt(character, p)
   local a, b = p.from, p.to
   if not (a and b and a.x and a.y and b.x and b.y) then
@@ -933,9 +956,7 @@ local function skill_connect_belt(character, p)
     if #tiles > MAX_BELT then return false, "connect_belt: path longer than " .. MAX_BELT .. " tiles" end
     local ok = true
     for _, t in ipairs(tiles) do
-      if not surface.can_place_entity{name = "transport-belt", position = t.position, direction = t.direction,
-                                      force = force, build_check_type = defines.build_check_type.manual_ghost,
-                                      forced = true} then
+      if not tile_traversable(surface, force, "transport-belt", t.position, t.direction) then
         ok = false; blocked_at = t.position; break
       end
     end
@@ -947,21 +968,33 @@ local function skill_connect_belt(character, p)
                                                           type = {"tree", "simple-entity"}}) do
           if e.order_deconstruction(force) then marked = marked + 1 end
         end
-        local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
-                                        position = t.position, direction = t.direction, force = force}
-        if g then placed = placed + 1 end
+        local existing = surface.find_entities_filtered{position = t.position, radius = 0.4}
+        local already_has = false
+        for _, ex in ipairs(existing) do
+          if ex.name == "transport-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "transport-belt") then
+            already_has = true; break
+          end
+        end
+        if not already_has then
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
+                                          position = t.position, direction = t.direction, force = force}
+          if g then placed = placed + 1 end
+        end
       end
-      if placed > 0 and storage.ai_player then
+      if storage.ai_player then
         storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
         table.insert(storage.ai_player.connected_belts, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
                                                         to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
         AIDebug.event("connect_belt", {from = a, to = b, tiles = #tiles})
       end
+      if placed == 0 then
+        return true, string.format("connect_belt: connected %d tile(s) along existing belts", #tiles)
+      end
       local next_step = marked > 0
         and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
         or "build_ghosts next"
-      return placed > 0, string.format("connect_belt: placed %d/%d belt ghost(s) — %s (needs %d transport-belt)",
-                                       placed, #tiles, next_step, placed)
+      return true, string.format("connect_belt: placed %d/%d belt ghost(s) — %s (needs %d transport-belt)",
+                                 placed, #tiles, next_step, placed)
     end
   end
   return false, string.format("connect_belt: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
@@ -996,14 +1029,32 @@ local function skill_connect_pipe(character, p)
     return false, "connect_pipe: 'from' and 'to' must be {x=N, y=N}"
   end
   local surface, force = character.surface, character.force
+
+  -- If 'from' is a water tile (e.g. water landmark), snap to nearest shoreline land tile
+  local sp_a = surface.get_tile(a.x, a.y)
+  if sp_a and sp_a.collides_with("water_tile") then
+    local best_land, min_d = nil, 999
+    for dx = -6, 6 do
+      for dy = -6, 6 do
+        local test_t = surface.get_tile(a.x + dx, a.y + dy)
+        if test_t and not test_t.collides_with("water_tile") then
+          local d = dx * dx + dy * dy
+          if d < min_d then
+            min_d = d
+            best_land = {x = math.floor(a.x + dx) + 0.5, y = math.floor(a.y + dy) + 0.5}
+          end
+        end
+      end
+    end
+    if best_land then a = best_land end
+  end
   local blocked_at
   for _, hfirst in ipairs({true, false}) do
     local pts = pipe_path(a, b, hfirst)
     if #pts > MAX_BELT then return false, "connect_pipe: path longer than " .. MAX_BELT .. " tiles" end
     local ok = true
     for _, pt in ipairs(pts) do
-      if not surface.can_place_entity{name = "pipe", position = pt, force = force,
-                                      build_check_type = defines.build_check_type.manual_ghost, forced = true} then
+      if not tile_traversable(surface, force, "pipe", pt, defines.direction.north) then
         ok = false; blocked_at = pt; break
       end
     end
@@ -1015,21 +1066,33 @@ local function skill_connect_pipe(character, p)
                                                           type = {"tree", "simple-entity"}}) do
           if e.order_deconstruction(force) then marked = marked + 1 end
         end
-        local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
-                                        position = pt, force = force}
-        if g then placed = placed + 1 end
+        local existing = surface.find_entities_filtered{position = pt, radius = 0.4}
+        local already_has = false
+        for _, ex in ipairs(existing) do
+          if ex.name == "pipe" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe") then
+            already_has = true; break
+          end
+        end
+        if not already_has then
+          local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
+                                          position = pt, force = force}
+          if g then placed = placed + 1 end
+        end
       end
-      if placed > 0 and storage.ai_player then
+      if storage.ai_player then
         storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
         table.insert(storage.ai_player.connected_pipes, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
                                                          to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
         AIDebug.event("connect_pipe", {from = a, to = b, tiles = #pts})
       end
+      if placed == 0 then
+        return true, string.format("connect_pipe: connected %d tile(s) along existing pipes", #pts)
+      end
       local next_step = marked > 0
         and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
         or "build_ghosts next"
-      return placed > 0, string.format("connect_pipe: placed %d/%d pipe ghost(s) — %s (needs %d pipe)",
-                                       placed, #pts, next_step, placed)
+      return true, string.format("connect_pipe: placed %d/%d pipe ghost(s) — %s (needs %d pipe)",
+                                 placed, #pts, next_step, placed)
     end
   end
   return false, string.format("connect_pipe: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
@@ -1268,9 +1331,9 @@ local function chest_for(character, n)
   return inv.get_item_count("wood") >= 2 * n and "wooden-chest" or "iron-chest"
 end
 
--- Electric drill -> furnace -> inserter -> chest pairs. Returns nil (use burner drills
--- instead) when electric isn't available here, else ok, detail.
-function build_electric_miner(character, resource, want)
+-- Electric drill -> furnace -> inserter -> chest pairs (or electric drill -> chest for coal/stone).
+-- Returns nil (use burner drills instead) when electric isn't available here, else ok, detail.
+function build_electric_miner(character, resource, want, out_kind)
   local force, inv = character.force, inv_of(character)
   local recipe = force.recipes["electric-mining-drill"]
   if not (recipe and recipe.enabled) then return nil end
@@ -1281,9 +1344,14 @@ function build_electric_miner(character, resource, want)
   local chest = chest_for(character, want)
   local built, first, err = 0, nil, nil
   for _ = 1, want do
-    local plan = AILayout.find_electric_pair(character, resource, character.position, {chest = chest})
+    local plan
+    if out_kind == "chest" then
+      plan = AILayout.find_electric_chest(character, resource, character.position, {chest = chest})
+    else
+      plan = AILayout.find_electric_pair(character, resource, character.position, {chest = chest})
+    end
     if not plan then
-      err = err or "no spot on the " .. resource .. " patch for an electric drill, furnace, inserter and chest"
+      err = err or ("no spot on the " .. resource .. " patch for an electric drill")
       break
     end
     local ready, why = stock_up(character, AILayout.items({plan}), "build_miner")
@@ -1297,8 +1365,8 @@ function build_electric_miner(character, resource, want)
     -- No electric spot: the burner path may still work, unless parts were short.
     return nil
   end
-  local detail = string.format("built %d electric drill->furnace->inserter->chest pair(s) on %s at {%d,%d}",
-    built, resource, math.floor(first.x), math.floor(first.y))
+  local detail = string.format("built %d electric drill%s on %s at {%d,%d}",
+    built, out_kind == "chest" and "->chest" or "->furnace->inserter->chest pair(s)", resource, math.floor(first.x), math.floor(first.y))
   if built < want then detail = detail .. "; stopped: " .. tostring(err) end
   return true, detail
 end

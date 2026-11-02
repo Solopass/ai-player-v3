@@ -31,7 +31,7 @@ end
 -- Entity types that don't block a building spot (trees/rocks get marked for
 -- deconstruction by a forced build; the rest are harmless).
 local NON_BLOCKING = {"tree", "simple-entity", "resource", "fish", "corpse",
-                      "item-entity", "character", "unit", "spider-unit", "entity-ghost"}
+                      "item-entity", "character", "unit", "spider-unit"}
 
 local function lib()
   storage.ai_player.blueprints = storage.ai_player.blueprints or {}

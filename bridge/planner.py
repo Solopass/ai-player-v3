@@ -43,6 +43,7 @@ GATHER_NEAR = 35  # tiles; gather only searches 40 around the character
 # which its reflexes also use); this copy is the fallback for a mod that doesn't report it.
 RESEARCH_ORDER = [
     ("automation", False), ("logistics", False), ("logistic-science-pack", False),
+    ("electric-mining-drill", False),
     ("gun-turret", False), ("military", False), ("steel-processing", False),
     ("fast-inserter", False), ("stone-wall", False),
     ("physical-projectile-damage-1", False), ("weapon-shooting-speed-1", False),
@@ -218,10 +219,15 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
         water_lm = _landmark(p, "water")
         machines = p.get("factory", {}).get("machines") or []
         pump_pos = None
-        for m in machines:
-            if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
-                pump_pos = m.get("position")
+        for op in (p.get("factory") or {}).get("offshore_pumps") or []:
+            if isinstance(op, dict) and op.get("position"):
+                pump_pos = op["position"]
                 break
+        if not pump_pos:
+            for m in machines:
+                if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
+                    pump_pos = m.get("position")
+                    break
         if not pump_pos:
             for e in (p.get("nearby_entities") or []):
                 if e.get("name") == "offshore-pump":
@@ -250,10 +256,15 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
         pipes = p.get("connected_pipes") or []
         water_lm = _landmark(p, "water")
         pump_pos = None
-        for m in machines:
-            if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
-                pump_pos = m.get("position")
+        for op in (p.get("factory") or {}).get("offshore_pumps") or []:
+            if isinstance(op, dict) and op.get("position"):
+                pump_pos = op["position"]
                 break
+        if not pump_pos:
+            for m in machines:
+                if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
+                    pump_pos = m.get("position")
+                    break
         if not pump_pos:
             for e in (p.get("nearby_entities") or []):
                 if e.get("name") == "offshore-pump":
@@ -286,19 +297,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             yield {"skill": "research", "tech": "automation"}, "automation unlocks assemblers", True
     elif goal_id == "smelting":
         bp_name = "tileable-smelter-stone"
-        if bp_name in unlocked_bps and power.get("has_grid"):
-            lib = blueprints.load_library()
-            bp_entry = lib.get(bp_name, {})
-            if bp_name not in placed_names:
-                yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular stone smelter column", True
-            else:
-                if (_rate(p, "iron-plate") < 30 or _rate(p, "copper-plate") < 15) and _count(p.get("ghosts")) == 0 and _rate(p, "iron-plate") > 0:
-                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
-                    if snap:
-                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
-                               "tile modular stone smelter column for more plates", True)
-                yield {"skill": "tend"}, "keep smelters fed with coal and ore", True
-        elif _tech(p, "electric-mining-drill") and power.get("has_grid"):
+        if _tech(p, "electric-mining-drill") and power.get("has_grid"):
             for ore, (plate, target) in SMELT_TARGET.items():
                 # Pairs already built count at their full rate: the measured rate lags new builds.
                 built = int((factory.get("electric_miners") or {}).get(ore, 0))
@@ -311,11 +310,21 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 yield from _craft(inv, "electric-mining-drill", pairs, f"{pairs} electric drill(s) for {ore}")
                 yield from _craft(inv, "stone-furnace", pairs, f"{pairs} furnace(s) for {ore}")
                 yield from _craft(inv, "inserter", pairs, f"{pairs} inserter(s) for {ore}")
-                # drill=electric: fail instead of quietly building burner drills, which
-                # never count as electric_miners and would re-fire this rule forever.
                 yield ({"skill": "build_miner", "resource": ore, "output": "furnace", "count": pairs,
                         "drill": "electric"},
                        f"{plate} at {_rate(p, plate)}/min, want {target}", True)
+        if bp_name in unlocked_bps and power.get("has_grid"):
+            lib = blueprints.load_library()
+            bp_entry = lib.get(bp_name, {})
+            if bp_name not in placed_names:
+                yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular stone smelter column", True
+            else:
+                if (_rate(p, "iron-plate") < 30 or _rate(p, "copper-plate") < 15) and _count(p.get("ghosts")) == 0 and _rate(p, "iron-plate") > 0:
+                    snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                    if snap:
+                        yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
+                               "tile modular stone smelter column for more plates", True)
+                yield {"skill": "tend"}, "keep smelters fed with coal and ore", True
     elif goal_id == "red":
         if _tech(p, "automation"):
             bp_name = "tileable-science-red"

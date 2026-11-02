@@ -304,7 +304,7 @@ local PROBLEM_STATUS = {
   recipe_not_researched = true, low_temperature = true,
 }
 
-local FACTORY_DETAIL_THRESHOLD = 30  -- emit per-machine roster at/below this total
+local FACTORY_DETAIL_THRESHOLD = 150  -- emit per-machine roster at/below this total
 local ATTENTION_LIMIT = 20
 
 local function gather_factory(surface, force, cpos)
@@ -316,6 +316,7 @@ local function gather_factory(surface, force, cpos)
   local by_type, by_status, attention = {}, {}, {}
   local miners, labs = {}, {count = 0, without_packs = 0}
   local assemblers, electric = {}, {}
+  local offshore_pumps = {}
   local needs = {burners_low_fuel = {}, machines_no_recipe = {},
                  machines_no_input = {}, outputs_full = {}}
   local total = 0
@@ -324,6 +325,11 @@ local function gather_factory(surface, force, cpos)
     if e.valid then
       total = total + 1
       by_type[e.name] = (by_type[e.name] or 0) + 1
+      if e.name == "offshore-pump" or e.type == "offshore-pump" then
+        offshore_pumps[#offshore_pumps + 1] = {
+          position = {x = math.floor(e.position.x) + 0.5, y = math.floor(e.position.y) + 0.5}
+        }
+      end
       if e.type == "mining-drill" then
         local res = AISkills.drill_resource(e)
         if res then miners[res] = (miners[res] or 0) + 1 end
@@ -371,7 +377,7 @@ local function gather_factory(surface, force, cpos)
 
   local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention,
                    miners_by_resource = miners, labs = labs, assemblers = assemblers,
-                   electric_miners = electric}
+                   electric_miners = electric, offshore_pumps = offshore_pumps}
 
   -- Small base: include the full per-machine roster (lightweight). Second pass
   -- only runs when total is small, so it's cheap.
