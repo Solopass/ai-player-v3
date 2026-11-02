@@ -289,6 +289,9 @@ local function skill_build_power(character, _)
   if not ready then return false, why end
   local ok, res = AILayout.build(character, plan)
   if not ok then return false, "build_power: " .. res end
+  for _, p in ipairs(res) do
+    if p.entity and p.entity.valid then AIRegistry.own(p.entity) end
+  end
   local poles = 0
   for _, p in ipairs(res) do if p.role == "pole" then poles = poles + 1 end end
   local pump = res[1].position
@@ -1501,6 +1504,21 @@ function AISkills.refuel(inv, own)
       end
     end
   end
+  -- Every boiler on the surface belonging to the AI force must stay fueled
+  local ch = storage.ai_player and storage.ai_player.character
+  if ch and ch.valid then
+    for _, b in ipairs(ch.surface.find_entities_filtered{type = "boiler", force = ch.force}) do
+      local fb = b.valid and b.get_fuel_inventory and b.get_fuel_inventory()
+      if fb and fb.valid and fb.get_item_count("coal") < 30 then
+        local want = 50 - fb.get_item_count("coal")
+        local n = math.min(want, inv.get_item_count("coal"))
+        if n > 0 then
+          local ins = fb.insert{name = "coal", count = n}
+          if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
+        end
+      end
+    end
+  end
   for _, d in ipairs(own) do
     local tgt = d.valid and d.type == "mining-drill" and d.drop_target
     if tgt and tgt.type == "furnace" then
@@ -1773,7 +1791,9 @@ local function skill_tend(character, _)
   -- 6. wire consumers no pole reaches (the lab went down before the grid got there)
   local wired = 0
   for _, e in ipairs(own) do
-    if wired < 2 and e.valid and (e.type == "lab" or e.type == "assembling-machine")
+    if wired < 2 and e.valid and (e.type == "lab" or e.type == "assembling-machine"
+                                  or e.type == "mining-drill" or e.type == "inserter"
+                                  or e.type == "radar" or e.type == "pumpjack")
        and (e.status == defines.entity_status.no_power
             or e.status == defines.entity_status.not_plugged_in_electric_network) then
       local plan = AILayout.find_consumer_poles(character, e)

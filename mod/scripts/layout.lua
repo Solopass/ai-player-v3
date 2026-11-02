@@ -288,12 +288,22 @@ function AILayout.pole_chain(character, from, goal, boxes, opts)
   local step = reach - 1.5
   local poles = {}
   local cur = {x = from.x, y = from.y}
-  for _ = 1, opts.max or 16 do
+  local target_net = opts.target_network_id
+  for _ = 1, opts.max or 24 do
+    if dist2(cur.x, cur.y, goal.x, goal.y) <= (reach - 0.2) ^ 2 then
+      return poles, true
+    end
     local near = surface.find_entities_filtered{type = "electric-pole", position = cur, radius = reach, force = force}
-    if #near > 0 then return poles, true end
+    for _, np in ipairs(near) do
+      if dist2(np.position.x, np.position.y, from.x, from.y) > 0.5 then
+        if not target_net or np.electric_network_id == target_net then
+          return poles, true
+        end
+      end
+    end
     local dx, dy = goal.x - cur.x, goal.y - cur.y
     local d = math.sqrt(dx * dx + dy * dy)
-    if d < 2 then return poles, false end
+    if d < 1 then return poles, true end
     local t = math.min(step, d) / d
     local tx, ty = math.floor(cur.x + dx * t) + 0.5, math.floor(cur.y + dy * t) + 0.5
     local best
@@ -639,7 +649,7 @@ function AILayout.find_consumer_poles(character, e)
   local ex, ey = e.position.x, e.position.y
   local w, h = footprint(e.name)
   local live = {}
-  for _, g in ipairs(surface.find_entities_filtered{type = {"generator", "electric-energy-interface"}, force = force}) do
+  for _, g in ipairs(surface.find_entities_filtered{type = {"generator", "solar-panel", "electric-energy-interface"}, force = force}) do
     if g.electric_network_id then live[g.electric_network_id] = true end
   end
   local nearby_poles = surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
@@ -657,14 +667,21 @@ function AILayout.find_consumer_poles(character, e)
       if not gd or d < gd then goal, gd = pole, d end
     end
   end
+  if not goal then
+    for _, pole in ipairs(surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position, radius = 250}) do
+      local d = dist2(pole.position.x, pole.position.y, ex, ey)
+      if not gd or d < gd then goal, gd = pole, d end
+    end
+  end
   if not goal then return nil end
+  local opts = {target_network_id = goal.electric_network_id}
   if #nearby_poles > 0 then
     local p0 = nearby_poles[1]
-    local poles, joined = AILayout.pole_chain(character, p0.position, goal.position, {})
-    if poles and joined then
+    local poles, joined = AILayout.pole_chain(character, p0.position, goal.position, {}, opts)
+    if poles and joined and #poles > 0 then
       local place = {}
       for _, pole in ipairs(poles) do place[#place + 1] = pole end
-      if #place > 0 then return {place = place} end
+      return {place = place}
     end
   end
   local own = box(ex, ey, w, h)
@@ -684,7 +701,7 @@ function AILayout.find_consumer_poles(character, e)
     local x, y = math.floor(sp[1]) + 0.5, math.floor(sp[2]) + 0.5
     if can_place(character, "small-electric-pole", x, y) then
       local boxes = {own, box(x, y, 1, 1)}
-      local poles, joined = AILayout.pole_chain(character, {x = x, y = y}, goal.position, boxes)
+      local poles, joined = AILayout.pole_chain(character, {x = x, y = y}, goal.position, boxes, opts)
       if poles and joined then
         local place = {{name = "small-electric-pole", position = {x = x, y = y}, role = "pole"}}
         for _, pole in ipairs(poles) do place[#place + 1] = pole end

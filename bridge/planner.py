@@ -167,14 +167,17 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
     placed_bps = p.get("placed_blueprints") or []
     placed_names = {b.get("name") for b in placed_bps if isinstance(b, dict)}
 
+    # If power is missing or destroyed at any point in the game, restore power first
+    if not power.get("has_grid") or not _by_type(p, "boiler"):
+        yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water",
+                             WATER_NEAR)
+        for item, n in (("offshore-pump", 1), ("boiler", 1), ("steam-engine", 2), ("pipe", 5),
+                        ("small-electric-pole", 6)):
+            yield from _craft(inv, item, n, f"steam power needs {n} {item}")
+        yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
+
     if goal_id == "power":
-        if not power.get("has_grid") or not _by_type(p, "boiler"):
-            yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water",
-                                 WATER_NEAR)
-            for item, n in (("offshore-pump", 1), ("boiler", 1), ("steam-engine", 2), ("pipe", 5),
-                            ("small-electric-pole", 6)):
-                yield from _craft(inv, item, n, f"steam power needs {n} {item}")
-            yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
+        pass
     elif goal_id == "automation":
         # Red packs unlock by a trigger first; until it's done, research can't start.
         # Once it's the current research, stop asking: re-queuing it every turn
@@ -441,16 +444,26 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     reflexes = _reflexes(p)
     drops = ("ground",) if reflexes else ("ground", "container", "furnace")
     stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in drops]
-    if inv.get("coal", 0) < 5:
+    power = p.get("power") or {}
+    unpowered_machines = power.get("machines_no_power", 0)
+    has_boiler = _by_type(p, "boiler") > 0
+    burners_val = needs.get("burners_low_fuel")
+    boiler_needs_fuel = False
+    if isinstance(burners_val, list):
+        boiler_needs_fuel = any(isinstance(b, dict) and b.get("name") == "boiler" for b in burners_val)
+    elif isinstance(burners_val, int) and burners_val > 0 and has_boiler:
+        boiler_needs_fuel = True
+
+    if inv.get("coal", 0) < (20 if has_boiler else 5):
         if (factory.get("miners_by_resource") or {}).get("coal") and not reflexes:
             yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
         yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
 
-    if (needs.get("burners_low_fuel") and not reflexes) or stalled:
+    if unpowered_machines > 0 or boiler_needs_fuel:
+        yield {"skill": "tend"}, "power needs attention: boilers need fuel or machines need wiring", True
+    elif (needs.get("burners_low_fuel") and not reflexes) or stalled:
         yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
-    elif (p.get("power") or {}).get("machines_no_power") and _lab_count(p) + _by_type(p, "assembling-machine"):
-        yield {"skill": "tend"}, "a lab or assembler has no power: tend wires it to the grid", True
 
     # 1b. Enemies near home or an attack on the AI's things: gun turrets with ammo.
     threat = p.get("threat") or {}

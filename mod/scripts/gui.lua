@@ -81,15 +81,13 @@ end
 -- Panel
 -- -------------------------------------------------------------------------
 
+local DEFAULT_LOCATION = {x = 15, y = 80}
+
 local function build(player)
   local frame = player.gui.screen.add{type = "frame", name = PANEL, direction = "vertical"}
   local saved_loc = storage.ai_player and storage.ai_player.gui_location and storage.ai_player.gui_location[player.index]
-  if saved_loc then
-    frame.location = saved_loc
-    frame.auto_center = false
-  else
-    frame.auto_center = true
-  end
+  frame.auto_center = false
+  frame.location = saved_loc or DEFAULT_LOCATION
   local r = refs(player)
 
   local bar = frame.add{type = "flow", direction = "horizontal"}
@@ -100,11 +98,15 @@ local function build(player)
   drag.style.height = 24
   drag.drag_target = frame
 
-  local pinned = storage.ai_player and storage.ai_player.gui_pinned and storage.ai_player.gui_pinned[player.index]
-  if pinned then
-    if player.opened == frame then player.opened = nil end
-  else
+  storage.ai_player.gui_pinned = storage.ai_player.gui_pinned or {}
+  if storage.ai_player.gui_pinned[player.index] == nil then
+    storage.ai_player.gui_pinned[player.index] = true
+  end
+  local pinned = storage.ai_player.gui_pinned[player.index]
+  if not pinned then
     player.opened = frame
+  else
+    if player.opened == frame then player.opened = nil end
   end
   bar.add{
     type = "sprite-button",
@@ -489,13 +491,15 @@ script.on_event(defines.events.on_gui_closed, function(event)
   local el = event.element
   if el and el.valid and el.name == PANEL and storage.ai_player then
     local pinned = storage.ai_player.gui_pinned and storage.ai_player.gui_pinned[event.player_index]
-    if not pinned then
-      storage.ai_player.gui_location = storage.ai_player.gui_location or {}
-      storage.ai_player.gui_location[event.player_index] = el.location
-      el.destroy()
-      local player = game.get_player(event.player_index)
-      if player then refs(player).frame = nil end
+    if pinned ~= false then
+      -- Default to pinned: stays open when pressing E / ESC, keeping position on left
+      return
     end
+    storage.ai_player.gui_location = storage.ai_player.gui_location or {}
+    storage.ai_player.gui_location[event.player_index] = el.location
+    el.destroy()
+    local player = game.get_player(event.player_index)
+    if player then refs(player).frame = nil end
   end
 end)
 
