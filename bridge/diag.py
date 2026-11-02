@@ -47,11 +47,16 @@ def _router_state_path(env: dict) -> Path | None:
     return Path(p) if p else None
 
 
-def rotate_logs(output_dir: Path) -> None:
+def rotate_logs(output_dir: Path, max_backups: int = 3) -> None:
     for name, limit in _ROTATE.items():
         p = Path(output_dir) / name
         try:
             if p.exists() and p.stat().st_size > limit:
+                for i in range(max_backups - 1, 0, -1):
+                    src = p.with_name(f"{name}.{i}")
+                    dst = p.with_name(f"{name}.{i+1}")
+                    if src.exists():
+                        src.replace(dst)
                 p.replace(p.with_name(name + ".1"))
         except OSError:
             pass   # the game may have it open this instant; try next time
@@ -110,7 +115,7 @@ def _fmt_event(e: dict) -> str:
     return s
 
 
-def collect(n_events: int = 25) -> dict:
+def collect(n_events: int = 25, all_sessions: bool = False) -> dict:
     loader = ConfigLoader()
     cfg = loader.get()
     out_dir = Path(cfg.output_dir)
@@ -150,13 +155,28 @@ def collect(n_events: int = 25) -> dict:
     except Exception as e:      # noqa: BLE001
         report["mod"] = {"ok": False, "detail": f"diag call failed (old mod loaded?): {e}"}
 
-    events = []
-    for l in _tail_lines(out_dir / "debug.jsonl", n_events):
+    raw_events = []
+    current_session_id = None
+    latest_session = {}
+    for l in _tail_lines(out_dir / "debug.jsonl", 1000 if not all_sessions else n_events):
         try:
-            events.append(json.loads(l))
+            ev = json.loads(l)
+            if ev.get("kind") == "session_start":
+                latest_session = ev
+                current_session_id = ev.get("session_id")
+            elif ev.get("session_id"):
+                current_session_id = ev.get("session_id")
+            raw_events.append(ev)
         except ValueError:
             pass
-    report["events"] = events
+
+    if not all_sessions and current_session_id:
+        events = [e for e in raw_events if e.get("session_id") == current_session_id]
+    else:
+        events = raw_events
+
+    report["session"] = latest_session or ({"session_id": current_session_id} if current_session_id else {})
+    report["events"] = events[-n_events:]
     report["errors_log"] = _tail_lines(out_dir / "errors.log", 10)
     report["bridge_warnings"] = [l for l in _tail_lines(out_dir / "bridge.log", 2000)
                                  if "[WARNING]" in l or "[ERROR]" in l][-15:]
@@ -190,6 +210,9 @@ def _print(report: dict) -> None:
     h("Setup")
     print(f"model {s['model']} via {s['provider']} at {s['url']}  (schema={s['json_schema']}, "
           f"goals={s['goals']}, thinking={s['enable_thinking']}, timeout={s['timeout_s']:.0f}s)")
+    sess = report.get("session") or {}
+    if sess.get("session_id"):
+        print(f"session: {sess.get('session_id')} (ver={sess.get('version')}, seed={sess.get('seed')}, type={sess.get('event_type', 'run')})")
     rm = s.get("router_mode")
     if rm:
         print(f"local router mode: {rm.get('mode')} since {rm.get('since')} ({rm.get('reason', '')})"
@@ -267,9 +290,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m bridge.diag", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--events", type=int, default=25, help="how many mod events to show")
+    ap.add_argument("--all", action="store_true", help="show events across all sessions")
     ap.add_argument("--json", action="store_true", help="print everything as JSON")
     args = ap.parse_args()
-    report = collect(args.events)
+    report = collect(args.events, all_sessions=args.all)
     if args.json:
         json.dump(report, sys.stdout, indent=1, default=str)
         print()

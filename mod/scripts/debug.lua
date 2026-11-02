@@ -55,11 +55,21 @@ local function clean(v, depth)
   return "<" .. t .. ">"
 end
 
+function AIDebug.session_header(event_type, session_id, seed)
+  AIDebug.event("session_start", {
+    version = "0.5.0",
+    seed = seed,
+    session_id = session_id,
+    event_type = event_type,
+  })
+end
+
 function AIDebug.event(kind, fields)
   if not storage.ai_player then return end
   local e = clean(fields or {}) or {}
   e.kind = kind
   e.tick = game.tick
+  e.session_id = storage.ai_player.session_id
   local ring = storage.ai_player.events or {}
   storage.ai_player.events = ring
   ring[#ring + 1] = e

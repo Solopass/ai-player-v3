@@ -18,6 +18,8 @@ require("scripts.selftest")
 require("scripts.selftest_reflex")
 require("scripts.gui")
 
+local session_header_logged = false
+
 -- -------------------------------------------------------------------------
 -- Remote interface — lets an external MCP/RCON client invoke a skill against
 -- the AI character and get its {ok, detail} result back synchronously, reusing
@@ -392,6 +394,12 @@ end
 
 script.on_init(function()
   init_storage()
+  local session_id = string.format("s_%d_%06d", game.tick, math.random(100000, 999999))
+  storage.ai_player.session_id = session_id
+  local sfc = game.surfaces[1]
+  local seed = (sfc and sfc.map_gen_settings and sfc.map_gen_settings.seed) or 0
+  AIDebug.session_header("init", session_id, seed)
+  session_header_logged = true
   AICharacter.create_force()
   AIBrain.write_bridge_config()
   for _, p in pairs(game.players) do AIGui.ensure_button(p) end
@@ -487,6 +495,20 @@ end
 -- -------------------------------------------------------------------------
 
 script.on_event(defines.events.on_tick, function(event)
+  if not session_header_logged then
+    session_header_logged = true
+    if storage.ai_player then
+      local session_id = storage.ai_player.session_id
+      if not session_id then
+        session_id = string.format("s_%d_%06d", game.tick, math.random(100000, 999999))
+        storage.ai_player.session_id = session_id
+      end
+      local sfc = game.surfaces[1]
+      local seed = (sfc and sfc.map_gen_settings and sfc.map_gen_settings.seed) or 0
+      AIDebug.session_header("load", session_id, seed)
+    end
+  end
+
   -- Self-heal if storage was never initialised (e.g. save loaded without on_init firing)
   if not storage.ai_player then
     init_storage()
