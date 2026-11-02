@@ -109,9 +109,11 @@ def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "",
     perception = payload.get("perception") or {}
     if perception:
         # The goal section already names the blueprints that matter; the full
-        # library / locked lists would only cost tokens.
-        drop = {"blueprint_locked"} | ({"blueprint_library"} if goal_text else set())
+        # library / locked lists and unbounded rosters would only cost tokens.
+        drop = {"blueprint_locked", "connected_belts", "connected_pipes"} | ({"blueprint_library"} if goal_text else set())
         shown = {k: v for k, v in perception.items() if k not in drop}
+        if isinstance(shown.get("factory"), dict) and "machines" in shown["factory"]:
+            shown["factory"] = {k: v for k, v in shown["factory"].items() if k != "machines"}
         parts.append("Game state:\n" + json.dumps(shown, indent=1))
         phase = perception.get("game_phase")
         if phase in PHASE_HINT and not goal_text:

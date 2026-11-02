@@ -1088,3 +1088,51 @@ def test_planner_selects_and_crafts_construction_robotics():
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
     assert {"skill": "place_blueprint", "name": "tileable-robotics"} in moves
     assert {"skill": "craft_for", "item": "flying-robot-frame", "count": 5} in moves
+
+
+def test_burner_phaseout_when_electric_available():
+    # When electric-mining-drill is researched and power grid exists,
+    # the planner must never yield burner-mining-drill even with 0 miners
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 0}, "copper-plate": {"per_min": 0}}
+    p["factory"]["miners_by_resource"] = {}
+    p["inventory"] = []
+    all_moves = moves(p, limit=16)
+    for m in all_moves:
+        assert m.get("item") != "burner-mining-drill"
+        assert m.get("recipe") != "burner-mining-drill"
+        if m.get("skill") == "build_miner":
+            assert m.get("drill") != "burner"
+
+
+def test_post_red_science_electric_drill_expansion():
+    # In green science era, electric drills must scale up to targets
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["research"]["done"].append("electric-mining-drill")
+    p["factory"]["electric_miners"] = {"iron-ore": 2, "copper-ore": 1, "coal": 1, "stone": 0}
+    plan = list(planner.next_plan(p, limit=8))
+    drill_moves = [e for e, _, _ in plan if e.get("skill") == "build_miner" and e.get("drill") == "electric"]
+    assert len(drill_moves) > 0
+    assert drill_moves[0]["resource"] == "iron-ore"
+
+
+def test_prompt_strips_heavy_perception_fields():
+    from bridge.prompt import build_messages
+    perception = {
+        "game_phase": 1,
+        "factory": {
+            "total": 35,
+            "summary": {"working": 30},
+            "attention": [],
+            "machines": [{"name": f"machine_{i}", "position": {"x": i, "y": i}} for i in range(100)],
+        },
+        "connected_belts": [{"from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}}],
+        "connected_pipes": [{"from": {"x": 10, "y": 20}, "to": {"x": 30, "y": 40}}],
+    }
+    msgs = build_messages({"perception": perception})
+    user_content = msgs[1]["content"]
+    assert "machine_99" not in user_content
+    assert "connected_belts" not in user_content
+    assert "connected_pipes" not in user_content
+

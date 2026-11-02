@@ -783,16 +783,32 @@ function AIPerception.gather(character)
   while #placed > 15 do table.remove(placed, 1) end
   perception.placed_blueprints = placed
 
-  local conns = {}
+  local seen_belts, conns = {}, {}
   for _, c in ipairs(storage.ai_player.connected_belts or {}) do
-    conns[#conns + 1] = {from = c.from, to = c.to}
+    if c.from and c.to then
+      local k = string.format("%d,%d->%d,%d", math.floor(c.from.x), math.floor(c.from.y), math.floor(c.to.x), math.floor(c.to.y))
+      if not seen_belts[k] then
+        seen_belts[k] = true
+        conns[#conns + 1] = {from = c.from, to = c.to}
+      end
+    end
   end
+  while #conns > 10 do table.remove(conns, 1) end
+  storage.ai_player.connected_belts = conns
   perception.connected_belts = conns
 
-  local pipes = {}
+  local seen_pipes, pipes = {}, {}
   for _, c in ipairs(storage.ai_player.connected_pipes or {}) do
-    pipes[#pipes + 1] = {from = c.from, to = c.to}
+    if c.from and c.to then
+      local k = string.format("%d,%d->%d,%d", math.floor(c.from.x), math.floor(c.from.y), math.floor(c.to.x), math.floor(c.to.y))
+      if not seen_pipes[k] then
+        seen_pipes[k] = true
+        pipes[#pipes + 1] = {from = c.from, to = c.to}
+      end
+    end
   end
+  while #pipes > 10 do table.remove(pipes, 1) end
+  storage.ai_player.connected_pipes = pipes
   perception.connected_pipes = pipes
   -- blueprint_library: blueprints whose every building is unlocked for this
   -- force. blueprint_locked: the rest, with up to 3 items still locked (the

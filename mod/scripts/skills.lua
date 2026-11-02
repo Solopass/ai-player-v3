@@ -149,9 +149,14 @@ local function skill_build_miner(character, p)
 
   -- Past the burner stage (drill researched, drill in hand or craftable, a pole to
   -- wire to): electric drills into furnaces, or into chests for coal/stone.
-  if out_kind == "furnace" or out_kind == "chest" then
-    local ok, detail = build_electric_miner(character, resource, want, out_kind)
+  local is_electric = character.force.recipes["electric-mining-drill"]
+    and character.force.recipes["electric-mining-drill"].enabled
+  if out_kind == "furnace" or out_kind == "chest" or is_electric then
+    local ok, detail = build_electric_miner(character, resource, want, out_kind == "belt" and "chest" or out_kind)
     if ok ~= nil then return ok, detail end
+  end
+  if is_electric then
+    return false, "build_miner: electric drills researched; burner drills are phased out. Build power grid or craft materials for electric drill."
   end
   if p.drill == "electric" then
     return false, "build_miner: electric drills need the tech, a drill in hand or craftable, "
@@ -944,6 +949,28 @@ local function snap_endpoint_outside_buildings(surface, pt, name)
   return best_pt or {x = x, y = y}
 end
 
+local function tile_traversable(surface, force, name, pt, dir)
+  if surface.can_place_entity{name = name, position = pt, direction = dir,
+                              force = force, build_check_type = defines.build_check_type.manual_ghost,
+                              forced = true} then
+    return true
+  end
+  local tile = surface.get_tile(pt.x, pt.y)
+  if tile and tile.collides_with("water_tile") then return false end
+  local ents = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}}
+  if #ents == 0 then return false end
+  for _, e in ipairs(ents) do
+    if e.type == "tree" or e.type == "simple-entity" then
+      -- tree/rock can be deconstructed
+    elseif e.name == name or (e.type == "entity-ghost" and e.ghost_name == name) then
+      -- matching belt/pipe or ghost
+    else
+      return false
+    end
+  end
+  return true
+end
+
 -- A* Grid Pathfinder fallback when L-paths are obstructed
 local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
   local sx, sy = math.floor(start_pt.x) + 0.5, math.floor(start_pt.y) + 0.5
@@ -1056,28 +1083,6 @@ local function belt_path(a, b, horizontal_first)
     tiles[#tiles + 1] = {position = pt, direction = d}
   end
   return tiles
-end
-
-local function tile_traversable(surface, force, name, pt, dir)
-  if surface.can_place_entity{name = name, position = pt, direction = dir,
-                              force = force, build_check_type = defines.build_check_type.manual_ghost,
-                              forced = true} then
-    return true
-  end
-  local tile = surface.get_tile(pt.x, pt.y)
-  if tile and tile.collides_with("water_tile") then return false end
-  local ents = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}}
-  if #ents == 0 then return false end
-  for _, e in ipairs(ents) do
-    if e.type == "tree" or e.type == "simple-entity" then
-      -- tree/rock can be deconstructed
-    elseif e.name == name or (e.type == "entity-ghost" and e.ghost_name == name) then
-      -- matching belt/pipe or ghost
-    else
-      return false
-    end
-  end
-  return true
 end
 
 local function skill_connect_belt(character, p)
@@ -1527,14 +1532,13 @@ local function chest_for(character, n)
 end
 
 -- Electric drill -> furnace -> inserter -> chest pairs (or electric drill -> chest for coal/stone).
--- Returns nil (use burner drills instead) when electric isn't available here, else ok, detail.
+-- Returns nil (use burner drills instead) only when electric technology is not yet unlocked.
 function build_electric_miner(character, resource, want, out_kind)
   local force, inv = character.force, inv_of(character)
   local recipe = force.recipes["electric-mining-drill"]
   if not (recipe and recipe.enabled) then return nil end
-  if not AILayout.nearest_pole(character, character.position) then return nil end
-  if inv.get_item_count("electric-mining-drill") == 0 and character.get_craftable_count(recipe) == 0 then
-    return nil
+  if not AILayout.nearest_pole(character, character.position) then
+    return false, "build_miner: electric drills need power — build_power or extend poles first"
   end
   local chest = chest_for(character, want)
   local built, first, err = 0, nil, nil
@@ -1557,8 +1561,7 @@ function build_electric_miner(character, resource, want, out_kind)
     first = first or res[1].position
   end
   if built == 0 then
-    -- No electric spot: the burner path may still work, unless parts were short.
-    return nil
+    return false, "build_miner: " .. (err or ("no spot on " .. resource .. " patch for electric drill"))
   end
   local detail = string.format("built %d electric drill%s on %s at {%d,%d}",
     built, out_kind == "chest" and "->chest" or "->furnace->inserter->chest pair(s)", resource, math.floor(first.x), math.floor(first.y))

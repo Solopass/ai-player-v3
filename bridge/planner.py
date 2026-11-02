@@ -170,6 +170,33 @@ def _is_connected(connected: list[dict], pt1: dict, pt2: dict) -> bool:
     return False
 
 
+def _expand_electric_mining(p: dict, inv: dict, factory: dict, min_targets: dict[str, int]) -> Iterator[tuple[dict, str, bool]]:
+    """Ensure sufficient electric mining drill throughput on key resource patches."""
+    power = p.get("power") or {}
+    if not (_tech(p, "electric-mining-drill") and power.get("has_grid")):
+        return
+    elec_miners = factory.get("electric_miners") or {}
+    for ore, target_count in min_targets.items():
+        current_drills = int(elec_miners.get(ore, 0))
+        if current_drills < target_count:
+            missing = min(2, target_count - current_drills)
+            lm = _landmark(p, ore)
+            if lm and lm.get("distance", 0) > FAR:
+                yield from _goto_far(p, lm, ore, FAR)
+            yield from _craft(inv, "electric-mining-drill", missing, f"{missing} electric drill(s) for {ore}")
+            out_type = "furnace" if ore in ("iron-ore", "copper-ore") else "chest"
+            if out_type == "furnace":
+                yield from _craft(inv, "stone-furnace", missing, f"{missing} furnace(s) for {ore}")
+                yield from _craft(inv, "inserter", missing, f"{missing} inserter(s) for {ore}")
+            else:
+                yield from _craft(inv, "wooden-chest", missing, f"{missing} chest(s) for {ore}")
+            yield from _craft(inv, "small-electric-pole", 4, "poles to wire electric drill to grid")
+            yield ({"skill": "build_miner", "resource": ore, "output": out_type, "count": missing,
+                    "drill": "electric"},
+                   f"expand electric mining: {current_drills}/{target_count} on {ore}", True)
+            break
+
+
 def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tuple[dict, str, bool]]:
     """Build-order rules past the bootstrap: power, automation, smelting, red cell, green cell."""
     power = p.get("power") or {}
@@ -384,7 +411,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                         yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
                     yield {"skill": "build_red_cell"}, "automate red science", True
                 yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
+        yield from _expand_electric_mining(p, inv, factory, {"iron-ore": 6, "copper-ore": 4, "coal": 3, "stone": 2})
     elif goal_id == "green":
+        yield from _expand_electric_mining(p, inv, factory, {"iron-ore": 8, "copper-ore": 5, "coal": 3, "stone": 2})
         if _tech(p, "logistic-science-pack"):
             bp_name = "tileable-science-green"
             if bp_name in unlocked_bps:
@@ -672,9 +701,11 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
                 yield defense_entry, f"enemies near {'power' if attacked_power else 'home'}: turrets toward them", True
 
     # 2. Burner bootstrap: drills on coal, iron, copper, stone.
+    # Phased out entirely once electric mining drill is researched and power grid is up.
     cur = goals.current(p)
     goal_id = cur[1].id if cur else ""
-    if goal_id == "bootstrap":
+    electric_mining_era = _tech(p, "electric-mining-drill") and (p.get("power") or {}).get("has_grid", False)
+    if goal_id == "bootstrap" and not electric_mining_era:
         miners = factory.get("miners_by_resource") or {}
         for resource, want, output in BOOTSTRAP:
             if miners.get(resource, 0) >= want:
@@ -696,8 +727,8 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
                 yield ({"skill": "gather", "item": "stone", "count": 20},
                        "drills and furnaces need stone", True)
         yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up", True
-    elif goal_id:
-        yield from _late_game(p, inv, factory, goal_id)
+    elif goal_id or electric_mining_era:
+        yield from _late_game(p, inv, factory, goal_id or "smelting")
 
     # 3. Techs unlocked by doing something (2.x early game). Guesses.
     for t in research.get("triggers") or []:
