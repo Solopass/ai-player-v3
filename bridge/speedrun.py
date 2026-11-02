@@ -123,7 +123,7 @@ def reflect_sprint(sprint_name: str, elapsed_seconds: float, is_pb: bool,
             data=json.dumps({
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 120,
+                "max_tokens": 1500,
                 "temperature": 0.3
             }).encode("utf-8"),
             headers={"Content-Type": "application/json"}

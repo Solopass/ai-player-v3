@@ -26,6 +26,8 @@ script-output don't grow without bound.
 import argparse
 import json
 import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 import time
 import urllib.request
 from collections import Counter
@@ -185,7 +187,7 @@ def _print(report: dict) -> None:
     rm = s.get("router_mode")
     if rm:
         print(f"local router mode: {rm.get('mode')} since {rm.get('since')} ({rm.get('reason', '')})"
-              + ("  ← AI is OFF, models won't load" if rm.get("mode") == "off" else ""))
+              + ("  <- AI is OFF, models won't load" if rm.get("mode") == "off" else ""))
     m = report["model"]
     print("model endpoint: " + ("up" if m.get("reachable") else f"DOWN ({m.get('error')})")
           + (f", {s['model']} {'known' if m.get('known') else 'NOT LISTED'} ({m.get('state')})"
