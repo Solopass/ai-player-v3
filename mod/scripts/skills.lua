@@ -980,7 +980,15 @@ end
 -- as passable AT an endpoint; mid-route they would merge the new line into someone else's network.
 -- Pipes also may not run orthogonally next to a foreign pipe/fluid entity (they would auto-connect).
 local function tile_traversable(surface, force, name, pt, dir, ends)
+  local tile = surface.get_tile(pt.x, pt.y)
+  if tile and tile.collides_with("water_tile") then return false end
   local endpoint = ends ~= nil and ends[tile_key(pt.x, pt.y)] == true
+  if not endpoint then
+    local ex = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}, name = name, limit = 1}[1]
+    if ex then return false end
+    local g = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}, type = 'entity-ghost', limit = 1}[1]
+    if g and g.ghost_name == name then return false end
+  end
   if surface.can_place_entity{name = name, position = pt, direction = dir,
                               force = force, build_check_type = defines.build_check_type.manual_ghost,
                               forced = true} then
@@ -992,8 +1000,6 @@ local function tile_traversable(surface, force, name, pt, dir, ends)
     end
     return true
   end
-  local tile = surface.get_tile(pt.x, pt.y)
-  if tile and tile.collides_with("water_tile") then return false end
   local ents = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}}
   if #ents == 0 then return false end
   for _, e in ipairs(ents) do

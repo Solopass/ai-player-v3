@@ -535,6 +535,134 @@ CASES.shoot_probe = {
   end,
 }
 
+-- ---------------------------------------------------------------------------
+-- Round 13 routing self-tests (Item 1)
+-- ---------------------------------------------------------------------------
+
+CASES.connect_pipe = {
+  delay = 60,
+  setup = function(c)
+    give(c.character, {pipe = 50})
+    -- Obstacle in the direct straight path: stone furnace at (10.5, 15.5)
+    c.obs = c.surface.create_entity{name = "stone-furnace", position = {10.5, 15.5}, force = c.force}
+    -- Existing foreign pipe at (12.5, 15.5)
+    c.foreign = c.surface.create_entity{name = "pipe", position = {12.5, 15.5}, force = c.force}
+    -- Confine corridor at x=12.5 with a fully enclosed box so a route cannot escape
+    for y = 9, 21 do
+      c.surface.create_entity{name = "stone-wall", position = {11.5, y + 0.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {13.5, y + 0.5}, force = c.force}
+    end
+    c.surface.create_entity{name = "stone-wall", position = {12.5, 9.5}, force = c.force}
+    c.surface.create_entity{name = "stone-wall", position = {12.5, 21.5}, force = c.force}
+  end,
+  run = function(c)
+    -- 1. Route around obstacle from (10.5, 5.5) to (10.5, 20.5) (clean detour)
+    local r1 = {skill = "connect_pipe", from = {x = 10.5, y = 5.5}, to = {x = 10.5, y = 20.5}}
+    -- 2. Route through walled corridor containing foreign pipe: must be refused (cannot merge)
+    local r2 = {skill = "connect_pipe", from = {x = 12.5, y = 10.5}, to = {x = 12.5, y = 20.5}}
+    return {r1, r2}
+  end,
+  check = function(c, add)
+    add("route around obstacle placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local pipes = c.surface.find_entities_filtered{type = {"pipe", "entity-ghost"}}
+    add("pipes placed", #pipes > 5, #pipes .. " pipes/ghosts")
+    local conns = {}
+    if c.foreign and c.foreign.valid then
+      local ok, cs = pcall(function() return c.foreign.get_fluid_box_pipe_connections(1) end)
+      if ok and cs then
+        for _, conn in ipairs(cs) do
+          if conn.target_entity then conns[#conns + 1] = conn end
+        end
+      end
+    end
+    add("foreign pipe not merged", #conns == 0, #conns .. " connections to foreign pipe")
+    add("route through foreign fluid corridor refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
+  end,
+}
+
+CASES.connect_belt = {
+  delay = 60,
+  setup = function(c)
+    give(c.character, {["transport-belt"] = 50})
+    -- Perpendicular foreign belt line across x = 15.5 from y = 0 to 30
+    for y = 0, 30 do
+      c.surface.create_entity{name = "transport-belt", position = {15.5, y + 0.5},
+                              direction = defines.direction.south, force = c.force}
+    end
+    -- Enclose the room completely so r2 cannot escape or detour around the belt line
+    for x = 9, 21 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 0.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 20.5}, force = c.force}
+    end
+    for y = 0, 20 do
+      c.surface.create_entity{name = "stone-wall", position = {9.5, y + 0.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {21.5, y + 0.5}, force = c.force}
+    end
+  end,
+  run = function(c)
+    -- Clean route without crossing: from (5.5, 5.5) to (12.5, 15.5)
+    local r1 = {skill = "connect_belt", from = {x = 2.5, y = 2.5}, to = {x = 7.5, y = 12.5}}
+    -- Route that would cross or join the existing belt at x = 15.5 without undergrounds: from (10.5, 5.5) to (20.5, 5.5)
+    local r2 = {skill = "connect_belt", from = {x = 10.5, y = 5.5}, to = {x = 20.5, y = 5.5}}
+    return {r1, r2}
+  end,
+  check = function(c, add)
+    add("clean route placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    add("crossing existing belt refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
+    local mid = c.surface.find_entities_filtered{position = {15.5, 5.5}, radius = 0.3}[1]
+    add("existing belt intact", mid and mid.direction == defines.direction.south, mid and mid.direction)
+  end,
+}
+
+CASES.pump_search = {
+  delay = 60,
+  setup = function(c)
+    give(c.character, {["offshore-pump"] = 5})
+    if c.facing == "north" then
+      lake(c.surface, "north", 30)
+    elseif c.facing == "east" then
+      lake(c.surface, "east", 60)
+    end
+  end,
+  run = function(c)
+    return {{skill = "build_offshore_pump"}}
+  end,
+  check = function(c, add)
+    if c.facing == "north" or c.facing == "east" then
+      add("offshore pump placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+      local pump = c.surface.find_entities_filtered{name = "offshore-pump"}[1]
+      add("pump exists in world", pump ~= nil, pump and string.format("{%.1f, %.1f}", pump.position.x, pump.position.y))
+    else
+      add("no lake within 64 gives clean failure", c.results[1] and not c.results[1].ok, c.results[1] and c.results[1].detail)
+      local pump = c.surface.find_entities_filtered{name = "offshore-pump"}[1]
+      add("no pump placed", pump == nil)
+    end
+  end,
+}
+
+CASES.astar_cap = {
+  delay = 60,
+  setup = function(c)
+    give(c.character, {["transport-belt"] = 10})
+    -- Goal at (20.5, 20.5) surrounded by a 5-tile thick water moat
+    paint_water(c.surface, 14, 14, 26, 26)
+    -- Restore island tile at (20, 20)
+    c.surface.set_tiles({{name = "lab-white", position = {20, 20}}}, true, true)
+  end,
+  run = function(c)
+    local p = helpers.create_profiler()
+    local ok, res = AISkills.REGISTRY.connect_belt(c.character, {from = {x = 0.5, y = 0.5}, to = {x = 20.5, y = 20.5}})
+    p.stop()
+    c.prof_str = tostring(p)
+    return {{skill = "connect_belt", from = {x = 0.5, y = 0.5}, to = {x = 20.5, y = 20.5}}}
+  end,
+  check = function(c, add)
+    local r = c.results[1]
+    add("impossible route fails fast", r and not r.ok, r and r.detail)
+    add("profiler time logged", c.prof_str ~= nil, c.prof_str)
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,
