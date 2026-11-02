@@ -36,6 +36,8 @@ end
 local function force_for_tests()
   local f = game.forces["ai-selftest"] or game.create_force("ai-selftest")
   f.research_all_technologies()      -- every recipe unlocked
+  -- The burner miner cases lock this one; a case that died mid-run must not leak that.
+  f.recipes["electric-mining-drill"].enabled = true
   return f
 end
 
@@ -98,6 +100,9 @@ local function miner_case(output, resource, delay)
       local d = STEP[c.facing]
       paint_ore(c.surface, resource, 12 * d[1], 12 * d[2], 5)
       AILayout.only_facing = c.facing        -- test every drill facing
+      -- These cases test the burner stage. Once electric drills are unlocked,
+      -- build_miner phases burner drills out, as in a real game after the research.
+      c.force.recipes["electric-mining-drill"].enabled = false
     end,
     run = function(c)
       return {{skill = "build_miner", resource = resource, output = output, count = output == "belt" and 3 or 2}}
@@ -126,6 +131,7 @@ local function miner_case(output, resource, delay)
       else
         add("every drill's collector received output", fed == #drills and #drills > 0, fed .. "/" .. #drills)
       end
+      c.force.recipes["electric-mining-drill"].enabled = true
     end,
   }
 end
