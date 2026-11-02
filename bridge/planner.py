@@ -208,6 +208,11 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
         power_pos = _find_placed(p, power_bp)
         coal_lm = _landmark(p, "coal")
         if power_pos and coal_lm:
+            coal_miners = int((factory.get("miners_by_resource") or {}).get("coal", 0))
+            if _tech(p, "electric-mining-drill") and power.get("has_grid") and coal_miners == 0:
+                yield from _craft(inv, "electric-mining-drill", 1, "drill to feed coal onto steam power fuel belt")
+                yield ({"skill": "build_miner", "resource": "coal", "output": "chest", "drill": "electric", "count": 1},
+                       "place electric miner on coal to power boilers", True)
             coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
             power_fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
             if not _is_connected(conns, coal_src, power_fuel_in):
@@ -596,17 +601,26 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
 
     # 0. The player's own intent first (ghosts, deconstruction marks).
     if _count(p.get("ghosts")) > 0:
-        yield {"skill": "build_ghosts"}, "the player placed ghosts", True
         ghost_list = (p.get("ghosts") if isinstance(p.get("ghosts"), dict) else {}).get("list") or []
+        any_buildable = any(g.get("have_item") for g in ghost_list) if ghost_list else True
         needed: dict[str, int] = {}
         for g in ghost_list:
             gname = g.get("ghost_name")
             if gname and not g.get("have_item"):
                 item = _ENTITY_ITEM.get(gname, gname)
                 needed[item] = needed.get(item, 0) + 1
-        for item, count in sorted(needed.items()):
-            if inv.get(item, 0) < count:
-                yield {"skill": "craft_for", "item": item, "count": count}, f"craft {count} {item} for blueprint ghosts", True
+        if any_buildable:
+            yield {"skill": "build_ghosts"}, "the player placed ghosts", True
+            for item, count in sorted(needed.items()):
+                if inv.get(item, 0) < count:
+                    yield {"skill": "craft_for", "item": item, "count": count}, f"craft {count} {item} for blueprint ghosts", True
+        else:
+            if inv.get("iron-plate", 0) < 30 or inv.get("copper-plate", 0) < 15:
+                yield {"skill": "tend"}, "collect plates to craft items for ghosts", True
+            for item, count in sorted(needed.items()):
+                if inv.get(item, 0) < count:
+                    yield {"skill": "craft_for", "item": item, "count": count}, f"craft {count} {item} for blueprint ghosts", True
+            yield {"skill": "build_ghosts"}, "build the ghosts once items are crafted", True
     if _count(p.get("deconstruction")) > 0:
         yield {"skill": "deconstruct"}, "the player marked things for removal", True
 

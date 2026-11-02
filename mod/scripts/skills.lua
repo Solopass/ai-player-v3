@@ -474,6 +474,7 @@ local function skill_build_ghosts(character, _)
   end
 
   local built = 0
+  local queued_crafts = 0
   local missing = {}
   for _, g in ipairs(ghosts) do
     if g.valid then
@@ -505,7 +506,8 @@ local function skill_build_ghosts(character, _)
         missing[item] = (missing[item] or 0) + 1
         local r = character.force.recipes[item]
         if r and r.enabled and character.get_craftable_count(r) > 0 then
-          character.begin_crafting{recipe = r, count = 1, silent = true}
+          local q = character.begin_crafting{recipe = r, count = 1, silent = true}
+          if q > 0 then queued_crafts = queued_crafts + q end
         end
       end
     end
@@ -516,6 +518,9 @@ local function skill_build_ghosts(character, _)
   local detail = string.format("built %d ghost(s)", built)
   if #parts > 0 then detail = detail .. "; need items: " .. table.concat(parts, ", ") end
   if built == 0 and #parts == 0 then return false, "build_ghosts: no buildable ghosts" end
+  if built == 0 and queued_crafts == 0 then
+    return false, "build_ghosts: " .. detail .. " — craft/smelt the missing items first"
+  end
   return true, detail
 end
 
@@ -896,6 +901,142 @@ local function step_dir(dx, dy)
   return defines.direction.north
 end
 
+local function snap_endpoint_outside_buildings(surface, pt, name)
+  local x, y = math.floor(pt.x) + 0.5, math.floor(pt.y) + 0.5
+  -- If current tile is already traversable/passable, keep it
+  local ents = surface.find_entities_filtered{area = {{x - 0.4, y - 0.4}, {x + 0.4, y + 0.4}}}
+  local blocked_by_building = false
+  for _, e in ipairs(ents) do
+    if e.type ~= "tree" and e.type ~= "simple-entity" and e.name ~= name
+       and not (e.type == "entity-ghost" and e.ghost_name == name) then
+      blocked_by_building = true; break
+    end
+  end
+  if not blocked_by_building then return {x = x, y = y} end
+
+  -- Spiral search up to radius 3 for nearest tile clear of buildings
+  local best_pt, best_dist = nil, math.huge
+  for r = 1, 3 do
+    for dx = -r, r do
+      for dy = -r, r do
+        if math.abs(dx) == r or math.abs(dy) == r then
+          local tx, ty = x + dx, y + dy
+          local tile = surface.get_tile(tx, ty)
+          if tile and not tile.collides_with("water_tile") then
+            local es = surface.find_entities_filtered{area = {{tx - 0.4, ty - 0.4}, {tx + 0.4, ty + 0.4}}}
+            local b = false
+            for _, e in ipairs(es) do
+              if e.type ~= "tree" and e.type ~= "simple-entity" and e.name ~= name
+                 and not (e.type == "entity-ghost" and e.ghost_name == name) then
+                b = true; break
+              end
+            end
+            if not b then
+              local d = dx * dx + dy * dy
+              if d < best_dist then best_dist = d; best_pt = {x = tx, y = ty} end
+            end
+          end
+        end
+      end
+    end
+    if best_pt then break end
+  end
+  return best_pt or {x = x, y = y}
+end
+
+-- A* Grid Pathfinder fallback when L-paths are obstructed
+local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
+  local sx, sy = math.floor(start_pt.x) + 0.5, math.floor(start_pt.y) + 0.5
+  local gx, gy = math.floor(goal_pt.x) + 0.5, math.floor(goal_pt.y) + 0.5
+  local start_key = math.floor(sx) .. "," .. math.floor(sy)
+  local goal_key = math.floor(gx) .. "," .. math.floor(gy)
+  if start_key == goal_key then
+    return {{x = sx, y = sy}}
+  end
+
+  local function heuristic(x, y)
+    return math.abs(x - gx) + math.abs(y - gy)
+  end
+
+  local open_set = {}
+  local g_score = {[start_key] = 0}
+  local came_from = {}
+  local came_dir = {}
+
+  table.insert(open_set, {x = sx, y = sy, key = start_key, f = heuristic(sx, sy)})
+
+  local DIRS = {
+    {dx = 1, dy = 0, dir = defines.direction.east},
+    {dx = -1, dy = 0, dir = defines.direction.west},
+    {dx = 0, dy = 1, dir = defines.direction.south},
+    {dx = 0, dy = -1, dir = defines.direction.north},
+  }
+
+  local iter = 0
+  local max_iter = 2500
+
+  while #open_set > 0 and iter < max_iter do
+    iter = iter + 1
+    -- Find lowest f
+    local best_idx = 1
+    local best_f = open_set[1].f
+    for i = 2, #open_set do
+      if open_set[i].f < best_f then
+        best_f = open_set[i].f
+        best_idx = i
+      end
+    end
+
+    local current = table.remove(open_set, best_idx)
+    if current.key == goal_key then
+      -- Reconstruct path
+      local path = {}
+      local cur_key = goal_key
+      while cur_key do
+        local node = came_from[cur_key]
+        if node then
+          table.insert(path, 1, {x = node.x, y = node.y})
+          cur_key = node.prev_key
+        else
+          break
+        end
+      end
+      table.insert(path, {x = gx, y = gy})
+      return path
+    end
+
+    local cur_g = g_score[current.key]
+    local cur_dir = came_dir[current.key]
+
+    for _, d in ipairs(DIRS) do
+      local nx, ny = current.x + d.dx, current.y + d.dy
+      local nkey = math.floor(nx) .. "," .. math.floor(ny)
+      -- Check traversable (goal tile is always considered if clear of hard obstacles)
+      local traversable = (nkey == goal_key) or tile_traversable(surface, force, name, {x = nx, y = ny}, d.dir)
+      if traversable then
+        local turn_penalty = (cur_dir and cur_dir ~= d.dir) and 0.25 or 0.0
+        local tent_g = cur_g + 1 + turn_penalty
+        if tent_g < (g_score[nkey] or math.huge) then
+          g_score[nkey] = tent_g
+          came_from[nkey] = {x = current.x, y = current.y, prev_key = current.key}
+          came_dir[nkey] = d.dir
+          local h = heuristic(nx, ny)
+          if (tent_g + h) <= (max_tiles or MAX_BELT) then
+            table.insert(open_set, {x = nx, y = ny, key = nkey, f = tent_g + h})
+          end
+        end
+      end
+    end
+  end
+
+  return nil
+end
+  if dx > 0 then return defines.direction.east end
+  if dx < 0 then return defines.direction.west end
+  if dy > 0 then return defines.direction.south end
+  return defines.direction.north
+end
+
 local function belt_path(a, b, horizontal_first)
   local ax, ay = math.floor(a.x) + 0.5, math.floor(a.y) + 0.5
   local bx, by = math.floor(b.x) + 0.5, math.floor(b.y) + 0.5
@@ -950,54 +1091,87 @@ local function skill_connect_belt(character, p)
     return false, "connect_belt: 'from' and 'to' must be {x=N, y=N}"
   end
   local surface, force = character.surface, character.force
+  -- Snap endpoints clear of existing buildings (like assemblers/furnaces) if needed
+  a = snap_endpoint_outside_buildings(surface, a, "transport-belt")
+  b = snap_endpoint_outside_buildings(surface, b, "transport-belt")
+
   local blocked_at
+  local chosen_tiles = nil
+
+  -- 1. Try fast L-paths first
   for _, hfirst in ipairs({true, false}) do
     local tiles = belt_path(a, b, hfirst)
-    if #tiles > MAX_BELT then return false, "connect_belt: path longer than " .. MAX_BELT .. " tiles" end
-    local ok = true
-    for _, t in ipairs(tiles) do
-      if not tile_traversable(surface, force, "transport-belt", t.position, t.direction) then
-        ok = false; blocked_at = t.position; break
-      end
-    end
-    if ok then
-      local placed, marked = 0, 0
+    if #tiles <= MAX_BELT then
+      local ok = true
       for _, t in ipairs(tiles) do
-        local x, y = t.position.x, t.position.y
-        for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
-                                                          type = {"tree", "simple-entity"}}) do
-          if e.order_deconstruction(force) then marked = marked + 1 end
-        end
-        local existing = surface.find_entities_filtered{position = t.position, radius = 0.4}
-        local already_has = false
-        for _, ex in ipairs(existing) do
-          if ex.name == "transport-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "transport-belt") then
-            already_has = true; break
-          end
-        end
-        if not already_has then
-          local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
-                                          position = t.position, direction = t.direction, force = force}
-          if g then placed = placed + 1 end
+        if not tile_traversable(surface, force, "transport-belt", t.position, t.direction) then
+          ok = false; blocked_at = t.position; break
         end
       end
-      if storage.ai_player then
-        storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
-        table.insert(storage.ai_player.connected_belts, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
-                                                        to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
-        AIDebug.event("connect_belt", {from = a, to = b, tiles = #tiles})
-      end
-      if placed == 0 then
-        return true, string.format("connect_belt: connected %d tile(s) along existing belts", #tiles)
-      end
-      local next_step = marked > 0
-        and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
-        or "build_ghosts next"
-      return true, string.format("connect_belt: placed %d/%d belt ghost(s) — %s (needs %d transport-belt)",
-                                 placed, #tiles, next_step, placed)
+      if ok then chosen_tiles = tiles; break end
     end
   end
-  return false, string.format("connect_belt: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
+
+  -- 2. Fall back to A* pathfinder if L-paths are blocked
+  if not chosen_tiles then
+    local astar_pts = astar_path(surface, force, "transport-belt", a, b, MAX_BELT)
+    if astar_pts and #astar_pts > 0 then
+      local tiles = {}
+      for i, pt in ipairs(astar_pts) do
+        local nxt = astar_pts[i + 1]
+        local d
+        if nxt then d = step_dir(nxt.x - pt.x, nxt.y - pt.y)
+        else d = tiles[#tiles] and tiles[#tiles].direction or step_dir(b.x - a.x, b.y - a.y) end
+        tiles[#tiles + 1] = {position = pt, direction = d}
+      end
+      chosen_tiles = tiles
+    end
+  end
+
+  if chosen_tiles then
+    local tiles = chosen_tiles
+    local placed, marked = 0, 0
+    for _, t in ipairs(tiles) do
+      local x, y = t.position.x, t.position.y
+      for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
+                                                        type = {"tree", "simple-entity"}}) do
+        if e.order_deconstruction(force) then marked = marked + 1 end
+      end
+      local existing = surface.find_entities_filtered{position = t.position, radius = 0.4}
+      local already_has = false
+      for _, ex in ipairs(existing) do
+        if ex.name == "transport-belt" or (ex.type == "entity-ghost" and ex.ghost_name == "transport-belt") then
+          already_has = true; break
+        end
+      end
+      if not already_has then
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
+                                        position = t.position, direction = t.direction, force = force}
+        if g then placed = placed + 1 end
+      end
+    end
+    if storage.ai_player then
+      storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
+      table.insert(storage.ai_player.connected_belts, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
+                                                      to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
+      AIDebug.event("connect_belt", {from = a, to = b, tiles = #tiles})
+    end
+    -- If character has belts, try immediately building what is in inventory
+    local inv = inv_of(character)
+    if inv.get_item_count("transport-belt") > 0 then
+      skill_build_ghosts(character, {})
+    end
+    if placed == 0 then
+      return true, string.format("connect_belt: connected %d tile(s) along existing belts", #tiles)
+    end
+    local next_step = marked > 0
+      and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
+      or "build_ghosts next"
+    return true, string.format("connect_belt: placed %d/%d belt ghost(s) — %s (needs %d transport-belt)",
+                               placed, #tiles, next_step, placed)
+  end
+
+  return false, string.format("connect_belt: both L-paths and A* are blocked (first block near {%.0f,%.0f}) — deconstruct obstacles",
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
@@ -1048,54 +1222,80 @@ local function skill_connect_pipe(character, p)
     end
     if best_land then a = best_land end
   end
+
+  -- Snap endpoints clear of existing buildings (e.g. boiler/refinery footprints)
+  a = snap_endpoint_outside_buildings(surface, a, "pipe")
+  b = snap_endpoint_outside_buildings(surface, b, "pipe")
+
   local blocked_at
+  local chosen_pts = nil
+
+  -- 1. Try fast L-paths first
   for _, hfirst in ipairs({true, false}) do
     local pts = pipe_path(a, b, hfirst)
-    if #pts > MAX_BELT then return false, "connect_pipe: path longer than " .. MAX_BELT .. " tiles" end
-    local ok = true
-    for _, pt in ipairs(pts) do
-      if not tile_traversable(surface, force, "pipe", pt, defines.direction.north) then
-        ok = false; blocked_at = pt; break
-      end
-    end
-    if ok then
-      local placed, marked = 0, 0
+    if #pts <= MAX_BELT then
+      local ok = true
       for _, pt in ipairs(pts) do
-        local x, y = pt.x, pt.y
-        for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
-                                                          type = {"tree", "simple-entity"}}) do
-          if e.order_deconstruction(force) then marked = marked + 1 end
-        end
-        local existing = surface.find_entities_filtered{position = pt, radius = 0.4}
-        local already_has = false
-        for _, ex in ipairs(existing) do
-          if ex.name == "pipe" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe") then
-            already_has = true; break
-          end
-        end
-        if not already_has then
-          local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
-                                          position = pt, force = force}
-          if g then placed = placed + 1 end
+        if not tile_traversable(surface, force, "pipe", pt, defines.direction.north) then
+          ok = false; blocked_at = pt; break
         end
       end
-      if storage.ai_player then
-        storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
-        table.insert(storage.ai_player.connected_pipes, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
-                                                         to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
-        AIDebug.event("connect_pipe", {from = a, to = b, tiles = #pts})
-      end
-      if placed == 0 then
-        return true, string.format("connect_pipe: connected %d tile(s) along existing pipes", #pts)
-      end
-      local next_step = marked > 0
-        and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
-        or "build_ghosts next"
-      return true, string.format("connect_pipe: placed %d/%d pipe ghost(s) — %s (needs %d pipe)",
-                                 placed, #pts, next_step, placed)
+      if ok then chosen_pts = pts; break end
     end
   end
-  return false, string.format("connect_pipe: both L-paths are blocked (first block at {%.0f,%.0f}) — pick other end points",
+
+  -- 2. Fall back to A* pathfinder if L-paths are blocked
+  if not chosen_pts then
+    local astar_pts = astar_path(surface, force, "pipe", a, b, MAX_BELT)
+    if astar_pts and #astar_pts > 0 then
+      chosen_pts = astar_pts
+    end
+  end
+
+  if chosen_pts then
+    local pts = chosen_pts
+    local placed, marked = 0, 0
+    for _, pt in ipairs(pts) do
+      local x, y = pt.x, pt.y
+      for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.5, y - 0.5}, {x + 0.5, y + 0.5}},
+                                                        type = {"tree", "simple-entity"}}) do
+        if e.order_deconstruction(force) then marked = marked + 1 end
+      end
+      local existing = surface.find_entities_filtered{position = pt, radius = 0.4}
+      local already_has = false
+      for _, ex in ipairs(existing) do
+        if ex.name == "pipe" or (ex.type == "entity-ghost" and ex.ghost_name == "pipe") then
+          already_has = true; break
+        end
+      end
+      if not already_has then
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
+                                        position = pt, force = force}
+        if g then placed = placed + 1 end
+      end
+    end
+    if storage.ai_player then
+      storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
+      table.insert(storage.ai_player.connected_pipes, {from = {x = math.floor(a.x) + 0.5, y = math.floor(a.y) + 0.5},
+                                                       to = {x = math.floor(b.x) + 0.5, y = math.floor(b.y) + 0.5}})
+      AIDebug.event("connect_pipe", {from = a, to = b, tiles = #pts})
+    end
+    -- If character has pipes, try immediately building what is in inventory
+    local inv = inv_of(character)
+    if inv.get_item_count("pipe") > 0 then
+      skill_build_ghosts(character, {})
+    end
+    if placed == 0 then
+      return true, string.format("connect_pipe: connected %d tile(s) along existing pipes", #pts)
+    end
+    local next_step = marked > 0
+      and string.format("deconstruct first (%d tree/rock(s) in the way), then build_ghosts", marked)
+      or "build_ghosts next"
+    return true, string.format("connect_pipe: placed %d/%d pipe ghost(s) — %s (needs %d pipe)",
+                               placed, #pts, next_step, placed)
+  end
+
+  return false, string.format("connect_pipe: both L-paths and A* are blocked (first block near {%.0f,%.0f}) — deconstruct obstacles",
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
@@ -1595,7 +1795,22 @@ AISkills.TEND_TYPES = {"mining-drill", "furnace", "container", "boiler", "insert
 local TEND_MAX = 400      -- machines one tend looks after
 -- Hauling into assembler chests: fill each to HAUL_FILL, at most HAUL_CAP items per
 -- tend, and never dig into the last HAUL_RESERVE of anything the AI crafts with.
+-- Plates, steel, and stone keep a higher reserve so hand-crafting boilers, engines,
+-- drills, and pipes never starves.
 local HAUL_FILL, HAUL_CAP, HAUL_RESERVE = 50, 200, 20
+local RAW_RESERVE = 40    -- iron-plate, copper-plate, steel-plate, stone kept back for crafting
+
+local function item_reserve(name, made_by_assembler)
+  if name == "iron-plate" or name == "copper-plate" or name == "steel-plate" or name == "stone" then
+    return RAW_RESERVE
+  end
+  -- Even if made by assembler units, keep a working reserve in character inventory
+  -- so craft_for (e.g. steam-engine needing gears) does not get completely drained.
+  if made_by_assembler then
+    return 15
+  end
+  return HAUL_RESERVE
+end
 
 local function ai_owned(e) return e.valid and e.last_user == nil end
 
@@ -1894,9 +2109,9 @@ local function skill_tend(character, _)
       for _, chest in ipairs(f.chests) do
         local ci = ing.type == "item" and chest.valid and chest.get_inventory(defines.inventory.chest)
         if ci then
-          -- things the units make are not kept back for hand-crafting
+          local reserve = item_reserve(ing.name, made[ing.name])
           local n = math.min(HAUL_FILL - ci.get_item_count(ing.name),
-                             inv.get_item_count(ing.name) - (made[ing.name] and 0 or HAUL_RESERVE), HAUL_CAP - hauled)
+                             inv.get_item_count(ing.name) - reserve, HAUL_CAP - hauled)
           if n > 0 then
             local ins = ci.insert{name = ing.name, count = n}
             if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
@@ -1912,13 +2127,16 @@ local function skill_tend(character, _)
       if r and ci then
         for _, ing in ipairs(r.ingredients or {}) do
           if ing.type == "item" and ci.get_item_count(ing.name) < 5 then
-            if inv.get_item_count(ing.name) > 0 then
-              local n = math.min(10 - ci.get_item_count(ing.name), inv.get_item_count(ing.name), HAUL_CAP - hauled)
+            local reserve = item_reserve(ing.name, made[ing.name])
+            local avail = inv.get_item_count(ing.name) - reserve
+            if avail > 0 then
+              local n = math.min(10 - ci.get_item_count(ing.name), avail, HAUL_CAP - hauled)
               if n > 0 then
                 local ins = ci.insert{name = ing.name, count = n}
                 if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
               end
             elseif character.force.recipes[ing.name] and character.force.recipes[ing.name].enabled
+                   and inv.get_item_count("iron-plate") > (RAW_RESERVE + 20)
                    and character.get_craftable_count(character.force.recipes[ing.name]) > 0 then
               character.begin_crafting{recipe = ing.name, count = 5, silent = true}
             end
