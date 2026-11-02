@@ -29,25 +29,25 @@ SEEDS = [424242, 2476103329, 1873625901, 3598211047]
 SPRINT_TARGETS = {
     "red": {
         "name": "Red Science Speedrun",
-        "check": "local p = game.forces['player'].get_item_production_statistics(game.surfaces[1]); rcon.print(p.get_flow_count{name='automation-science-pack', category='input', precision_index=defines.flow_precision_index.one_minute})",
+        "check": "/ai-sprint-check automation-science-pack",
         "threshold": 5,
         "max_minutes": 3.0
     },
     "green": {
         "name": "Green Science Speedrun",
-        "check": "local p = game.forces['player'].get_item_production_statistics(game.surfaces[1]); rcon.print(p.get_flow_count{name='logistic-science-pack', category='input', precision_index=defines.flow_precision_index.one_minute})",
+        "check": "/ai-sprint-check logistic-science-pack",
         "threshold": 5,
         "max_minutes": 5.0
     },
     "steel": {
         "name": "Steel Production Speedrun",
-        "check": "local p = game.forces['player'].get_item_production_statistics(game.surfaces[1]); rcon.print(p.get_flow_count{name='steel-plate', category='input', precision_index=defines.flow_precision_index.one_minute})",
+        "check": "/ai-sprint-check steel-plate",
         "threshold": 2,
         "max_minutes": 4.0
     },
     "oil": {
         "name": "Oil Extraction & Refining Speedrun",
-        "check": "local s = game.surfaces[1]; local pj = s.count_entities_filtered{name='pumpjack', force='player'}; local ref = s.count_entities_filtered{name='oil-refinery', force='player'}; rcon.print(string.format('%d,%d', pj, ref))",
+        "check": "/ai-sprint-oil",
         "threshold": 1,
         "max_minutes": 6.0
     }
@@ -156,7 +156,7 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
         time.sleep(4)
         client.send_command("/ai-soak-start")
         client.send_command("/spawn-ai-player")
-        client.send_command(f"/sc game.speed = {speed}")
+        client.send_command(f"/ai-soak-speed {speed}")
 
         start_time = time.time()
         while time.time() - start_time < max_real_sec:
@@ -166,7 +166,9 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
             time.sleep(1.5)
             # Check milestone condition
             try:
-                res_str = client.send_command(f"/sc {target['check']}").strip()
+                res_str = client.send_command(target["check"]).strip()
+                if int(time.time() - start_time) % 10 == 0:
+                    print(f"[{time.time() - start_time:.1f}s] check '{target['check']}' -> '{res_str}'", flush=True)
                 if sprint_key == "oil":
                     parts = [int(p) for p in res_str.split(",") if p.isdigit()]
                     if len(parts) == 2 and parts[0] >= 1 and parts[1] >= 1:
@@ -174,12 +176,21 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
                         elapsed = time.time() - start_time
                         break
                 else:
-                    val = float(res_str) if res_str.replace(".", "", 1).isdigit() else 0.0
-                    rates[sprint_key] = val
-                    if val >= target["threshold"]:
-                        reached = True
-                        elapsed = time.time() - start_time
-                        break
+                    parts = [int(p) for p in res_str.split(",") if p.isdigit()]
+                    if len(parts) >= 2:
+                        rate_val, total_val = parts[0], parts[1]
+                        rates[sprint_key] = rate_val
+                        if rate_val >= target["threshold"] or total_val >= max(target["threshold"] * 2, 5):
+                            reached = True
+                            elapsed = time.time() - start_time
+                            break
+                    elif res_str.replace(".", "", 1).isdigit():
+                        val = float(res_str)
+                        rates[sprint_key] = val
+                        if val >= target["threshold"]:
+                            reached = True
+                            elapsed = time.time() - start_time
+                            break
             except Exception:
                 pass
 
@@ -189,6 +200,8 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
         # Read top failure modes from bridge logs
         try:
             log_text = (tmp / "bridge.log").read_text(encoding="utf-8", errors="ignore")
+            if not reached:
+                print("Bridge log tail:\n" + "\n".join(log_text.splitlines()[-10:]), flush=True)
             for line in log_text.splitlines():
                 if "override:" in line or "failed" in line or "error" in line:
                     failures.append(line.strip()[:100])

@@ -665,7 +665,7 @@ end)
 -- ---------------------------------------------------------------------------
 -- Soak support (armed maps only, RCON/console only)
 -- ---------------------------------------------------------------------------
-local SOAK_MAX_SPEED = 4
+local SOAK_MAX_SPEED = 16
 
 -- The headless server has no player to generate chunks as the AI walks, so
 -- ask for them around it (non-blocking) every 30 s.
@@ -796,6 +796,24 @@ end)
 soak_command("ai-soak-speed", function(cmd)
   local n = tonumber(cmd.parameter) or 1
   game.speed = math.max(0.25, math.min(SOAK_MAX_SPEED, n))
+end)
+
+soak_command("ai-sprint-check", function(cmd)
+  local name = cmd.parameter or "automation-science-pack"
+  local s = game.surfaces["nauvis"]
+  if not s then return end
+  local p = game.forces["player"].get_item_production_statistics(s)
+  local c = p.get_flow_count{name = name, category = "input", precision_index = defines.flow_precision_index.one_minute, count = true}
+  local tot = p.get_input_count(name)
+  rcon.print(string.format("%d,%d", math.floor(c), math.floor(tot)))
+end)
+
+soak_command("ai-sprint-oil", function()
+  local s = game.surfaces["nauvis"]
+  if not s then return end
+  local pj = s.count_entities_filtered{name = "pumpjack", force = "player"}
+  local ref = s.count_entities_filtered{name = "oil-refinery", force = "player"}
+  rcon.print(string.format("%d,%d", pj, ref))
 end)
 
 commands.add_command("ai-selftest", "Run an in-game self-test case (self-test maps only)", function(cmd)

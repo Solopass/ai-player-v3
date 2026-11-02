@@ -1,6 +1,9 @@
 {
   "rules": [
+    "Keep boiler fueled to ensure 100% electric uptime during steel.",
+    "Keep boiler fueled to ensure 100% electric uptime during green.",
+    "Keep boiler fueled to ensure 100% electric uptime during red.",
     "Pre-smelt iron plates before batch-crafting red assemblers."
   ],
-  "updated_at": 1793558044.323459
+  "updated_at": 1793570800.6251862
 }
