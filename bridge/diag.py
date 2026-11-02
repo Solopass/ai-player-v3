@@ -246,6 +246,11 @@ def _print(report: dict) -> None:
         bs = d.get("bridge_status")
         if bs:
             print(f"panel status: goal {bs.get('goal')} | {bs.get('model')} {bs.get('seconds')}s")
+        doc = d.get("doctor") or {}
+        if doc.get("total_stuck"):
+            print(f"doctor attention: {doc.get('total_stuck')} stuck machine(s), {doc.get('recent_fixes', 0)} fixes in last 10m")
+            for m in doc.get("attention") or []:
+                print(f"  {m.get('name')} {m.get('status')} ({m.get('seconds_ago')}s ago)")
 
     h(f"Mod events (last {len(report['events'])})")
     for e in report["events"]:

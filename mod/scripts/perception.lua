@@ -765,6 +765,29 @@ function AIPerception.gather(character)
   perception.power = compute_power(surface, force, factory.by_status)
   perception.production = compute_production(force, surface)
 
+  local doc = storage.ai_player and storage.ai_player.doctor
+  local top_stuck = {}
+  local total_stuck = 0
+  if doc and doc.tracked then
+    for uid, info in pairs(doc.tracked) do
+      total_stuck = total_stuck + 1
+      if #top_stuck < 10 then
+        top_stuck[#top_stuck + 1] = {
+          unit_number = uid,
+          name = info.name,
+          type = info.type,
+          status = info.status,
+          seconds_ago = math.floor((game.tick - (info.since or game.tick)) / 60),
+        }
+      end
+    end
+  end
+  perception.doctor = {
+    total_stuck = total_stuck,
+    attention = top_stuck,
+    recent_fixes = doc and doc.history and #doc.history or 0,
+  }
+
   local done = {}
   for _, n in ipairs(KEY_TECHS) do
     local t = force.technologies[n]

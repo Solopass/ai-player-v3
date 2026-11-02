@@ -775,6 +775,146 @@ CASES.astar_cap = {
   end,
 }
 
+CASES.field_sizing = {
+  delay = 60,
+  setup = function(c) end,
+  run = function(c) return {} end,
+  check = function(c, add)
+    local s = AILayout.field_sizing(37.5)
+    add("37.5/min request gives 2 furnaces", s.furnaces == 2, s.furnaces)
+    add("37.5/min request gives 2 drills", s.drills == 2, s.drills)
+    add("37.5/min request gives 1 coal drill", s.coal_drills == 1, s.coal_drills)
+    local s1 = AILayout.field_sizing(18.75)
+    add("18.75/min gives 1 furnace", s1.furnaces == 1, s1.furnaces)
+    add("18.75/min gives 1 drill", s1.drills == 1, s1.drills)
+  end,
+}
+
+CASES.field_depletion = {
+  delay = 60,
+  setup = function(c)
+    paint_ore(c.surface, "iron-ore", 10, 10, 4)
+  end,
+  run = function(c) return {} end,
+  check = function(c, add)
+    local total = AILayout.field_resource_remaining(c.surface, {{5, 5}, {15, 15}}, "iron-ore")
+    add("field remaining resource calculated", total > 0, total)
+    local empty = AILayout.field_resource_remaining(c.surface, {{50, 50}, {60, 60}}, "iron-ore")
+    add("depleted/empty area returns 0", empty == 0, empty)
+    local initial = 10000
+    local remaining = 1500
+    local needs_replacement = (remaining / initial) < 0.20
+    add("below 20% triggers replacement", needs_replacement, string.format("%.1f%%", (remaining/initial)*100))
+  end,
+}
+
+CASES.mining_field = {
+  delay = 2400,
+  setup = function(c)
+    local facing = c.facing or "south"
+    local d = STEP[facing]
+    free_power(c.surface, c.force, -d[1] * 20 - 3, -d[2] * 20 - 3)
+    paint_ore(c.surface, "iron-ore", 12 * d[1], 12 * d[2], 12)
+    give(c.character, {["electric-mining-drill"] = 4, ["transport-belt"] = 60,
+                       ["stone-furnace"] = 4, inserter = 8, ["iron-chest"] = 4,
+                       ["small-electric-pole"] = 15, coal = 50})
+  end,
+  run = function(c)
+    return {{skill = "build_miner", resource = "iron-ore", output = "field", count = 2}}
+  end,
+  check = function(c, add)
+    local s = c.surface
+    add("build_miner field ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local drills = s.find_entities_filtered{name = "electric-mining-drill"}
+    add("drills placed", #drills >= 2, #drills)
+    local furnaces = s.find_entities_filtered{name = "stone-furnace"}
+    add("furnaces placed", #furnaces >= 2, #furnaces)
+    local belts = s.find_entities_filtered{name = "transport-belt"}
+    add("belts placed", #belts >= 10, #belts)
+    local inserters = s.find_entities_filtered{name = "inserter"}
+    add("inserters placed", #inserters >= 4, #inserters)
+    for _, d in ipairs(drills) do
+      add("drill is powered", d.status ~= defines.entity_status.no_power
+          and d.status ~= defines.entity_status.not_plugged_in_electric_network, d.status)
+    end
+  end,
+}
+
+CASES.doctor_output = {
+  delay = 60,
+  reflexes = true,
+  setup = function(c)
+    local chest = c.surface.create_entity{name = "iron-chest", position = {5, 5}, force = c.force}
+    chest.insert{name = "iron-plate", count = 4800}
+    AIRegistry.own(chest)
+    c.chest = chest
+    c.before = c.character.get_inventory(defines.inventory.character_main).get_item_count("iron-plate")
+  end,
+  run = function(c)
+    AIReflexes.doctor_pass(c.character, 600)
+    return {}
+  end,
+  check = function(c, add)
+    local inv = c.character.get_inventory(defines.inventory.character_main)
+    local after = inv.get_item_count("iron-plate")
+    add("doctor cleared output into character inventory", after > c.before, after - c.before)
+  end,
+}
+
+CASES.doctor_power = {
+  delay = 120,
+  reflexes = true,
+  setup = function(c)
+    free_power(c.surface, c.force, 0, 0)
+    give(c.character, {["small-electric-pole"] = 5})
+    local asm = c.surface.create_entity{name = "assembling-machine-1", position = {8.5, 0.5}, force = c.force}
+    AIRegistry.add(asm)
+    AIRegistry.own(asm)
+    c.asm = asm
+  end,
+  run = function(c) return {} end,
+  late = function(c)
+    AIReflexes.doctor_pass(c.character, game.tick)
+    return {}
+  end,
+  late_after = 30,
+  check = function(c, add)
+    local st = c.asm.status
+    add("assembler is powered after doctor pass", st ~= defines.entity_status.no_power
+        and st ~= defines.entity_status.not_plugged_in_electric_network, st)
+  end,
+}
+
+CASES.doctor_ingredients = {
+  delay = 120,
+  reflexes = true,
+  setup = function(c)
+    free_power(c.surface, c.force, 0, 0)
+    local asm = c.surface.create_entity{name = "assembling-machine-1", position = {3.5, 0.5}, force = c.force}
+    asm.set_recipe("iron-gear-wheel")
+    AIRegistry.add(asm)
+    AIRegistry.own(asm)
+    c.asm = asm
+    local chest = c.surface.create_entity{name = "wooden-chest", position = {5.5, 0.5}, force = c.force}
+    chest.insert{name = "iron-plate", count = 50}
+    AIRegistry.own(chest)
+    c.chest = chest
+  end,
+  run = function(c) return {} end,
+  late = function(c)
+    AIReflexes.doctor_pass(c.character, game.tick)
+    return {}
+  end,
+  late_after = 30,
+  check = function(c, add)
+    local in_count = c.asm.get_inventory(defines.inventory.crafter_input).get_item_count("iron-plate")
+    local out_count = c.asm.get_inventory(defines.inventory.crafter_output).get_item_count("iron-gear-wheel")
+    local prog = c.asm.crafting_progress
+    add("assembler received ingredients from doctor haul", in_count > 0 or out_count > 0 or prog > 0,
+        string.format("in=%d out=%d prog=%.2f", in_count, out_count, prog))
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,
@@ -789,6 +929,7 @@ local function finish(result)
   if st and st.prev then               -- a reflex case: give the AI slot back
     local ap, prev = storage.ai_player, st.prev
     ap.character, ap.surface_name, ap.combat_mode = prev.character, prev.surface_name, prev.combat_mode
+    ap.force_name = prev.force_name
     ap.reflex, ap.held_turn, ap.turn, ap.last_attack = nil, nil, nil, nil
     ap.respawn_tick, ap.fast_decide_tick, ap.tick_counter = nil, nil, 0
     ap.pending_requests = {}
@@ -831,6 +972,19 @@ function AISelftest.start(arg)
     AICharacter.set_home(surface, character.position)
     local c = {surface = surface, force = force, character = character, facing = facing, results = {}}
     storage.selftest = {case = name, run_id = run_id, c = c, surface = surface, case_name = case_name}
+    if case.reflexes then
+      -- The scene's character becomes THE AI for this case; the decision tick is parked so no
+      -- request goes out for the throwaway surface.
+      local ap = storage.ai_player
+      storage.selftest.prev = {character = ap.character, surface_name = ap.surface_name, combat_mode = ap.combat_mode, force_name = ap.force_name}
+      ap.character, ap.combat_mode = c.character, nil
+      ap.force_name = c.force.name
+      ap.reflex, ap.held_turn, ap.turn, ap.last_attack = nil, nil, nil, nil
+      ap.tick_counter, ap.fast_decide_tick = -1000000000, nil
+      AICharacter.remember_surface(surface)
+      AICharacter.set_home(surface, {x = 0.5, y = 0.5})
+      storage.selftest.reflexes = true
+    end
     case.setup(c)
     for _, entry in ipairs(case.run(c)) do
       -- Call the handler directly so a crash keeps its full traceback.
@@ -838,18 +992,6 @@ function AISelftest.start(arg)
         function(e) return debug.traceback(tostring(e), 2) end, character, entry)
       if not cok then rok, detail = false, rok end
       c.results[#c.results + 1] = {ok = rok ~= false, detail = detail}
-    end
-    if case.reflexes then
-      -- The scene's character becomes THE AI for this case; the decision tick is parked so no
-      -- request goes out for the throwaway surface.
-      local ap = storage.ai_player
-      storage.selftest.prev = {character = ap.character, surface_name = ap.surface_name, combat_mode = ap.combat_mode}
-      ap.character, ap.combat_mode = c.character, nil
-      ap.reflex, ap.held_turn, ap.turn, ap.last_attack = nil, nil, nil, nil
-      ap.tick_counter, ap.fast_decide_tick = -1000000000, nil
-      AICharacter.remember_surface(surface)
-      AICharacter.set_home(surface, {x = 0.5, y = 0.5})
-      storage.selftest.reflexes = true
     end
     if case.after then case.after(c) end
     storage.selftest.check_tick = game.tick + case.delay

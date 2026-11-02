@@ -113,6 +113,17 @@ remote.add_interface("ai_player", {
       placed = ap.placed_blueprints and { table.unpack(ap.placed_blueprints, math.max(1, #ap.placed_blueprints - 4)) } or {},
       bridge_status = ap.bridge_status, events = ap.events or {},
       reflex = AIReflexes.status(),
+      doctor = (function()
+        local doc = ap.doctor
+        if not doc then return {total_stuck = 0, attention = {}, recent_fixes = 0} end
+        local top = {}
+        for uid, info in pairs(doc.tracked or {}) do
+          if #top < 10 then
+            top[#top + 1] = {unit_number = uid, name = info.name, status = info.status, seconds_ago = math.floor((game.tick - (info.since or game.tick)) / 60)}
+          end
+        end
+        return {total_stuck = #top, attention = top, recent_fixes = #(doc.history or {})}
+      end)(),
     }
   end,
 
