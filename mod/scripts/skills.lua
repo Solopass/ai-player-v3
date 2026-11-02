@@ -491,8 +491,15 @@ local function skill_build_ghosts(character, _)
         -- collision box, so find_non_colliding_position returns the ghost's own
         -- tile; teleporting there makes the CHARACTER block the spot and revive()
         -- fails. revive() is a force-level op and needs no character reach.
+        -- Only the AI's own ghosts (placed by script, so no last_user) become AI-owned.
+        -- A player's ghost stays the player's even when the AI builds it, so tend
+        -- never empties or refuels the player's blueprint builds.
+        local ai_ghost = g.last_user == nil
+        local function claim(e)
+          if ai_ghost and e and e.valid then e.last_user = nil; AIRegistry.own(e) end
+        end
         local _, ent = g.revive{raise_revive = false}
-        if ent and ent.valid then AIRegistry.own(ent) end
+        claim(ent)
         if not (ent and ent.valid) then
           -- The character may be standing ON this ghost (e.g. its home tile).
           -- Step aside to a spot clear of the ghost footprint and retry once.
@@ -501,6 +508,7 @@ local function skill_build_ghosts(character, _)
           if aside then
             character.teleport(aside)
             _, ent = g.revive{raise_revive = false}
+            claim(ent)
           end
         end
         if ent and ent.valid then
@@ -949,10 +957,39 @@ local function snap_endpoint_outside_buildings(surface, pt, name)
   return best_pt or {x = x, y = y}
 end
 
-local function tile_traversable(surface, force, name, pt, dir)
+local FLUID_NEIGHBOUR = {pipe = true, ["pipe-to-ground"] = true, ["storage-tank"] = true, pump = true,
+                         ["offshore-pump"] = true, boiler = true, generator = true, ["oil-refinery"] = true,
+                         ["chemical-plant"] = true, pumpjack = true,
+                         reactor = true, ["fusion-reactor"] = true, ["fusion-generator"] = true}
+
+local function tile_key(x, y)
+  return (math.floor(x) + 50000) * 100000 + (math.floor(y) + 50000)
+end
+
+-- Does a pipe/fluid entity (or pipe ghost) sit on the tile at (x, y)?
+local function fluid_entity_at(surface, x, y)
+  for _, e in ipairs(surface.find_entities_filtered{area = {{x - 0.4, y - 0.4}, {x + 0.4, y + 0.4}}}) do
+    if FLUID_NEIGHBOUR[e.type] or FLUID_NEIGHBOUR[e.name] then return true end
+    if e.type == "entity-ghost" and (e.ghost_name == "pipe" or e.ghost_type == "pipe-to-ground"
+                                     or e.ghost_type == "storage-tank") then return true end
+  end
+  return false
+end
+
+-- `ends` = set of tile_key()s of the route's endpoints. Existing same-kind belts/pipes only count
+-- as passable AT an endpoint; mid-route they would merge the new line into someone else's network.
+-- Pipes also may not run orthogonally next to a foreign pipe/fluid entity (they would auto-connect).
+local function tile_traversable(surface, force, name, pt, dir, ends)
+  local endpoint = ends ~= nil and ends[tile_key(pt.x, pt.y)] == true
   if surface.can_place_entity{name = name, position = pt, direction = dir,
                               force = force, build_check_type = defines.build_check_type.manual_ghost,
                               forced = true} then
+    if name == "pipe" and not endpoint then
+      for _, d in ipairs({{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) do
+        local nx, ny = pt.x + d[1], pt.y + d[2]
+        if not (ends and ends[tile_key(nx, ny)]) and fluid_entity_at(surface, nx, ny) then return false end
+      end
+    end
     return true
   end
   local tile = surface.get_tile(pt.x, pt.y)
@@ -962,8 +999,8 @@ local function tile_traversable(surface, force, name, pt, dir)
   for _, e in ipairs(ents) do
     if e.type == "tree" or e.type == "simple-entity" then
       -- tree/rock can be deconstructed
-    elseif e.name == name or (e.type == "entity-ghost" and e.ghost_name == name) then
-      -- matching belt/pipe or ghost
+    elseif endpoint and (e.name == name or (e.type == "entity-ghost" and e.ghost_name == name)) then
+      -- matching belt/pipe or ghost, only at an endpoint
     else
       return false
     end
@@ -971,26 +1008,62 @@ local function tile_traversable(surface, force, name, pt, dir)
   return true
 end
 
--- A* Grid Pathfinder fallback when L-paths are obstructed
+-- A* Grid Pathfinder fallback when L-paths are obstructed. Binary-heap open set, closed set,
+-- search box around start/goal, and a node cap (each node costs tile checks).
+local ASTAR_MARGIN, ASTAR_MAX_NODES = 12, 400
 local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
   local sx, sy = math.floor(start_pt.x) + 0.5, math.floor(start_pt.y) + 0.5
   local gx, gy = math.floor(goal_pt.x) + 0.5, math.floor(goal_pt.y) + 0.5
-  local start_key = math.floor(sx) .. "," .. math.floor(sy)
-  local goal_key = math.floor(gx) .. "," .. math.floor(gy)
+  local start_key = tile_key(sx, sy)
+  local goal_key = tile_key(gx, gy)
   if start_key == goal_key then
     return {{x = sx, y = sy}}
   end
+  local ends = {[start_key] = true, [goal_key] = true}
+  local min_x, max_x = math.min(sx, gx) - ASTAR_MARGIN, math.max(sx, gx) + ASTAR_MARGIN
+  local min_y, max_y = math.min(sy, gy) - ASTAR_MARGIN, math.max(sy, gy) + ASTAR_MARGIN
 
   local function heuristic(x, y)
     return math.abs(x - gx) + math.abs(y - gy)
   end
 
-  local open_set = {}
+  -- min-heap on f
+  local heap, hn = {}, 0
+  local function push(node)
+    hn = hn + 1
+    heap[hn] = node
+    local i = hn
+    while i > 1 do
+      local par = math.floor(i / 2)
+      if heap[par].f <= heap[i].f then break end
+      heap[par], heap[i] = heap[i], heap[par]
+      i = par
+    end
+  end
+  local function pop()
+    local top = heap[1]
+    heap[1] = heap[hn]
+    heap[hn] = nil
+    hn = hn - 1
+    local i = 1
+    while true do
+      local l, r, m = i * 2, i * 2 + 1, i
+      if l <= hn and heap[l].f < heap[m].f then m = l end
+      if r <= hn and heap[r].f < heap[m].f then m = r end
+      if m == i then break end
+      heap[m], heap[i] = heap[i], heap[m]
+      i = m
+    end
+    return top
+  end
+
   local g_score = {[start_key] = 0}
   local came_from = {}
   local came_dir = {}
+  local closed = {}
+  local tile_ok = {}     -- per-call cache of tile checks
 
-  table.insert(open_set, {x = sx, y = sy, key = start_key, f = heuristic(sx, sy)})
+  push({x = sx, y = sy, key = start_key, f = heuristic(sx, sy)})
 
   local DIRS = {
     {dx = 1, dy = 0, dir = defines.direction.east},
@@ -999,57 +1072,57 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
     {dx = 0, dy = -1, dir = defines.direction.north},
   }
 
-  local iter = 0
-  local max_iter = 2500
-
-  while #open_set > 0 and iter < max_iter do
-    iter = iter + 1
-    -- Find lowest f
-    local best_idx = 1
-    local best_f = open_set[1].f
-    for i = 2, #open_set do
-      if open_set[i].f < best_f then
-        best_f = open_set[i].f
-        best_idx = i
-      end
-    end
-
-    local current = table.remove(open_set, best_idx)
-    if current.key == goal_key then
-      -- Reconstruct path
-      local path = {}
-      local cur_key = goal_key
-      while cur_key do
-        local node = came_from[cur_key]
-        if node then
-          table.insert(path, 1, {x = node.x, y = node.y})
-          cur_key = node.prev_key
-        else
-          break
+  local expanded = 0
+  while hn > 0 and expanded < ASTAR_MAX_NODES do
+    local current = pop()
+    if not closed[current.key] then
+      closed[current.key] = true
+      expanded = expanded + 1
+      if current.key == goal_key then
+        -- Reconstruct path
+        local path = {}
+        local cur_key = goal_key
+        while cur_key do
+          local node = came_from[cur_key]
+          if node then
+            table.insert(path, 1, {x = node.x, y = node.y})
+            cur_key = node.prev_key
+          else
+            break
+          end
         end
+        table.insert(path, {x = gx, y = gy})
+        return path
       end
-      table.insert(path, {x = gx, y = gy})
-      return path
-    end
 
-    local cur_g = g_score[current.key]
-    local cur_dir = came_dir[current.key]
+      local cur_g = g_score[current.key]
+      local cur_dir = came_dir[current.key]
 
-    for _, d in ipairs(DIRS) do
-      local nx, ny = current.x + d.dx, current.y + d.dy
-      local nkey = math.floor(nx) .. "," .. math.floor(ny)
-      -- Check traversable (goal tile is always considered if clear of hard obstacles)
-      local traversable = (nkey == goal_key) or tile_traversable(surface, force, name, {x = nx, y = ny}, d.dir)
-      if traversable then
-        local turn_penalty = (cur_dir and cur_dir ~= d.dir) and 0.25 or 0.0
-        local tent_g = cur_g + 1 + turn_penalty
-        if tent_g < (g_score[nkey] or math.huge) then
-          g_score[nkey] = tent_g
-          came_from[nkey] = {x = current.x, y = current.y, prev_key = current.key}
-          came_dir[nkey] = d.dir
-          local h = heuristic(nx, ny)
-          if (tent_g + h) <= (max_tiles or MAX_BELT) then
-            table.insert(open_set, {x = nx, y = ny, key = nkey, f = tent_g + h})
+      for _, d in ipairs(DIRS) do
+        local nx, ny = current.x + d.dx, current.y + d.dy
+        local nkey = tile_key(nx, ny)
+        if not closed[nkey] and nx >= min_x and nx <= max_x and ny >= min_y and ny <= max_y then
+          -- Goal tile is always considered; others must be traversable (cached per tile)
+          local traversable = (nkey == goal_key)
+          if not traversable then
+            traversable = tile_ok[nkey]
+            if traversable == nil then
+              traversable = tile_traversable(surface, force, name, {x = nx, y = ny}, d.dir, ends)
+              tile_ok[nkey] = traversable
+            end
+          end
+          if traversable then
+            local turn_penalty = (cur_dir and cur_dir ~= d.dir) and 0.25 or 0.0
+            local tent_g = cur_g + 1 + turn_penalty
+            if tent_g < (g_score[nkey] or math.huge) then
+              local h = heuristic(nx, ny)
+              if (tent_g + h) <= (max_tiles or MAX_BELT) then
+                g_score[nkey] = tent_g
+                came_from[nkey] = {x = current.x, y = current.y, prev_key = current.key}
+                came_dir[nkey] = d.dir
+                push({x = nx, y = ny, key = nkey, f = tent_g + h})
+              end
+            end
           end
         end
       end
@@ -1097,6 +1170,7 @@ local function skill_connect_belt(character, p)
 
   local blocked_at
   local chosen_tiles = nil
+  local ends = {[tile_key(a.x, a.y)] = true, [tile_key(b.x, b.y)] = true}
 
   -- 1. Try fast L-paths first
   for _, hfirst in ipairs({true, false}) do
@@ -1104,7 +1178,7 @@ local function skill_connect_belt(character, p)
     if #tiles <= MAX_BELT then
       local ok = true
       for _, t in ipairs(tiles) do
-        if not tile_traversable(surface, force, "transport-belt", t.position, t.direction) then
+        if not tile_traversable(surface, force, "transport-belt", t.position, t.direction, ends) then
           ok = false; blocked_at = t.position; break
         end
       end
@@ -1171,7 +1245,7 @@ local function skill_connect_belt(character, p)
                                placed, #tiles, next_step, placed)
   end
 
-  return false, string.format("connect_belt: both L-paths and A* are blocked (first block near {%.0f,%.0f}) — deconstruct obstacles",
+  return false, string.format("connect_belt: no route found (L-paths and A* blocked near {%.0f,%.0f}); routes may not run through existing belts — deconstruct obstacles or pick other endpoints",
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
@@ -1229,6 +1303,7 @@ local function skill_connect_pipe(character, p)
 
   local blocked_at
   local chosen_pts = nil
+  local ends = {[tile_key(a.x, a.y)] = true, [tile_key(b.x, b.y)] = true}
 
   -- 1. Try fast L-paths first
   for _, hfirst in ipairs({true, false}) do
@@ -1236,7 +1311,7 @@ local function skill_connect_pipe(character, p)
     if #pts <= MAX_BELT then
       local ok = true
       for _, pt in ipairs(pts) do
-        if not tile_traversable(surface, force, "pipe", pt, defines.direction.north) then
+        if not tile_traversable(surface, force, "pipe", pt, defines.direction.north, ends) then
           ok = false; blocked_at = pt; break
         end
       end
@@ -1295,7 +1370,7 @@ local function skill_connect_pipe(character, p)
                                placed, #pts, next_step, placed)
   end
 
-  return false, string.format("connect_pipe: both L-paths and A* are blocked (first block near {%.0f,%.0f}) — deconstruct obstacles",
+  return false, string.format("connect_pipe: no route found (L-paths and A* blocked near {%.0f,%.0f}); routes may not run through or beside existing pipes — deconstruct obstacles or pick other endpoints",
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
 end
 
@@ -1396,32 +1471,35 @@ local function skill_build_offshore_pump(character, p)
   local target_pos = p and p.position
   local center = target_pos or character.position
 
-  local tiles = surface.find_tiles_filtered{collision_mask = "water_tile", position = center, radius = 64}
-  table.sort(tiles, function(a, b)
-    local da = (a.position.x - center.x) ^ 2 + (a.position.y - center.y) ^ 2
-    local db = (b.position.x - center.x) ^ 2 + (b.position.y - center.y) ^ 2
-    return da < db
-  end)
-
+  -- Small radius first, widening only when nothing fits (a radius-64 scan is ~12.8k tiles).
   local found_pos, found_dir
   local tried = 0
-  for _, t in ipairs(tiles) do
-    for r = 0, 3 do
-      local wx, wy = pump_unit16(r * 4)
-      local px, py = t.position.x + 0.5 - wx, t.position.y + 0.5 - wy
-      local sp = surface.get_tile(px, py)
-      if sp and not sp.collides_with("water_tile") then
-        tried = tried + 1
-        if tried > 400 then break end
-        local dir_enum = AIActions.DIRECTION_MAP[PUMP_ORIENT[r]]
-        if surface.can_place_entity{name = "offshore-pump", position = {x = px, y = py}, direction = dir_enum, force = force} then
-          found_pos = {x = px, y = py}
-          found_dir = PUMP_ORIENT[r]
-          break
+  for _, radius in ipairs({20, 40, 64}) do
+    local tiles = surface.find_tiles_filtered{collision_mask = "water_tile", position = center, radius = radius}
+    table.sort(tiles, function(a, b)
+      local da = (a.position.x - center.x) ^ 2 + (a.position.y - center.y) ^ 2
+      local db = (b.position.x - center.x) ^ 2 + (b.position.y - center.y) ^ 2
+      return da < db
+    end)
+    for _, t in ipairs(tiles) do
+      for r = 0, 3 do
+        local wx, wy = pump_unit16(r * 4)
+        local px, py = t.position.x + 0.5 - wx, t.position.y + 0.5 - wy
+        local sp = surface.get_tile(px, py)
+        if sp and not sp.collides_with("water_tile") then
+          tried = tried + 1
+          if tried > 400 then break end
+          local dir_enum = AIActions.DIRECTION_MAP[PUMP_ORIENT[r]]
+          if surface.can_place_entity{name = "offshore-pump", position = {x = px, y = py}, direction = dir_enum, force = force} then
+            found_pos = {x = px, y = py}
+            found_dir = PUMP_ORIENT[r]
+            break
+          end
         end
       end
+      if found_pos or tried > 400 then break end
     end
-    if found_pos then break end
+    if found_pos or tried > 400 then break end
   end
 
   if not found_pos then
@@ -1810,7 +1888,7 @@ local function item_reserve(name, made_by_assembler)
   return HAUL_RESERVE
 end
 
-local function ai_owned(e) return e.valid and e.last_user == nil end
+local function ai_owned(e) return AIRegistry.is_owned(e) end
 
 local function take_all(from, inv, got)
   if not (from and from.valid) then return end
@@ -1829,10 +1907,12 @@ AISkills.take_all = take_all
 -- (other chests may be storage the AI deposited into on purpose). got: item -> count.
 function AISkills.collect_outputs(inv, own, got)
   for _, e in ipairs(own) do
-    if e.valid and e.type == "furnace" then
+    if e.valid and e.last_user ~= nil then
+      -- a human's machine (it may sit in the owned set after they took it over): hands off
+    elseif e.valid and e.type == "furnace" then
       take_all(e.get_inventory(defines.inventory.crafter_output), inv, got)
     elseif e.valid and (e.type == "mining-drill" or e.type == "inserter") and e.drop_target
-           and e.drop_target.type == "container" then
+           and e.drop_target.type == "container" and ai_owned(e.drop_target) then
       take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
     end
   end
@@ -1845,7 +1925,7 @@ function AISkills.refuel(inv, own)
   -- If inventory is low on coal, replenish from owned coal mining chests
   if inv.get_item_count("coal") < 20 then
     for _, e in ipairs(own) do
-      if e.valid and e.type == "container" then
+      if e.valid and e.type == "container" and e.last_user == nil then
         local cinv = e.get_inventory(defines.inventory.chest)
         if cinv and cinv.valid and cinv.get_item_count("coal") > 0 then
           local taken = cinv.remove{name = "coal", count = math.min(50, cinv.get_item_count("coal"))}
@@ -1859,7 +1939,7 @@ function AISkills.refuel(inv, own)
   end
 
   for _, e in ipairs(own) do
-    local fb = e.valid and e.get_fuel_inventory and e.get_fuel_inventory()
+    local fb = e.valid and e.last_user == nil and e.get_fuel_inventory and e.get_fuel_inventory()
     -- Boilers run the whole base: keep them at 50 coal, not 10.
     local boiler = e.valid and e.type == "boiler"
     if fb and fb.valid and fb.get_item_count("coal") < (boiler and 30 or 5) then
@@ -1871,24 +1951,9 @@ function AISkills.refuel(inv, own)
       end
     end
   end
-  -- Every boiler on the surface belonging to the AI force must stay fueled
-  local ch = storage.ai_player and storage.ai_player.character
-  if ch and ch.valid then
-    for _, b in ipairs(ch.surface.find_entities_filtered{type = "boiler", force = ch.force}) do
-      local fb = b.valid and b.get_fuel_inventory and b.get_fuel_inventory()
-      if fb and fb.valid and fb.get_item_count("coal") < 30 then
-        local want = 50 - fb.get_item_count("coal")
-        local n = math.min(want, inv.get_item_count("coal"))
-        if n > 0 then
-          local ins = fb.insert{name = "coal", count = n}
-          if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
-        end
-      end
-    end
-  end
   for _, d in ipairs(own) do
     local tgt = d.valid and d.type == "mining-drill" and d.drop_target
-    if tgt and tgt.type == "furnace" then
+    if tgt and tgt.type == "furnace" and ai_owned(tgt) then
       local fb = tgt.get_fuel_inventory()
       if fb and fb.get_item_count("coal") < 5 and inv.get_item_count("coal") > 0 then
         local ins = fb.insert{name = "coal", count = math.min(10, inv.get_item_count("coal"))}

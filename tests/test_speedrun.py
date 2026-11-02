@@ -61,3 +61,38 @@ def test_coach_prompt_text_includes_playbook():
     prompt = coach.prompt_text([])
     # If playbook is populated or empty, prompt_text must still run without error
     assert isinstance(prompt, str)
+
+
+def test_dedupe_rules_is_case_insensitive():
+    from bridge.speedrun import dedupe_rules
+    assert dedupe_rules(["Keep boiler fueled.", "keep  BOILER fueled", "Other"]) == ["Keep boiler fueled.", "Other"]
+
+
+def test_coach_playbook_only_with_flag(monkeypatch):
+    import bridge.coach as coach_mod
+    monkeypatch.setattr(coach_mod, "load_playbook", lambda: ["Pre-smelt plates", "pre-smelt plates"])
+    monkeypatch.delenv("AI_SPEEDRUN_LESSONS", raising=False)
+    monkeypatch.setenv("BRIDGE_ENV_FILE", str(Path(tempfile.gettempdir()) / "no-such-bridge.env"))
+    assert "LESSONS" not in Coach().prompt_text([])
+    monkeypatch.setenv("AI_SPEEDRUN_LESSONS", "true")
+    text = Coach().prompt_text([])
+    assert "LESSONS" in text
+    assert text.lower().count("pre-smelt plates") == 1
+
+
+def test_sprint_time_is_game_ticks():
+    from bridge.speedrun import parse_tick, ticks_to_seconds
+    assert ticks_to_seconds(parse_tick("120\n"), parse_tick("1920")) == 30.0
+    assert parse_tick("not a tick") is None
+    assert ticks_to_seconds(500, 100) == 0.0
+
+
+def test_copy_debug_sprint_skips_secrets(tmp_path):
+    from bridge.speedrun import copy_debug_sprint
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    src.mkdir()
+    (src / "bridge.env").write_text("FACTORIO_RCON_PASSWORD=s3cret\n")
+    (src / "server.log").write_text("rcon pw s3cret\n")
+    (src / "bridge.log").write_text("fine\n")
+    copy_debug_sprint(src, dst, "s3cret")
+    assert sorted(p.name for p in dst.iterdir()) == ["bridge.log"]

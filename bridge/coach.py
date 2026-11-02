@@ -28,6 +28,7 @@ import json
 from collections import deque
 
 from .planner import entry_key
+from .speedrun import dedupe_rules, load_playbook, speedrun_lessons_enabled
 
 FAIL_LIMIT = 2
 REPEAT_LIMIT = 3
@@ -183,15 +184,15 @@ class Coach:
             moves = json.dumps([e for e, _ in steps])
             why = "; ".join(r for _, r in steps)
             lines.append(f"SUGGESTED MOVES (send these unless the player asked for something else): {moves} — {why}")
-        try:
-            from bridge.speedrun import load_playbook
-            playbook = load_playbook()
-            if playbook:
-                lines.append("LESSONS FROM PREVIOUS RUNS (speedrun winning heuristics):")
-                for rule in playbook[:4]:
-                    lines.append(f"  • {rule}")
-        except Exception:
-            pass
+        if speedrun_lessons_enabled():
+            try:
+                playbook = dedupe_rules(load_playbook())
+                if playbook:
+                    lines.append("LESSONS FROM PREVIOUS RUNS (speedrun winning heuristics):")
+                    for rule in playbook[:4]:
+                        lines.append(f"  • {rule}")
+            except Exception:
+                pass
         return "\n".join(lines)
 
     # -- per answer -------------------------------------------------------

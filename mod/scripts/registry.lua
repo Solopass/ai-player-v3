@@ -105,7 +105,7 @@ end
 -- Owned set: entities the AI itself placed (storage.ai_player.owned, keyed by
 -- unit_number). tend works from this, never from a surface scan: in co-op the AI
 -- shares the player force, so a scan would walk the human's whole base.
--- "Owned" still also needs last_user == nil (see skills.lua ai_owned). NB: script
+-- "Owned" also needs last_user == nil (AIRegistry.is_owned; the AI clears it on revived ghosts). NB: script
 -- entities from other mods have last_user nil too, which is why membership here,
 -- not last_user alone, decides what tend touches.
 -- ---------------------------------------------------------------------------
@@ -118,6 +118,13 @@ function AIRegistry.own(entity)
   if not (entity and entity.valid and entity.unit_number) then return end
   owned_store()[entity.unit_number] = entity
   script.register_on_object_destroyed(entity)
+end
+
+-- True when `e` is in the owned set and still has no human last_user.
+function AIRegistry.is_owned(e)
+  if not (e and e.valid and e.unit_number and e.last_user == nil) then return false end
+  local m = storage.ai_player and storage.ai_player.owned
+  return m ~= nil and m[e.unit_number] ~= nil
 end
 
 function AIRegistry.disown(unit_number)
@@ -134,7 +141,7 @@ function AIRegistry.owned(surface, types)
   local m = owned_store()
   for un, e in pairs(m) do
     if not e.valid then m[un] = nil
-    elseif e.surface == surface and set[e.type] then out[#out + 1] = e end
+    elseif e.surface == surface and set[e.type] and e.last_user == nil then out[#out + 1] = e end
   end
   return out
 end

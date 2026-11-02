@@ -20,7 +20,8 @@ sys.path.insert(0, str(REPO / "tests" / "ingame"))
 
 import run_selftest as rs                                    # noqa: E402
 from factorio_rcon import RCONClient                          # noqa: E402
-from bridge.speedrun import Leaderboard, reflect_sprint       # noqa: E402
+from bridge.speedrun import (Leaderboard, copy_debug_sprint, parse_tick,  # noqa: E402
+                             reflect_sprint, ticks_to_seconds)
 
 PYTHON = str(REPO / ".venv" / "Scripts" / "python.exe")
 ROUTER = "http://127.0.0.1:11440/v1"
@@ -52,6 +53,10 @@ SPRINT_TARGETS = {
         "max_minutes": 6.0
     }
 }
+
+
+# Sprints whose item is made by assemblers (the check counts assembler output only).
+ASSEMBLER_SPRINTS = {"red", "green"}
 
 
 def make_map_settings(seed: int, enemies: bool = True) -> dict:
@@ -159,6 +164,17 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
         client.send_command(f"/ai-soak-speed {speed}")
 
         start_time = time.time()
+        # Sprint times are game ticks (read over RCON), not wall clock.
+        def game_tick():
+            return parse_tick(client.send_command("/sc rcon.print(game.tick)"))
+
+        def game_elapsed():
+            end = game_tick()
+            if start_tick is None or end is None:        # tick unreadable: wall-clock fallback
+                return time.time() - start_time
+            return ticks_to_seconds(start_tick, end)
+
+        start_tick = game_tick()
         while time.time() - start_time < max_real_sec:
             if server.poll() is not None or bridge.poll() is not None:
                 break
@@ -173,36 +189,40 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
                     parts = [int(p) for p in res_str.split(",") if p.isdigit()]
                     if len(parts) == 2 and parts[0] >= 1 and parts[1] >= 1:
                         reached = True
-                        elapsed = time.time() - start_time
+                        elapsed = game_elapsed()
                         break
                 else:
                     parts = [int(p) for p in res_str.split(",") if p.isdigit()]
-                    if len(parts) >= 3:
-                        rate_val, total_val, inv_val = parts[0], parts[1], parts[2]
-                        rates[sprint_key] = max(rate_val, total_val, inv_val)
-                        if rate_val >= target["threshold"] or total_val >= target["threshold"] or inv_val >= target["threshold"]:
+                    if len(parts) >= 3 and sprint_key in ASSEMBLER_SPRINTS:
+                        # Third field = items finished by assemblers; hand-crafted packs
+                        # (they also show in production stats / the inventory) don't count.
+                        rates[sprint_key] = parts[2]
+                        if parts[2] >= target["threshold"]:
                             reached = True
-                            elapsed = time.time() - start_time
+                            elapsed = game_elapsed()
                             break
                     elif len(parts) >= 2:
                         rate_val, total_val = parts[0], parts[1]
                         rates[sprint_key] = max(rate_val, total_val)
                         if rate_val >= target["threshold"] or total_val >= target["threshold"]:
                             reached = True
-                            elapsed = time.time() - start_time
+                            elapsed = game_elapsed()
                             break
                     elif res_str.replace(".", "", 1).isdigit():
                         val = float(res_str)
                         rates[sprint_key] = val
                         if val >= target["threshold"]:
                             reached = True
-                            elapsed = time.time() - start_time
+                            elapsed = game_elapsed()
                             break
             except Exception:
                 pass
 
         if not reached:
-            elapsed = time.time() - start_time
+            try:
+                elapsed = game_elapsed()
+            except Exception:
+                elapsed = time.time() - start_time
 
         # Read top failure modes from bridge logs
         try:
@@ -213,7 +233,7 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
             if not reached:
                 print("Bridge log tail:\n" + "\n".join(log_text.splitlines()[-20:]), flush=True)
                 print("Bridge failure lines:\n" + "\n".join(failures[:15]), flush=True)
-                shutil.copytree(tmp, REPO / "debug_sprint", dirs_exist_ok=True)
+                copy_debug_sprint(tmp, REPO / "debug_sprint", password)
         except Exception:
             pass
 

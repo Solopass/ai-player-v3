@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import time
 import urllib.request
 from pathlib import Path
@@ -16,6 +18,64 @@ LEADERBOARD_FILE = MEMORY_DIR / "leaderboard.json"
 PLAYBOOK_FILE = MEMORY_DIR / "speedrun_playbook.json"
 ROUTER_URL = "http://127.0.0.1:11440/v1"
 DEFAULT_MODEL = "sol-fast"
+
+
+TICKS_PER_SECOND = 60
+
+
+def parse_tick(text: str | None) -> int | None:
+    """A game.tick value printed over RCON (e.g. '/sc rcon.print(game.tick)'), or None."""
+    try:
+        return int(str(text).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def ticks_to_seconds(start_tick: int, end_tick: int) -> float:
+    """Sprint duration in game seconds. Game ticks, not wall clock, so a sprint run at
+    8x speed (or on a slow machine) is comparable with any other."""
+    return max(0, end_tick - start_tick) / TICKS_PER_SECOND
+
+
+def dedupe_rules(rules: list[str]) -> list[str]:
+    """Drop repeated playbook rules (case/whitespace-insensitive), keeping the first."""
+    seen: set[str] = set()
+    out = []
+    for r in rules:
+        key = " ".join(str(r).casefold().split()).rstrip(".")
+        if key and key not in seen:
+            seen.add(key)
+            out.append(str(r))
+    return out
+
+
+def speedrun_lessons_enabled() -> bool:
+    """AI_SPEEDRUN_LESSONS=true (process env or the bridge .env) puts the playbook in prompts."""
+    val = os.environ.get("AI_SPEEDRUN_LESSONS")
+    if val is None:
+        try:
+            from bridge.config import _env_file, _load_env_file
+            val = _load_env_file(_env_file()).get("AI_SPEEDRUN_LESSONS")
+        except Exception:
+            val = None
+    return str(val or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def copy_debug_sprint(src: Path, dst: Path, secret: str = "") -> None:
+    """Copy a sprint temp dir for debugging, leaving out bridge.env and any file that
+    contains the RCON password."""
+    needle = secret.encode("utf-8") if secret else b""
+    for f in src.rglob("*"):
+        rel = f.relative_to(src)
+        if f.is_dir() or f.name == "bridge.env":
+            continue
+        try:
+            if needle and needle in f.read_bytes():
+                continue
+        except OSError:
+            continue
+        (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, dst / rel)
 
 
 def _ensure_dir():
@@ -145,8 +205,9 @@ def reflect_sprint(sprint_name: str, elapsed_seconds: float, is_pb: bool,
         else:
             new_rule = f"Keep boiler fueled to ensure 100% electric uptime during {sprint_name}."
 
-    if new_rule and new_rule not in existing_rules:
+    if new_rule and new_rule.casefold() not in {r.casefold() for r in existing_rules}:
         existing_rules.insert(0, new_rule)
-        save_playbook(existing_rules[:12])
+    existing_rules = dedupe_rules(existing_rules)
+    save_playbook(existing_rules[:12])
 
     return existing_rules

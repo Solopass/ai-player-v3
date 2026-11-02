@@ -33,3 +33,7 @@ blueprints/local/
 
 # Soak test output (tests/ingame/run_soak.py)
 tests/ingame/soak-out/
+
+# Sprint runner output (scripts/fast_sprint_runner.py) and local PB leaderboard
+debug_sprint/
+memory/leaderboard.json

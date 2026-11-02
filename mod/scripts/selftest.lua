@@ -807,11 +807,15 @@ soak_command("ai-sprint-check", function(cmd)
   local p = f.get_item_production_statistics(s)
   local c = p.get_flow_count{name = name, category = "input", precision_index = defines.flow_precision_index.one_minute, count = true}
   local tot = p.get_input_count(name)
-  local inv_count = 0
-  if storage.ai_player and storage.ai_player.character and storage.ai_player.character.valid then
-    inv_count = storage.ai_player.character.get_item_count(name)
+  -- Third field: items finished by assembling machines (products_finished). Hand-crafted
+  -- packs show up in the production stats and the inventory but never here, so a sprint
+  -- only counts once automation really produced the item.
+  local made = 0
+  for _, a in ipairs(s.find_entities_filtered{type = "assembling-machine", force = f}) do
+    local r = a.get_recipe()
+    if r and r.name == name then made = made + a.products_finished end
   end
-  rcon.print(string.format("%d,%d,%d", math.floor(c), math.floor(tot), inv_count))
+  rcon.print(string.format("%d,%d,%d", math.floor(c), math.floor(tot), made))
 end)
 
 soak_command("ai-sprint-oil", function()
