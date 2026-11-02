@@ -1,0 +1,24 @@
+{
+  "name": "tileable-science-blue",
+  "string": "0eNqd1UFvgyAUB/Cv0nDWRhRs9brzTstOy7IgfWlfhmiALmsav/vQNl03uwV6VHm/hy9/5UgatYfeoHakPhIlGlCkJo/dZq+EWTzsoEUp1OJJImgJi2eNjiQEZactqV+OxOJWCzXWukMPvhQdtH6FFu14Jc9Aak9A2gv5TgYv6A18kpoOrwkB7dAhnMDp4vCm920Dxi+4UMJaaBuFepu2Qu5QQ0p9o76zvrjT4xY8WCyzhBx83ZL7LgYk9v/tY9Yvv/RDbcE4f2/Wg/7osUHf5fSU3QCLAJDHgOzOibA7J8IjJsJCXqCMmEgQuLqAzght+8641OfYzdlsySc2+82ub7DraJaGsFU0m4ewNIt2iyCXRrssyM2jXR7kFsFueQ5ZUBooi3aD4kB5tBuWhzLaDcvDKtoNy8M62g3Lw/f3ZluhVArKLzco075T8PevbAzFrfMhi+P41WzHs246HuurUzchH2DsVMDLvGJVxQuW04Lmw/AFYLaAqg==",
+  "hash": "c6aab7a1b0132db9",
+  "source": "repo",
+  "category": "science-blue",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Chemical Science Unit",
+  "entities": 20,
+  "cost": {
+    "transport-belt": 12,
+    "inserter": 4,
+    "assembling-machine-1": 2,
+    "small-electric-pole": 2
+  },
+  "size": {
+    "w": 7,
+    "h": 7
+  },
+  "recipes": [
+    "chemical-science-pack"
+  ]
+}

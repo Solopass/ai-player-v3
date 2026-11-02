@@ -1,0 +1,25 @@
+{
+  "name": "tileable-robotics",
+  "string": "0eNqVkk1rwzAMhv9K0NkpzVe35NrLLrvsOsZwHNEK/BFsZywU//fZKWQdKWM7GVl6n1eSfYFeTjha0h66C0jeo4QOns0wSW6zo9HO20l4Mjp7Mb3xJFz2NPXAgERMQvd6AUcnzWXS+3nEKCePKlZorlJko2401kOIIj3gJ3RFeGOA2pMnvDKWYH7Xk+rRxoKtmsFoHKVOklOElLs9g3k5Q2AbRLkiuHOoekn6lCsuzqQxL7a4ww2OgUVByyziZgV5aibNsTGrVjPSDq2PdxuD+ofBQNHimq3vAOtvoI3G4ozuzgoef19B84euHv7T1WEFOsWlzFHGaksiH43EexM3C3u/a0J68eVfdDdfjsEHWrcImkPZ1m3bVHVZVEUZwhdno9vh",
+  "hash": "29ba93094552c837",
+  "source": "repo",
+  "category": "other",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Construction Robotics Hub",
+  "entities": 6,
+  "cost": {
+    "inserter": 2,
+    "roboport": 1,
+    "assembling-machine-1": 1,
+    "iron-chest": 1,
+    "small-electric-pole": 1
+  },
+  "size": {
+    "w": 8,
+    "h": 3
+  },
+  "recipes": [
+    "construction-robot"
+  ]
+}

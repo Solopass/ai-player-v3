@@ -605,6 +605,9 @@ AISkills.RESEARCH_ORDER = {
   {"physical-projectile-damage-1", false}, {"weapon-shooting-speed-1", false},
   {"automation-2", true}, {"engine", true}, {"electric-energy-distribution-1", true},
   {"toolbelt", true}, {"advanced-material-processing", true},
+  {"oil-processing", true}, {"plastics", true}, {"advanced-circuit", true},
+  {"sulfur-processing", true}, {"chemical-science-pack", true},
+  {"robotics", true}, {"construction-robotics", true},
 }
 
 local function prereqs_met(tech)

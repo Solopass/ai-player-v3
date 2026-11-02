@@ -1,0 +1,25 @@
+{
+  "name": "tileable-red-circuits",
+  "string": "0eNqd1s1ugzAMAOBXqXIuFQmkLdymnXfcaZqmEKwtUggoSatVFe8+l1bdT5kW7wjEny3jKDmyxu5g8MZFVh+ZVQ1YVrOHvt1Z5Rd37V45De3i3ni9M3Hx6ExkS2Z07wKrn44smFen7Ck2HgbAUBOhwxVOdacndQEyfQbYiMGuhXdW8/F5ycBFEw2crenh8OJ2XQMeF3wqIUDXWONes07pN+Mg45hj6AMG9+6UHcFilS/ZAeNWErN40GYqSPfDAD7TqrGA6W/SiGsa4wL4iO9uaP6Nbg3i56/lDFgkgJIClsRGbOYbMfMvblLJhNorSu3rf9Ze0mvfEPpeptS+JTQjCayuYPTKhaH3McMNF2/ZfCUnNv/JbmdYnpNdnuRysiuSXEF2iyS3ILtlkluSXZnkymSX55c5SxuINR1Om4gNHU4biS0dTpuJig4nDYXI6XDSVIjPXRc6ZW0GFpd7o7OhxxPs17MJj79xjhM0Tv7BFTSu+srhgT9dD+ovt44l24MPU4Bci6qsKlmUghdcjOMH2F3THA==",
+  "hash": "95e1eb384f5b8806",
+  "source": "repo",
+  "category": "circuits",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Advanced Circuit Unit",
+  "entities": 23,
+  "cost": {
+    "transport-belt": 12,
+    "inserter": 5,
+    "assembling-machine-1": 3,
+    "small-electric-pole": 3
+  },
+  "size": {
+    "w": 11,
+    "h": 7
+  },
+  "recipes": [
+    "advanced-circuit",
+    "copper-cable"
+  ]
+}

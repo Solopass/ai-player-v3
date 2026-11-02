@@ -1,0 +1,26 @@
+{
+  "name": "tileable-engine",
+  "string": "0eNqd1sFuozAQBuBXiXxqJYiwsUng1kOPPfZUrVZOYqWWjEG20zaKePcORNs2G6TO5IQA+xvr95D4xDbuYPpgfWLNiTm9MY417KnbHZwOi0e/t94snr1NizuxeIjRtBtnQrxnGbPbzkfWvJxYtHuv3QikY29gvk2mhRFet+OdmZT8AAobYJ7fmQ/W8OFPBq+STdacmenm+Ncf2o0JMOAL0Oe61u/zVm9fR4wD33cRJnd+LAxguSwydoR5SwVVgtnaaS39eBmyK1588dZHExI8uyL5BbmzgJ7fyhmwRICKAsobA5CXAdjQ+XxvdMjfXw1s70wlRchCYpZeEbJAgStiFuv5Zrhsxasqa8SyK8oW1phgC4rIixuTkKQkOCdEgdpBLihZ4MjvTy4F7WPfhZTDL1i6houlmtzif3c950qyy1GuIrsC5VZkt0S5K7IrUe6a7CqUW6NdTmoIUdBhVEcITodRLSEEHUb1hCjpMKophKTDqK4Q319dbLVzuXEwPNht3nfOzP3R/YujGOa4isapX7gVjat/cnCCmo5azY9jXMbe4IA2TVCVqGVdq1IKXnIxDJ8PWj6c",
+  "hash": "9d25a79450bbe910",
+  "source": "repo",
+  "category": "other",
+  "placement": "clear",
+  "resource": null,
+  "label": "Modular Engine Unit (2 Assemblers)",
+  "entities": 27,
+  "cost": {
+    "transport-belt": 12,
+    "inserter": 8,
+    "assembling-machine-1": 4,
+    "small-electric-pole": 3
+  },
+  "size": {
+    "w": 12,
+    "h": 7
+  },
+  "recipes": [
+    "engine-unit",
+    "iron-gear-wheel",
+    "pipe"
+  ]
+}

@@ -228,7 +228,7 @@ local PRODUCTION_ITEMS = {
   "space-science-pack",
   -- milestones for the bridge's goal ladder (bridge/goals.py)
   "plastic-bar", "sulfur", "advanced-circuit", "processing-unit", "engine-unit",
-  "low-density-structure", "rocket-fuel", "rocket-part",
+  "flying-robot-frame", "construction-robot", "low-density-structure", "rocket-fuel", "rocket-part",
 }
 
 -- Checked first for perception.craftable (capped at 25 names).
@@ -250,7 +250,7 @@ local KEY_TECHS = {
   "military", "military-science-pack", "fast-inserter", "advanced-material-processing",
   "oil-processing", "plastics", "advanced-circuit", "sulfur-processing",
   "chemical-science-pack", "battery", "advanced-oil-processing", "production-science-pack",
-  "utility-science-pack", "rocket-fuel", "low-density-structure", "rocket-control-unit",
+  "utility-science-pack", "robotics", "construction-robotics", "rocket-fuel", "low-density-structure", "rocket-control-unit",
   "rocket-silo", "space-science-pack",
 }
 

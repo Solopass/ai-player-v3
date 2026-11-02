@@ -108,6 +108,12 @@ LADDER: list[Milestone] = [
         "Chemical plants making plastic bars and sulfur from petroleum gas.",
         ["oil-processing"], ["plastics", "sulfur-processing"]),
     Milestone(
+        "engines", "Engine units",
+        lambda p: _per_min(p, "engine-unit") >= 1 or _by_type(p, "assembling-machine-1") >= 8,
+        lambda p: f"engines {_per_min(p, 'engine-unit')}/min",
+        "Assemblers making pipes, gears and engine units from steel and iron.",
+        ["other"], ["engine"]),
+    Milestone(
         "red-circuits", "Advanced circuits",
         lambda p: _per_min(p, "advanced-circuit") >= 2,
         lambda p: f"{_per_min(p, 'advanced-circuit')}/min",
@@ -119,6 +125,12 @@ LADDER: list[Milestone] = [
         lambda p: f"{_per_min(p, 'chemical-science-pack')}/min (want 2)",
         "Engines, advanced circuits and sulfur into chemical-science-pack assemblers.",
         ["science-blue"], ["chemical-science-pack"]),
+    Milestone(
+        "robotics", "Construction robotics",
+        lambda p: _tech(p, "construction-robotics") and (_by_type(p, "roboport") >= 1 or _by_type(p, "construction-robot") >= 1),
+        lambda p: f"roboports: {_by_type(p, 'roboport')}, construction robotics researched: {_tech(p, 'construction-robotics')}",
+        "Research construction robotics, craft flying robot frames and construction robots.",
+        ["robotics", "other"], ["robotics", "construction-robotics"]),
     Milestone(
         "purple-yellow", "Production and utility science",
         lambda p: _per_min(p, "production-science-pack") >= 1 and _per_min(p, "utility-science-pack") >= 1,

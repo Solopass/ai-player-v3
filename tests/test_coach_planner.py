@@ -990,3 +990,101 @@ def test_planner_connects_water_pipe_to_unwatered_boiler():
     p['factory']['by_type']['offshore-pump'] = 1
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
     assert {'skill': 'connect_pipe', 'from': {'x': 2, 'y': 10}, 'to': {'x': 9.0, 'y': 10}} in moves
+
+
+def test_planner_selects_and_connects_modular_engine_plant():
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"].update({
+        "logistic-science-pack": {"per_min": 5},
+        "steel-plate": {"per_min": 2},
+        "plastic-bar": {"per_min": 10},
+        "sulfur": {"per_min": 5},
+    })
+    p["factory"].setdefault("by_type", {})
+    p["factory"]["by_type"].update({"pumpjack": 1, "oil-refinery": 1, "boiler": 1})
+    p["research"]["done"].extend(["steel-processing", "oil-processing", "plastics", "sulfur-processing", "engine"])
+    p["blueprint_library"] = ["tileable-engine"]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "place_blueprint", "name": "tileable-engine"} in moves
+
+    p["placed_blueprints"] = [
+        {"name": "tileable-steel", "position": {"x": 10, "y": 20}},
+        {"name": "tileable-engine", "position": {"x": 25, "y": 20}},
+    ]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "connect_belt", "from": {"x": 15.0, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
+
+
+def test_planner_selects_and_connects_modular_red_circuits():
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"].update({
+        "logistic-science-pack": {"per_min": 5},
+        "steel-plate": {"per_min": 2},
+        "plastic-bar": {"per_min": 10},
+        "sulfur": {"per_min": 5},
+        "engine-unit": {"per_min": 5},
+    })
+    p["factory"].setdefault("by_type", {})
+    p["factory"]["by_type"].update({"pumpjack": 1, "oil-refinery": 1, "boiler": 1})
+    p["research"]["done"].extend(["steel-processing", "oil-processing", "plastics", "sulfur-processing", "engine", "advanced-circuit"])
+    p["blueprint_library"] = ["tileable-red-circuits"]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "place_blueprint", "name": "tileable-red-circuits"} in moves
+
+    p["placed_blueprints"] = [
+        {"name": "tileable-plastic", "position": {"x": 10, "y": 20}},
+        {"name": "tileable-red-circuits", "position": {"x": 25, "y": 20}},
+    ]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "connect_belt", "from": {"x": 17.5, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
+
+
+def test_planner_selects_and_connects_modular_blue_science():
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"].update({
+        "logistic-science-pack": {"per_min": 5},
+        "steel-plate": {"per_min": 2},
+        "plastic-bar": {"per_min": 10},
+        "sulfur": {"per_min": 5},
+        "engine-unit": {"per_min": 5},
+        "advanced-circuit": {"per_min": 5},
+    })
+    p["factory"].setdefault("by_type", {})
+    p["factory"]["by_type"].update({"pumpjack": 1, "oil-refinery": 1, "boiler": 1})
+    p["research"]["done"].extend(["steel-processing", "oil-processing", "plastics", "sulfur-processing", "engine", "advanced-circuit", "chemical-science-pack"])
+    p["blueprint_library"] = ["tileable-science-blue"]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "place_blueprint", "name": "tileable-science-blue"} in moves
+
+    p["placed_blueprints"] = [
+        {"name": "tileable-engine", "position": {"x": 10, "y": 20}},
+        {"name": "tileable-labs", "position": {"x": 40, "y": 20}},
+        {"name": "tileable-science-blue", "position": {"x": 25, "y": 20}},
+    ]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "connect_belt", "from": {"x": 20.5, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
+    assert {"skill": "connect_belt", "from": {"x": 31.0, "y": 25.5}, "to": {"x": 40.5, "y": 20.5}} in moves
+
+
+def test_planner_selects_and_crafts_construction_robotics():
+    p = green_ready()
+    p["power"] = {"has_grid": True}
+    p["production"]["items"].update({
+        "logistic-science-pack": {"per_min": 5},
+        "steel-plate": {"per_min": 2},
+        "plastic-bar": {"per_min": 10},
+        "sulfur": {"per_min": 5},
+        "engine-unit": {"per_min": 5},
+        "advanced-circuit": {"per_min": 5},
+        "chemical-science-pack": {"per_min": 5},
+    })
+    p["factory"].setdefault("by_type", {})
+    p["factory"]["by_type"].update({"pumpjack": 1, "oil-refinery": 1, "boiler": 1})
+    p["research"]["done"].extend(["steel-processing", "oil-processing", "plastics", "sulfur-processing", "engine", "advanced-circuit", "chemical-science-pack", "robotics", "construction-robotics"])
+    p["blueprint_library"] = ["tileable-robotics"]
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {"skill": "place_blueprint", "name": "tileable-robotics"} in moves
+    assert {"skill": "craft_for", "item": "flying-robot-frame", "count": 5} in moves

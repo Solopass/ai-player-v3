@@ -48,6 +48,9 @@ RESEARCH_ORDER = [
     ("physical-projectile-damage-1", False), ("weapon-shooting-speed-1", False),
     ("automation-2", True), ("engine", True), ("electric-energy-distribution-1", True),
     ("toolbelt", True), ("advanced-material-processing", True),
+    ("oil-processing", True), ("plastics", True), ("advanced-circuit", True),
+    ("sulfur-processing", True), ("chemical-science-pack", True),
+    ("robotics", True), ("construction-robotics", True),
 ]
 
 
@@ -71,6 +74,8 @@ def entry_key(d: dict) -> str:
             continue
         if d.get(k) is not None:
             parts.append(f"{k}={d[k]}")
+    if "from" in d and "to" in d and isinstance(d["from"], dict) and isinstance(d["to"], dict):
+        parts.append(f"from={d['from'].get('x')},{d['from'].get('y')};to={d['to'].get('x')},{d['to'].get('y')}")
     return "|".join(parts)
 
 
@@ -507,6 +512,71 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                            "pipe water to sulfur plant", True)
 
             yield {"skill": "tend"}, "maintain chemical plants and petrochemical feeds", True
+    elif goal_id == "engines":
+        if _tech(p, "engine"):
+            eng_bp = "tileable-engine"
+            if eng_bp in unlocked_bps and eng_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": eng_bp}, "stamp modular engine unit plant", True
+
+            # Connect steel belt from steel smelter to engine plant
+            conns = p.get("connected_belts") or []
+            steel_pos = _find_placed(p, "tileable-steel")
+            eng_pos = _find_placed(p, eng_bp)
+            if steel_pos and eng_pos:
+                steel_out = {"x": steel_pos["x"] + 5.0, "y": steel_pos["y"] + 0.5}
+                eng_in = {"x": eng_pos["x"] + 0.5, "y": eng_pos["y"] + 0.5}
+                if not _is_connected(conns, steel_out, eng_in):
+                    yield ({"skill": "connect_belt", "from": steel_out, "to": eng_in},
+                           "feed steel plates to engine plant", True)
+            yield {"skill": "tend"}, "maintain engine assemblers and feed steel", True
+    elif goal_id == "red-circuits":
+        if _tech(p, "advanced-circuit"):
+            red_bp = "tileable-red-circuits"
+            if red_bp in unlocked_bps and red_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": red_bp}, "stamp modular advanced circuit plant", True
+
+            conns = p.get("connected_belts") or []
+            plas_pos = _find_placed(p, "tileable-plastic")
+            red_pos = _find_placed(p, red_bp)
+            if plas_pos and red_pos:
+                plas_out = {"x": plas_pos["x"] + 7.5, "y": plas_pos["y"] + 0.5}
+                red_in = {"x": red_pos["x"] + 0.5, "y": red_pos["y"] + 0.5}
+                if not _is_connected(conns, plas_out, red_in):
+                    yield ({"skill": "connect_belt", "from": plas_out, "to": red_in},
+                           "feed plastic into advanced circuit plant", True)
+            yield {"skill": "tend"}, "maintain advanced circuit assemblers", True
+    elif goal_id == "blue":
+        if _tech(p, "chemical-science-pack"):
+            blue_bp = "tileable-science-blue"
+            if blue_bp in unlocked_bps and blue_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": blue_bp}, "stamp modular chemical science plant", True
+
+            conns = p.get("connected_belts") or []
+            eng_pos = _find_placed(p, "tileable-engine")
+            blue_pos = _find_placed(p, blue_bp)
+            if eng_pos and blue_pos:
+                eng_out = {"x": eng_pos["x"] + 10.5, "y": eng_pos["y"] + 0.5}
+                blue_in = {"x": blue_pos["x"] + 0.5, "y": blue_pos["y"] + 0.5}
+                if not _is_connected(conns, eng_out, blue_in):
+                    yield ({"skill": "connect_belt", "from": eng_out, "to": blue_in},
+                           "feed engine units to chemical science plant", True)
+
+            lab_pos = _find_placed(p, "tileable-labs")
+            if lab_pos and blue_pos:
+                blue_out = {"x": blue_pos["x"] + 6.0, "y": blue_pos["y"] + 5.5}
+                lab_in = {"x": lab_pos["x"] + 0.5, "y": lab_pos["y"] + 0.5}
+                if not _is_connected(conns, blue_out, lab_in):
+                    yield ({"skill": "connect_belt", "from": blue_out, "to": lab_in},
+                           "sideload chemical science into lab line", True)
+            yield {"skill": "tend"}, "feed chemical science packs into labs", True
+    elif goal_id == "robotics":
+        if _tech(p, "construction-robotics"):
+            rob_bp = "tileable-robotics"
+            if rob_bp in unlocked_bps and rob_bp not in placed_names:
+                yield {"skill": "place_blueprint", "name": rob_bp}, "stamp modular construction robotics hub", True
+            yield from _craft(inv, "flying-robot-frame", 5, "craft flying robot frames for construction bots")
+            yield from _craft(inv, "construction-robot", 10, "craft construction robots")
+            yield {"skill": "tend"}, "maintain construction robotics hub and deploy bots", True
 
 
 def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:
