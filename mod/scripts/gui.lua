@@ -28,6 +28,20 @@ end
 -- Helpers
 -- -------------------------------------------------------------------------
 
+local function pin_sprite(pinned)
+  local candidate = pinned and "utility/track_button_white" or "utility/track_button"
+  if helpers and helpers.is_valid_sprite_path and helpers.is_valid_sprite_path(candidate) then
+    return candidate
+  end
+  if helpers and helpers.is_valid_sprite_path and helpers.is_valid_sprite_path("utility/track_button") then
+    return "utility/track_button"
+  end
+  if helpers and helpers.is_valid_sprite_path and helpers.is_valid_sprite_path("utility/bookmark") then
+    return "utility/bookmark"
+  end
+  return nil
+end
+
 local function refs(player)
   storage.ai_player.gui = storage.ai_player.gui or {}
   storage.ai_player.gui[player.index] = storage.ai_player.gui[player.index] or {}
@@ -108,14 +122,34 @@ local function build(player)
   else
     if player.opened == frame then player.opened = nil end
   end
-  bar.add{
-    type = "sprite-button",
-    name = "aip_pin",
-    sprite = pinned and "utility/favorite_server_icon" or "utility/unfavorite_server_icon",
-    style = "frame_action_button",
-    tooltip = pinned and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
-  }
-  bar.add{type = "sprite-button", name = "aip_close", sprite = "utility/close", style = "frame_action_button"}
+  local ps = pin_sprite(pinned)
+  if ps then
+    bar.add{
+      type = "sprite-button",
+      name = "aip_pin",
+      sprite = ps,
+      style = "frame_action_button",
+      tooltip = pinned and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
+    }
+  else
+    bar.add{
+      type = "button",
+      name = "aip_pin",
+      caption = pinned and "[Pin]" or "Pin",
+      style = "frame_action_button",
+      tooltip = pinned and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
+    }
+  end
+
+  local close_sprite = "utility/close"
+  if helpers and helpers.is_valid_sprite_path and not helpers.is_valid_sprite_path(close_sprite) then
+    close_sprite = nil
+  end
+  if close_sprite then
+    bar.add{type = "sprite-button", name = "aip_close", sprite = close_sprite, style = "frame_action_button"}
+  else
+    bar.add{type = "button", name = "aip_close", caption = "X", style = "frame_action_button"}
+  end
 
   local body = frame.add{type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding"}
   body.style.width = WIDTH
@@ -397,8 +431,15 @@ local HANDLERS = {
       end
       local bar = f.children[1]
       local btn = bar and bar.aip_pin
-      if btn then
-        btn.sprite = p and "utility/favorite_server_icon" or "utility/unfavorite_server_icon"
+      if btn and btn.valid then
+        local ps = pin_sprite(p)
+        pcall(function()
+          if ps and btn.type == "sprite-button" then
+            btn.sprite = ps
+          elseif btn.type == "button" then
+            btn.caption = p and "[Pin]" or "Pin"
+          end
+        end)
         btn.tooltip = p and "Pinned: window stays in place and won't auto-close. Click to unpin." or "Pin: click to keep window open and locked where you drag it."
       end
     end
