@@ -819,19 +819,26 @@ function AIPerception.gather(character)
   -- outpost the human blueprinted 200+ tiles away). build_ghosts teleports there.
   local ghost_entities = surface.find_entities_filtered{type = "entity-ghost"}
   local ghost_list = {}
+  local missing_items = {}
   for _, g in ipairs(ghost_entities) do
-    if g.valid and #ghost_list < 25 then
+    if g.valid then
       local proto = prototypes.entity[g.ghost_name]
       local item = proto and proto.items_to_place_this and proto.items_to_place_this[1]
         and proto.items_to_place_this[1].name
-      table.insert(ghost_list, {
-        ghost_name = g.ghost_name,
-        position   = {x = math.floor(g.position.x), y = math.floor(g.position.y)},
-        have_item  = (item and char_inv and char_inv.get_item_count(item) > 0) or false,
-      })
+      local have = (item and char_inv and char_inv.get_item_count(item) > 0) or false
+      if #ghost_list < 25 then
+        table.insert(ghost_list, {
+          ghost_name = g.ghost_name,
+          position   = {x = math.floor(g.position.x), y = math.floor(g.position.y)},
+          have_item  = have,
+        })
+      end
+      if item and not have then
+        missing_items[item] = (missing_items[item] or 0) + 1
+      end
     end
   end
-  perception.ghosts = {count = #ghost_entities, list = ghost_list}
+  perception.ghosts = {count = #ghost_entities, list = ghost_list, missing_items = missing_items}
 
   -- Human-marked deconstruction = explicit "remove this" intent (deconstruct
   -- skill). Second-highest priority after ghosts. Mirrors the ghost block.

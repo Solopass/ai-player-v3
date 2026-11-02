@@ -156,11 +156,20 @@ def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "",
     # ghosts" — missing items), forcing it again would loop forever. Release the
     # gate for this turn so the model can gather/craft what the ghosts need.
     ghost_blocked = _failed_detail(results, "build_ghosts")
-    if ghost_count > 0 and ghost_blocked is None:
+    missing_items = (perception.get("ghosts") if isinstance(perception.get("ghosts"), dict) else {}).get("missing_items") or {}
+    missing_str = ", ".join(f"{cnt}x {it}" for it, cnt in sorted(missing_items.items()))
+
+    if ghost_count > 0 and ghost_blocked is None and not missing_items:
         parts.append(
             f'IMPORTANT: there are {ghost_count} ghost(s) the human placed for you to build. '
             'Your response MUST be exactly [{"skill":"build_ghosts"}] and nothing else — '
             'build what the human asked for before doing anything else.'
+        )
+    elif ghost_count > 0 and missing_items:
+        parts.append(
+            f'NOTE: {ghost_count} ghost(s) are waiting to be built, but you lack required items: {missing_str}. '
+            'Do NOT call build_ghosts yet — craft or gather the missing items first using craft_for, '
+            'or tend to collect smelted plates from furnaces. Once crafted, call build_ghosts.'
         )
     elif ghost_count > 0:
         parts.append(
