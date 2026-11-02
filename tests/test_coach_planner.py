@@ -966,3 +966,27 @@ def test_planner_connects_coal_belt_to_modular_steam_power():
     p["landmarks"] = {"resources": [{"name": "coal", "x": 5, "y": 15, "distance": 20}]}
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
     assert {"skill": "connect_belt", "from": {"x": 5, "y": 15}, "to": {"x": 20.5, "y": 30.5}} in moves
+
+
+def test_planner_builds_offshore_pump_and_pipes_to_steam_power():
+    p = labbed()
+    p['power'] = {'has_grid': True, 'production_kw': 900, 'consumption_kw': 300}
+    p['factory']['machines'] = [{'type': 'boiler', 'name': 'boiler', 'position': {'x': 10, 'y': 10}}]
+    p['blueprint_library'] = ['tileable-steam-power']
+    p['placed_blueprints'] = [{'name': 'tileable-steam-power', 'position': {'x': 20, 'y': 30}}]
+    p['landmarks'] = {'water': {'x': 8, 'y': 12, 'distance': 15}}
+    moves = [e for e, _ in planner.next_steps(p, limit=5)]
+    assert {'skill': 'build_offshore_pump'} in moves
+    assert {'skill': 'connect_pipe', 'from': {'x': 8, 'y': 12}, 'to': {'x': 20.5, 'y': 33.0}} in moves
+
+
+def test_planner_connects_water_pipe_to_unwatered_boiler():
+    p = labbed()
+    p['power'] = {'has_grid': True, 'production_kw': 900, 'consumption_kw': 300}
+    p['factory']['machines'] = [
+        {'type': 'boiler', 'name': 'boiler', 'position': {'x': 10, 'y': 10}, 'status': 'no_input_fluid'},
+        {'type': 'offshore-pump', 'name': 'offshore-pump', 'position': {'x': 2, 'y': 10}},
+    ]
+    p['factory']['by_type']['offshore-pump'] = 1
+    moves = [e for e, _ in planner.next_steps(p, limit=4)]
+    assert {'skill': 'connect_pipe', 'from': {'x': 2, 'y': 10}, 'to': {'x': 9.0, 'y': 10}} in moves

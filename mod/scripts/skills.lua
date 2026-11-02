@@ -1116,6 +1116,89 @@ local function skill_build_pumpjack(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- build_offshore_pump — places an offshore pump on the nearest shoreline.
+-- -------------------------------------------------------------------------
+local PUMP_ORIENT = {[0] = "north", [1] = "east", [2] = "south", [3] = "west"}
+local function pump_unit16(dir)
+  local d = dir % 16
+  if d == 0 then return 0, -1 elseif d == 4 then return 1, 0 elseif d == 8 then return 0, 1 end
+  return -1, 0
+end
+
+local function skill_build_offshore_pump(character, p)
+  local surface, force = character.surface, character.force
+  local target_pos = p and p.position
+  local center = target_pos or character.position
+
+  local tiles = surface.find_tiles_filtered{collision_mask = "water_tile", position = center, radius = 64}
+  table.sort(tiles, function(a, b)
+    local da = (a.position.x - center.x) ^ 2 + (a.position.y - center.y) ^ 2
+    local db = (b.position.x - center.x) ^ 2 + (b.position.y - center.y) ^ 2
+    return da < db
+  end)
+
+  local found_pos, found_dir
+  local tried = 0
+  for _, t in ipairs(tiles) do
+    for r = 0, 3 do
+      local wx, wy = pump_unit16(r * 4)
+      local px, py = t.position.x + 0.5 - wx, t.position.y + 0.5 - wy
+      local sp = surface.get_tile(px, py)
+      if sp and not sp.collides_with("water_tile") then
+        tried = tried + 1
+        if tried > 400 then break end
+        local dir_enum = AIActions.DIRECTION_MAP[PUMP_ORIENT[r]]
+        if surface.can_place_entity{name = "offshore-pump", position = {x = px, y = py}, direction = dir_enum, force = force} then
+          found_pos = {x = px, y = py}
+          found_dir = PUMP_ORIENT[r]
+          break
+        end
+      end
+    end
+    if found_pos then break end
+  end
+
+  if not found_pos then
+    local lm = (AIPerception.landmarks(surface, character.position) or {}).water
+    if lm and lm.distance > 30 then
+      return false, string.format("build_offshore_pump: nearest water is %d tiles away at {%d,%d} — goto it first",
+                                  lm.distance, lm.x, lm.y)
+    end
+    return false, "build_offshore_pump: no valid shoreline found for offshore pump — explore or clear trees"
+  end
+
+  for _, e in ipairs(surface.find_entities_filtered{area = {{found_pos.x - 1.5, found_pos.y - 1.5}, {found_pos.x + 1.5, found_pos.y + 1.5}},
+                                                    type = {"tree", "simple-entity"}}) do
+    e.destroy()
+  end
+
+  local inv = inv_of(character)
+  local recipe = force.recipes["offshore-pump"]
+  if inv.get_item_count("offshore-pump") == 0 then
+    if recipe and character.get_craftable_count(recipe) > 0 then
+      character.begin_crafting{recipe = "offshore-pump", count = 1, silent = true}
+      surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      return true, string.format("build_offshore_pump: placed offshore pump ghost at {%.1f, %.1f} and began crafting", found_pos.x, found_pos.y)
+    else
+      surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      return true, string.format("build_offshore_pump: placed offshore pump ghost at {%.1f, %.1f} — build_ghosts once crafted", found_pos.x, found_pos.y)
+    end
+  end
+
+  local ok, detail = AIActions.run(character, {action = "place", item = "offshore-pump", position = found_pos, direction = found_dir})
+  if not ok then
+    return false, "build_offshore_pump: " .. (detail or "could not place offshore pump")
+  end
+  local pump = surface.find_entities_filtered{name = "offshore-pump", position = found_pos, radius = 0.5, limit = 1}[1]
+  if pump then
+    AIRegistry.add(pump)
+    AIRegistry.own(pump)
+  end
+
+  return true, string.format("built offshore pump at {%.1f, %.1f}", found_pos.x, found_pos.y)
+end
+
+-- -------------------------------------------------------------------------
 -- build_radar — places a radar to survey distant chunks.
 -- -------------------------------------------------------------------------
 local function skill_build_radar(character, p)
@@ -1849,6 +1932,7 @@ AISkills.REGISTRY = {
   connect_belt     = skill_connect_belt,
   connect_pipe     = skill_connect_pipe,
   build_pumpjack   = skill_build_pumpjack,
+  build_offshore_pump = skill_build_offshore_pump,
   build_radar      = skill_build_radar,
 }
 

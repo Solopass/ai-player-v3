@@ -38,6 +38,7 @@ Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no 
 - {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner's output to a smelter's input.
 - {"skill":"connect_pipe","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay fluid pipes (as ghosts) along an L-shaped path between two fluid ports, e.g. from a pumpjack to an oil refinery, or refinery to chemical plant.
 - {"skill":"build_pumpjack"[,"position":{"x":N,"y":N}]}   Place an electric pumpjack on the nearest crude-oil node to extract oil and wire it to the power grid.
+- {"skill":"build_offshore_pump"[,"position":{"x":N,"y":N}]}   Place an offshore pump on the nearest shoreline tile to supply water for steam power or chemical plants.
 - {"skill":"build_radar"}                 Place a radar near base to continuously survey surrounding chunks and reveal distant ore, oil patches and biter nests.
 
 === PRIMITIVE ACTIONS (fallback only) ===

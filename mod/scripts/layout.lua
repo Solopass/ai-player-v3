@@ -339,44 +339,63 @@ end
 local function power_pose(character, px, py, r)
   local pump_out = pipe_conns("offshore-pump", r)[1]
   local ux, uy = unit16(pump_out.dir)
-  local tx, ty = px + ux, py + uy                   -- tile the boiler's water port must sit on
-  local want = (pump_out.dir + 8) % 16              -- ...facing back at the pump
-  for rb = 0, 3 do
-    local conns = pipe_conns("boiler", rb)
-    local steam
-    for _, c in ipairs(conns) do if c.fb == 2 then steam = c end end
-    for _, c in ipairs(conns) do
-      if c.fb == 1 and c.dir == want then
-        local bx, by = tx - c.x, ty - c.y
-        if can_place(character, "boiler", bx, by, ORIENT[rb]) then
-          -- Steam leaves the boiler; the engines continue in a line from there.
-          local sx, sy = unit16(steam.dir)
-          local stx, sty = bx + steam.x + sx, by + steam.y + sy
-          local back = (steam.dir + 8) % 16
-          for re = 0, 3 do
-            local inlet, outlet
-            for _, e in ipairs(pipe_conns("steam-engine", re)) do
-              if e.dir == back then inlet = e else outlet = e end
+  for pipe_len = 0, 4 do
+    local tx, ty = px + ux * (pipe_len + 1), py + uy * (pipe_len + 1)   -- tile boiler's water port sits on
+    local want = (pump_out.dir + 8) % 16                                -- ...facing back at pump / pipe
+    for rb = 0, 3 do
+      local conns = pipe_conns("boiler", rb)
+      local steam
+      for _, c in ipairs(conns) do if c.fb == 2 then steam = c end end
+      for _, c in ipairs(conns) do
+        if c.fb == 1 and c.dir == want then
+          local bx, by = tx - c.x, ty - c.y
+          if can_place(character, "boiler", bx, by, ORIENT[rb]) then
+            local pipes_ok = true
+            local pipe_boxes = {}
+            local pipe_places = {}
+            for s = 1, pipe_len do
+              local pip_x, pip_y = px + ux * s, py + uy * s
+              if not can_place(character, "pipe", pip_x, pip_y) then
+                pipes_ok = false
+                break
+              end
+              pipe_boxes[#pipe_boxes + 1] = box(pip_x, pip_y, 1, 1)
+              pipe_places[#pipe_places + 1] = {name = "pipe", position = {x = pip_x, y = pip_y}, role = "pipe"}
             end
-            if inlet and outlet then
-              local ex, ey = stx - inlet.x, sty - inlet.y
-              local ox, oy = unit16(outlet.dir)
-              -- The second engine's inlet sits on the first one's outlet target tile.
-              local e2x, e2y = ex + outlet.x + ox - inlet.x, ey + outlet.y + oy - inlet.y
-              local boxes = {box(px, py, 1, 1), oriented_box("boiler", bx, by, rb),
-                             oriented_box("steam-engine", ex, ey, re), oriented_box("steam-engine", e2x, e2y, re)}
-              if all_free(boxes)
-                 and can_place(character, "steam-engine", ex, ey, ORIENT[re])
-                 and can_place(character, "steam-engine", e2x, e2y, ORIENT[re]) then
-                return {
-                  place = {
-                    {name = "offshore-pump", position = {x = px, y = py}, direction = ORIENT[r], role = "pump"},
-                    {name = "boiler", position = {x = bx, y = by}, direction = ORIENT[rb], role = "boiler"},
-                    {name = "steam-engine", position = {x = ex, y = ey}, direction = ORIENT[re], role = "engine"},
-                    {name = "steam-engine", position = {x = e2x, y = e2y}, direction = ORIENT[re], role = "engine"},
-                  },
-                  boxes = boxes, engine_box = boxes[3],
-                }
+            if pipes_ok then
+              -- Steam leaves the boiler; the engines continue in a line from there.
+              local sx, sy = unit16(steam.dir)
+              local stx, sty = bx + steam.x + sx, by + steam.y + sy
+              local back = (steam.dir + 8) % 16
+              for re = 0, 3 do
+                local inlet, outlet
+                for _, e in ipairs(pipe_conns("steam-engine", re)) do
+                  if e.dir == back then inlet = e else outlet = e end
+                end
+                if inlet and outlet then
+                  local ex, ey = stx - inlet.x, sty - inlet.y
+                  local ox, oy = unit16(outlet.dir)
+                  -- The second engine's inlet sits on the first one's outlet target tile.
+                  local e2x, e2y = ex + outlet.x + ox - inlet.x, ey + outlet.y + oy - inlet.y
+                  local boxes = {box(px, py, 1, 1), oriented_box("boiler", bx, by, rb),
+                                 oriented_box("steam-engine", ex, ey, re), oriented_box("steam-engine", e2x, e2y, re)}
+                  for _, pb in ipairs(pipe_boxes) do boxes[#boxes + 1] = pb end
+                  if all_free(boxes)
+                     and can_place(character, "steam-engine", ex, ey, ORIENT[re])
+                     and can_place(character, "steam-engine", e2x, e2y, ORIENT[re]) then
+                    local places = {
+                      {name = "offshore-pump", position = {x = px, y = py}, direction = ORIENT[r], role = "pump"},
+                    }
+                    for _, pp in ipairs(pipe_places) do places[#places + 1] = pp end
+                    places[#places + 1] = {name = "boiler", position = {x = bx, y = by}, direction = ORIENT[rb], role = "boiler"}
+                    places[#places + 1] = {name = "steam-engine", position = {x = ex, y = ey}, direction = ORIENT[re], role = "engine"}
+                    places[#places + 1] = {name = "steam-engine", position = {x = e2x, y = e2y}, direction = ORIENT[re], role = "engine"}
+                    return {
+                      place = places,
+                      boxes = boxes, engine_box = boxes[3],
+                    }
+                  end
+                end
               end
             end
           end
@@ -821,7 +840,7 @@ function AILayout.build(character, plan)
       local joined_pump, joined_engine = false, false
       for i = 1, e.fluids_count do
         for _, rec in ipairs(e.get_fluid_box_neighbours(i) or {}) do
-          if rec.entity.name == "offshore-pump" then joined_pump = true end
+          if rec.entity.name == "offshore-pump" or rec.entity.name == "pipe" then joined_pump = true end
           if rec.entity.name == "steam-engine" or rec.entity.name == "boiler" then joined_engine = true end
         end
       end

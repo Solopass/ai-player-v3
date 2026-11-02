@@ -89,6 +89,8 @@ def _count(v) -> int:
 
 
 def _landmark(p: dict, resource: str) -> dict | None:
+    if resource == "water":
+        return (p.get("landmarks") or {}).get("water")
     for r in ((p.get("landmarks") or {}).get("resources") or []):
         if r.get("name") == resource:
             return r
@@ -154,8 +156,10 @@ def _is_connected(connected: list[dict], pt1: dict, pt2: dict) -> bool:
     for c in connected:
         f = c.get("from") or {}
         t = c.get("to") or {}
-        if abs(f.get("x", 0) - pt1["x"]) < 1.0 and abs(f.get("y", 0) - pt1["y"]) < 1.0 \
-           and abs(t.get("x", 0) - pt2["x"]) < 1.0 and abs(t.get("y", 0) - pt2["y"]) < 1.0:
+        if (abs(f.get("x", 0) - pt1["x"]) < 1.5 and abs(f.get("y", 0) - pt1["y"]) < 1.5
+           and abs(t.get("x", 0) - pt2["x"]) < 1.5 and abs(t.get("y", 0) - pt2["y"]) < 1.5) or \
+           (abs(f.get("x", 0) - pt2["x"]) < 1.5 and abs(f.get("y", 0) - pt2["y"]) < 1.5
+           and abs(t.get("x", 0) - pt1["x"]) < 1.5 and abs(t.get("y", 0) - pt1["y"]) < 1.5):
             return True
     return False
 
@@ -203,6 +207,67 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             if not _is_connected(conns, coal_src, power_fuel_in):
                 yield ({"skill": "connect_belt", "from": coal_src, "to": power_fuel_in},
                        "feed automated coal belt to boilers", True)
+
+        # Connect steam power to water pipes with an offshore pump
+        pipes = p.get("connected_pipes") or []
+        water_lm = _landmark(p, "water")
+        machines = p.get("factory", {}).get("machines") or []
+        pump_pos = None
+        for m in machines:
+            if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
+                pump_pos = m.get("position")
+                break
+        if not pump_pos:
+            for e in (p.get("nearby_entities") or []):
+                if e.get("name") == "offshore-pump":
+                    pump_pos = e.get("position")
+                    break
+
+        if power_pos and _by_type(p, "offshore-pump") == 0 and not pump_pos:
+            yield from _craft(inv, "offshore-pump", 1, "steam power needs an offshore pump")
+            if water_lm and water_lm.get("distance", 0) > WATER_NEAR:
+                yield from _goto_far(p, water_lm, "water", WATER_NEAR)
+            yield {"skill": "build_offshore_pump"}, "place offshore pump on shoreline for steam power", True
+
+        if power_pos:
+            power_water_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 3.0}
+            src_pt = pump_pos or ({"x": water_lm["x"], "y": water_lm["y"]} if water_lm else None)
+            if src_pt and not _is_connected(pipes, src_pt, power_water_in):
+                yield from _craft(inv, "pipe", 15, "pipes to connect offshore pump to steam power")
+                yield ({"skill": "connect_pipe", "from": src_pt, "to": power_water_in},
+                       "connect steam power to water pipes with an offshore pump", True)
+
+    # Check for unwatered boilers (dry boilers needing water pipe from offshore pump)
+    machines = p.get("factory", {}).get("machines") or []
+    unwatered = next((m for m in machines if (m.get("type") == "boiler" or m.get("name") == "boiler")
+                      and m.get("status") in ("no_input_fluid", "low_input_fluid")), None)
+    if unwatered:
+        pipes = p.get("connected_pipes") or []
+        water_lm = _landmark(p, "water")
+        pump_pos = None
+        for m in machines:
+            if m.get("type") == "offshore-pump" or m.get("name") == "offshore-pump":
+                pump_pos = m.get("position")
+                break
+        if not pump_pos:
+            for e in (p.get("nearby_entities") or []):
+                if e.get("name") == "offshore-pump":
+                    pump_pos = e.get("position")
+                    break
+        if _by_type(p, "offshore-pump") == 0 and not pump_pos:
+            yield from _craft(inv, "offshore-pump", 1, "boiler missing water: craft offshore pump")
+            if water_lm and water_lm.get("distance", 0) > WATER_NEAR:
+                yield from _goto_far(p, water_lm, "water", WATER_NEAR)
+            yield {"skill": "build_offshore_pump"}, "place offshore pump on shoreline for unwatered boiler", True
+
+        b_pos = unwatered.get("position")
+        if b_pos:
+            boiler_water_in = {"x": b_pos["x"] - 1.0, "y": b_pos["y"]}
+            src_pt = pump_pos or ({"x": water_lm["x"], "y": water_lm["y"]} if water_lm else None)
+            if src_pt and not _is_connected(pipes, src_pt, boiler_water_in):
+                yield from _craft(inv, "pipe", 15, "craft pipes to feed water to dry boiler")
+                yield ({"skill": "connect_pipe", "from": src_pt, "to": boiler_water_in},
+                       "connect boiler to water pipes with an offshore pump", True)
 
     if goal_id == "power":
         pass
