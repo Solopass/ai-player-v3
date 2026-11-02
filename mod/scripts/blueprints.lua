@@ -419,7 +419,12 @@ function AIBlueprints.place(character, name, opts)
         local built = stack.build_blueprint{surface = surface, force = force, position = c.p,
                                             direction = c.d, build_mode = defines.build_mode.forced}
         local n = 0
-        for _, e in ipairs(built or {}) do if e.valid and e.type == "entity-ghost" then n = n + 1 end end
+        for _, e in ipairs(built or {}) do
+          if e.valid and e.type == "entity-ghost" then
+            n = n + 1
+            AIRegistry.register_ghost(e)
+          end
+        end
         if n >= geo.required then
           log_placed(surface, name, c.p, c.d)
           local need = missing_for(built, character.get_inventory(defines.inventory.character_main))

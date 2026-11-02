@@ -633,7 +633,7 @@ CASES.connect_pipe = {
 CASES.connect_belt = {
   delay = 60,
   setup = function(c)
-    give(c.character, {["transport-belt"] = 50})
+    give(c.character, {["transport-belt"] = 100})
     -- Perpendicular foreign belt line across x = 15.5 from y = 0 to 30
     for y = 0, 30 do
       c.surface.create_entity{name = "transport-belt", position = {15.5, y + 0.5},
@@ -648,22 +648,79 @@ CASES.connect_belt = {
       c.surface.create_entity{name = "stone-wall", position = {9.5, y + 0.5}, force = c.force}
       c.surface.create_entity{name = "stone-wall", position = {21.5, y + 0.5}, force = c.force}
     end
+
+    -- Tunnel Corridor A (max distance 5 hop = 4 wall obstacle tiles, within yellow belt limit)
+    for x = 23, 32 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 24.5}, force = c.force}
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 26.5}, force = c.force}
+    end
+    c.surface.create_entity{name = "stone-wall", position = {23.5, 25.5}, force = c.force}
+    c.surface.create_entity{name = "stone-wall", position = {32.5, 25.5}, force = c.force}
+    for x = 26, 29 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 25.5}, force = c.force}
+    end
+
+    -- Tunnel Corridor B (over-max distance 6 hop = 5 wall obstacle tiles, exceeds yellow belt limit)
+    -- Thick solid wall padding around the corridor so undergrounds cannot jump out of the tunnel
+    for x = 16, 40 do
+      for y = 23, 29 do
+        c.surface.create_entity{name = "stone-wall", position = {x + 0.5, y + 0.5}, force = c.force}
+      end
+      for y = 31, 38 do
+        c.surface.create_entity{name = "stone-wall", position = {x + 0.5, y + 0.5}, force = c.force}
+      end
+    end
+    for x = 16, 23 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 30.5}, force = c.force}
+    end
+    for x = 33, 40 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 30.5}, force = c.force}
+    end
+    -- 5 obstacle tiles at x = 26 to 30 (from 25.5 to 31.5 is distance 6)
+    for x = 26, 30 do
+      c.surface.create_entity{name = "stone-wall", position = {x + 0.5, 30.5}, force = c.force}
+    end
   end,
   run = function(c)
-    -- Clean route without crossing: from (5.5, 5.5) to (12.5, 15.5)
     local r1 = {skill = "connect_belt", from = {x = 2.5, y = 2.5}, to = {x = 7.5, y = 12.5}}
-    -- Route that would cross or join the existing belt at x = 15.5 without undergrounds: from (10.5, 5.5) to (20.5, 5.5)
     local r2 = {skill = "connect_belt", from = {x = 10.5, y = 5.5}, to = {x = 20.5, y = 5.5}, underground = false}
-    -- Route crossing perpendicular belt using underground belts: from (10.5, 8.5) to (20.5, 8.5)
     local r3 = {skill = "connect_belt", from = {x = 10.5, y = 8.5}, to = {x = 20.5, y = 8.5}}
-    return {r1, r2, r3}
+    local r4 = {skill = "connect_belt", from = {x = 25.5, y = 25.5}, to = {x = 30.5, y = 25.5}}
+    local r5 = {skill = "connect_belt", from = {x = 25.5, y = 30.5}, to = {x = 31.5, y = 30.5}}
+    return {r1, r2, r3, r4, r5}
   end,
   check = function(c, add)
     add("clean route placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
     add("crossing existing belt refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
     add("crossing with underground belt placed", c.results[3] and c.results[3].ok, c.results[3] and c.results[3].detail)
+    add("max underground hop distance 5 succeeds", c.results[4] and c.results[4].ok, c.results[4] and c.results[4].detail)
+    add("over-max underground hop distance 6 refused", c.results[5] and not c.results[5].ok, c.results[5] and c.results[5].detail)
+
+
     local ugs = c.surface.find_entities_filtered{type = "entity-ghost", ghost_name = "underground-belt"}
     add("underground belts placed", #ugs >= 2, #ugs .. " underground belt ghosts")
+    local proto = prototypes.entity["underground-belt"]
+    local d_val = proto and proto.max_underground_distance or -1
+    local paired = 0
+    local debug_revive = {}
+    for _, g in ipairs(ugs) do
+      local r1, r2, r3 = g.silent_revive()
+      table.insert(debug_revive, {pos = r2 and {x = r2.position.x, y = r2.position.y}, dir = r2 and r2.direction, ug_type = r2 and r2.belt_to_ground_type, n = r2 and tostring(r2.underground_belt_neighbour)})
+      local ent = r2 or (r1 and r1.valid and r1)
+      if ent and ent.valid then
+        if ent.underground_belt_neighbour ~= nil then
+          paired = paired + 1
+        end
+      end
+    end
+    add("underground belts paired", paired >= 2, paired .. " paired underground belts: " .. serpent.line(debug_revive))
+
+
+
+
+
+
+
     local mid = c.surface.find_entities_filtered{position = {15.5, 5.5}, radius = 0.3}[1]
     add("existing belt intact", mid and mid.direction == defines.direction.south, mid and mid.direction)
   end,

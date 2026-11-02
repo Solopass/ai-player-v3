@@ -114,6 +114,23 @@ local function owned_store()
   return storage.ai_player.owned
 end
 
+local function ghost_store()
+  storage.ai_player.ai_ghosts = storage.ai_player.ai_ghosts or {}
+  return storage.ai_player.ai_ghosts
+end
+
+function AIRegistry.register_ghost(g)
+  if not (g and g.valid and g.unit_number) then return end
+  ghost_store()[g.unit_number] = true
+  script.register_on_object_destroyed(g)
+end
+
+function AIRegistry.is_ai_ghost(g)
+  if not (g and g.valid and g.unit_number) then return false end
+  local m = storage.ai_player and storage.ai_player.ai_ghosts
+  return m ~= nil and m[g.unit_number] == true
+end
+
 function AIRegistry.own(entity)
   if not (entity and entity.valid and entity.unit_number) then return end
   owned_store()[entity.unit_number] = entity
@@ -135,15 +152,36 @@ end
 
 -- Valid owned entities of the given types on `surface` (pruning dead refs).
 function AIRegistry.owned(surface, types)
-  local set = {}
-  for _, t in ipairs(types) do set[t] = true end
+  local set = nil
+  if types then
+    set = {}
+    for _, t in ipairs(types) do set[t] = true end
+  end
   local out = {}
   local m = owned_store()
   for un, e in pairs(m) do
     if not e.valid then m[un] = nil
-    elseif e.surface == surface and set[e.type] and e.last_user == nil then out[#out + 1] = e end
+    elseif e.surface == surface and (set == nil or set[e.type]) and e.last_user == nil then out[#out + 1] = e end
   end
   return out
+end
+
+-- Bounding box of all owned entities on `surface`.
+function AIRegistry.bounds(surface)
+  local min_x, max_x, min_y, max_y = math.huge, -math.huge, math.huge, -math.huge
+  local count = 0
+  for _, e in ipairs(AIRegistry.owned(surface)) do
+    if e.valid then
+      local p = e.position
+      if p.x < min_x then min_x = p.x end
+      if p.x > max_x then max_x = p.x end
+      if p.y < min_y then min_y = p.y end
+      if p.y > max_y then max_y = p.y end
+      count = count + 1
+    end
+  end
+  if count == 0 then return nil end
+  return {min_x = min_x, max_x = max_x, min_y = min_y, max_y = max_y}
 end
 
 -- One-off rebuild for saves that predate the owned set: everything on the AI force

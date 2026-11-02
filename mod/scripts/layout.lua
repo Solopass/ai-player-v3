@@ -80,12 +80,16 @@ local function can_place(character, name, x, y, facing)
   local ents = surface.find_entities_filtered{area = area}
   if #ents == 0 then return false end
   for _, e in ipairs(ents) do
-    if e.type == "tree" or e.type == "simple-entity" or e.type == "item-entity" then
-      -- tree, rock, or dropped items can be cleared/picked up
+    if e.type == "resource" then
+      -- natural resource on the ground is fine (skip)
+    elseif e.type == "item-entity" then
+      -- ground items can be picked up
+    elseif e.type == "tree" or (e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction) then
+      -- tree or rock can be cleared
     elseif (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
       -- obsolete burner gear can be replaced
-    elseif e.type == "entity-ghost" and e.force == force then
-      -- ghost can be replaced
+    elseif e.type == "entity-ghost" and AIRegistry.is_ai_ghost(e) then
+      -- only AI ghosts can be replaced!
     else
       return false
     end
@@ -950,21 +954,36 @@ function AILayout.build(character, plan)
     local x, y = p.position.x, p.position.y
     local area = {{x - w / 2 + 0.1, y - h / 2 + 0.1}, {x + w / 2 - 0.1, y + h / 2 - 0.1}}
     local ents = surface.find_entities_filtered{area = area}
+    if #ents == 0 then return true end
+
+    -- Verify first: confirm the spot is blocked ONLY by clearable entities
+    for _, e in ipairs(ents) do
+      if e.valid and e.type ~= "resource" then
+        local clearable = (e.type == "item-entity")
+          or (e.type == "tree")
+          or (e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction)
+          or ((e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e))
+          or (e.type == "entity-ghost" and AIRegistry.is_ai_ghost(e))
+        if not clearable then return false end
+      end
+    end
+
     local inv = character.get_inventory(defines.inventory.character_main)
     for _, e in ipairs(ents) do
       if e.valid and e.type == "item-entity" then
         if inv and e.stack and e.stack.valid_for_read then
-          inv.insert{name = e.stack.name, count = e.stack.count}
+          local ins = inv.insert(e.stack)
+          if ins >= e.stack.count then e.destroy() else e.stack.count = e.stack.count - ins end
         end
-        e.destroy()
-      elseif e.valid and (e.type == "tree" or e.type == "simple-entity") then
+      elseif e.valid and (e.type == "tree" or (e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction)) then
         character.mine_entity(e)
       elseif e.valid and (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
         character.mine_entity(e)
-      elseif e.valid and e.type == "entity-ghost" and e.force == character.force then
+      elseif e.valid and e.type == "entity-ghost" and AIRegistry.is_ai_ghost(e) then
         e.destroy()
       end
     end
+    return true
   end
 
   local placed = {}

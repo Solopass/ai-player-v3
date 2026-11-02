@@ -304,28 +304,41 @@ local function action_place(character, action)
     force     = character.force,
     build_check_type = defines.build_check_type.manual,
   } then
-    -- Check if spot is blocked by clearable obstacles (ground items, trees, rocks, obsolete burner gear, friendly ghost)
+    -- Check if spot is blocked ONLY by clearable obstacles (ground items, trees, rocks, obsolete burner gear, AI ghosts)
     local proto = prototypes.entity[item_name]
     local w, h = proto and proto.tile_width or 1, proto and proto.tile_height or 1
     local area = {{px - w / 2 + 0.1, py - h / 2 + 0.1}, {px + w / 2 - 0.1, py + h / 2 - 0.1}}
     local ents = surface.find_entities_filtered{area = area}
-    local cleared_any = false
+    local all_clearable = (#ents > 0)
     for _, e in ipairs(ents) do
-      if e.valid and e.type == "item-entity" then
-        if inv and e.stack and e.stack.valid_for_read then
-          inv.insert{name = e.stack.name, count = e.stack.count}
+      if e.valid and e.type ~= "resource" then
+        local clearable = (e.type == "item-entity")
+          or (e.type == "tree")
+          or (e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction)
+          or ((e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e))
+          or (e.type == "entity-ghost" and AIRegistry.is_ai_ghost(e))
+        if not clearable then all_clearable = false; break end
+      end
+    end
+    local cleared_any = false
+    if all_clearable then
+      for _, e in ipairs(ents) do
+        if e.valid and e.type == "item-entity" then
+          if inv and e.stack and e.stack.valid_for_read then
+            local ins = inv.insert(e.stack)
+            if ins >= e.stack.count then e.destroy() else e.stack.count = e.stack.count - ins end
+            cleared_any = true
+          end
+        elseif e.valid and (e.type == "tree" or (e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction)) then
+          character.mine_entity(e)
+          cleared_any = true
+        elseif e.valid and (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
+          character.mine_entity(e)
+          cleared_any = true
+        elseif e.valid and e.type == "entity-ghost" and AIRegistry.is_ai_ghost(e) then
+          e.destroy()
+          cleared_any = true
         end
-        e.destroy()
-        cleared_any = true
-      elseif e.valid and (e.type == "tree" or e.type == "simple-entity") then
-        character.mine_entity(e)
-        cleared_any = true
-      elseif e.valid and (e.name == "burner-mining-drill" or e.name == "burner-inserter") and AIRegistry.is_owned(e) then
-        character.mine_entity(e)
-        cleared_any = true
-      elseif e.valid and e.type == "entity-ghost" and e.force == character.force then
-        e.destroy()
-        cleared_any = true
       end
     end
     if not (cleared_any and surface.can_place_entity{

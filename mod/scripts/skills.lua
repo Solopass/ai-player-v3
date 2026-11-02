@@ -1040,7 +1040,9 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, op
   local ug_name = (name == "transport-belt") and "underground-belt"
     or ((name == "pipe") and "pipe-to-ground" or nil)
   local is_ug = allow_ug and ug_name and force.recipes[ug_name] and force.recipes[ug_name].enabled
-  local ug_max_span = (name == "transport-belt") and 5 or ((name == "pipe") and 11 or 0)
+  local ug_proto = ug_name and prototypes.entity[ug_name]
+  local ug_max_span = ug_proto and ug_proto.max_underground_distance or 0
+
 
   local function heuristic(x, y)
     return math.abs(x - gx) + math.abs(y - gy)
@@ -1129,10 +1131,12 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, op
       local cur_is_exit = (came_ug[current.key] == "exit")
 
       for _, d in ipairs(DIRS) do
+        -- Out of an underground exit tile, only a straight step is allowed
+        local skip_step = cur_is_exit and cur_dir and (d.dir ~= cur_dir)
         local nx, ny = current.x + d.dx, current.y + d.dy
         local nkey = tile_key(nx, ny)
         local traversable = false
-        if not closed[nkey] and nx >= min_x and nx <= max_x and ny >= min_y and ny <= max_y then
+        if not skip_step and not closed[nkey] and nx >= min_x and nx <= max_x and ny >= min_y and ny <= max_y then
           traversable = (nkey == goal_key)
           if not traversable then
             traversable = tile_ok[nkey]
@@ -1150,17 +1154,27 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, op
                 g_score[nkey] = tent_g
                 came_from[nkey] = {x = current.x, y = current.y, prev_key = current.key}
                 came_dir[nkey] = d.dir
+                came_ug[nkey] = nil
                 push({x = nx, y = ny, key = nkey, f = tent_g + h})
               end
             end
           end
         end
 
-        -- Underground hops when unlocked and current is not an underground exit tile
-        if is_ug and not cur_is_exit then
+        -- Underground hops: must be straight along came_dir (or at start node), never out of an exit tile
+        local can_hop = is_ug and not cur_is_exit and (cur_dir == nil or cur_dir == d.dir)
+        if can_hop then
           for k = 2, ug_max_span do
             local ex, ey = current.x + k * d.dx, current.y + k * d.dy
             if ex < min_x or ex > max_x or ey < min_y or ey > max_y then break end
+
+            -- Intermediate tile check at (k - 1): break immediately if blocked
+            local mx, my = current.x + (k - 1) * d.dx, current.y + (k - 1) * d.dy
+            local mt = surface.get_tile(mx, my)
+            if not mt or mt.collides_with("water_tile") then break end
+            local m_collides = surface.find_entities_filtered{area = {{mx - 0.4, my - 0.4}, {mx + 0.4, my + 0.4}}, type = {"cliff", ug_name}}
+            if #m_collides > 0 then break end
+
             local ekey = tile_key(ex, ey)
             if not closed[ekey] then
               local ex_ok = (ekey == goal_key)
@@ -1172,26 +1186,16 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, op
                 end
               end
               if ex_ok then
-                local mid_ok = true
-                for j = 1, k - 1 do
-                  local mx, my = current.x + j * d.dx, current.y + j * d.dy
-                  local mt = surface.get_tile(mx, my)
-                  if not mt or mt.collides_with("water_tile") then mid_ok = false; break end
-                  local collides = surface.find_entities_filtered{area = {{mx - 0.4, my - 0.4}, {mx + 0.4, my + 0.4}}, type = {"cliff", ug_name}}
-                  if #collides > 0 then mid_ok = false; break end
-                end
-                if mid_ok then
-                  local hop_cost = (name == "pipe") and (k * 0.9) or (k + (traversable and 1.0 or 0.25))
-                  local tent_g = cur_g + hop_cost
-                  if tent_g < (g_score[ekey] or math.huge) then
-                    local h = heuristic(ex, ey)
-                    if (tent_g + h) <= (max_tiles or MAX_BELT) then
-                      g_score[ekey] = tent_g
-                      came_from[ekey] = {x = current.x, y = current.y, prev_key = current.key, ug = true, ug_dir = d.dir}
-                      came_dir[ekey] = d.dir
-                      came_ug[ekey] = "exit"
-                      push({x = ex, y = ey, key = ekey, f = tent_g + h})
-                    end
+                local hop_cost = (name == "pipe") and (k * 0.9) or (k + (traversable and 1.0 or 0.25))
+                local tent_g = cur_g + hop_cost
+                if tent_g < (g_score[ekey] or math.huge) then
+                  local h = heuristic(ex, ey)
+                  if (tent_g + h) <= (max_tiles or MAX_BELT) then
+                    g_score[ekey] = tent_g
+                    came_from[ekey] = {x = current.x, y = current.y, prev_key = current.key, ug = true, ug_dir = d.dir}
+                    came_dir[ekey] = d.dir
+                    came_ug[ekey] = "exit"
+                    push({x = ex, y = ey, key = ekey, f = tent_g + h})
                   end
                 end
               end
@@ -1305,7 +1309,7 @@ local function skill_connect_belt(character, p)
           local g = surface.create_entity{name = "entity-ghost", inner_name = "underground-belt",
                                           position = t.position, direction = t.direction,
                                           type = t.ug_type, force = force}
-          if g then placed = placed + 1 end
+          if g then placed = placed + 1; AIRegistry.register_ghost(g) end
         end
       else
         for _, ex in ipairs(existing) do
@@ -1316,7 +1320,7 @@ local function skill_connect_belt(character, p)
         if not already_has then
           local g = surface.create_entity{name = "entity-ghost", inner_name = "transport-belt",
                                           position = t.position, direction = t.direction, force = force}
-          if g then placed = placed + 1 end
+          if g then placed = placed + 1; AIRegistry.register_ghost(g) end
         end
       end
     end
@@ -1444,7 +1448,7 @@ local function skill_connect_pipe(character, p)
           local dir = (pt.ug == "input") and OPPOSITE_DIR[pt.ug_dir] or pt.ug_dir
           local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe-to-ground",
                                           position = {x = x, y = y}, direction = dir, force = force}
-          if g then placed = placed + 1 end
+          if g then placed = placed + 1; AIRegistry.register_ghost(g) end
         end
       else
         for _, ex in ipairs(existing) do
@@ -1455,7 +1459,7 @@ local function skill_connect_pipe(character, p)
         if not already_has then
           local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe",
                                           position = {x = x, y = y}, force = force}
-          if g then placed = placed + 1 end
+          if g then placed = placed + 1; AIRegistry.register_ghost(g) end
         end
       end
     end
@@ -1530,10 +1534,12 @@ local function skill_build_pumpjack(character, p)
   if inv.get_item_count("pumpjack") == 0 then
     if recipe and character.get_craftable_count(recipe) > 0 then
       character.begin_crafting{recipe = "pumpjack", count = 1, silent = true}
-      surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      local g = surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      AIRegistry.register_ghost(g)
       return true, string.format("build_pumpjack: placed pumpjack ghost at {%.1f, %.1f} and began crafting", pos.x, pos.y)
     else
-      surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      local g = surface.create_entity{name = "entity-ghost", inner_name = "pumpjack", position = pos, force = force}
+      AIRegistry.register_ghost(g)
       return true, string.format("build_pumpjack: placed pumpjack ghost at {%.1f, %.1f} — build_ghosts once crafted", pos.x, pos.y)
     end
   end
@@ -1558,7 +1564,8 @@ local function skill_build_pumpjack(character, p)
           AIRegistry.own(pole)
         end
       else
-        surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+        AIRegistry.register_ghost(g)
       end
     end
   end
@@ -1631,10 +1638,12 @@ local function skill_build_offshore_pump(character, p)
   if inv.get_item_count("offshore-pump") == 0 then
     if recipe and character.get_craftable_count(recipe) > 0 then
       character.begin_crafting{recipe = "offshore-pump", count = 1, silent = true}
-      surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      local g = surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      AIRegistry.register_ghost(g)
       return true, string.format("build_offshore_pump: placed offshore pump ghost at {%.1f, %.1f} and began crafting", found_pos.x, found_pos.y)
     else
-      surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      local g = surface.create_entity{name = "entity-ghost", inner_name = "offshore-pump", position = found_pos, direction = AIActions.DIRECTION_MAP[found_dir], force = force}
+      AIRegistry.register_ghost(g)
       return true, string.format("build_offshore_pump: placed offshore pump ghost at {%.1f, %.1f} — build_ghosts once crafted", found_pos.x, found_pos.y)
     end
   end
@@ -1677,7 +1686,8 @@ local function skill_build_radar(character, p)
     if recipe and character.get_craftable_count(recipe) > 0 then
       character.begin_crafting{recipe = "radar", count = 1, silent = true}
     end
-    surface.create_entity{name = "entity-ghost", inner_name = "radar", position = spot, force = force}
+    local g = surface.create_entity{name = "entity-ghost", inner_name = "radar", position = spot, force = force}
+    AIRegistry.register_ghost(g)
     return true, string.format("build_radar: placed radar ghost at {%.1f, %.1f} — build_ghosts next", spot.x, spot.y)
   end
 
@@ -1701,7 +1711,8 @@ local function skill_build_radar(character, p)
           AIRegistry.own(pole)
         end
       else
-        surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
+        AIRegistry.register_ghost(g)
       end
     end
   end
