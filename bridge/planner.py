@@ -176,6 +176,34 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             yield from _craft(inv, item, n, f"steam power needs {n} {item}")
         yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
 
+    # Scale modular steam power when consumption approaches generation capacity or machines lack power
+    prod_kw = power.get("production_kw", 0)
+    cons_kw = power.get("consumption_kw", 0)
+    power_bp = "tileable-steam-power"
+    if power_bp in unlocked_bps and _by_type(p, "boiler") >= 1:
+        if (cons_kw >= prod_kw * 0.75 and cons_kw > 400) or power.get("machines_low_power", 0) > 0:
+            if _count(p.get("ghosts")) == 0 and _by_type(p, "boiler") < 10:
+                lib = blueprints.load_library()
+                bp_entry = lib.get(power_bp, {})
+                snap = blueprints.get_tile_target(placed_bps, bp_entry)
+                if snap:
+                    yield ({"skill": "place_blueprint", "name": power_bp, "position": snap},
+                           "scale modular steam power: electric demand is near capacity", True)
+                elif power_bp not in placed_names:
+                    yield ({"skill": "place_blueprint", "name": power_bp},
+                           "stamp modular steam power unit along shoreline", True)
+
+        # Connect coal belt to steam power fuel line if power unit is placed and not yet connected
+        conns = p.get("connected_belts") or []
+        power_pos = _find_placed(p, power_bp)
+        coal_lm = _landmark(p, "coal")
+        if power_pos and coal_lm:
+            coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
+            power_fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
+            if not _is_connected(conns, coal_src, power_fuel_in):
+                yield ({"skill": "connect_belt", "from": coal_src, "to": power_fuel_in},
+                       "feed automated coal belt to boilers", True)
+
     if goal_id == "power":
         pass
     elif goal_id == "automation":
