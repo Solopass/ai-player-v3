@@ -134,7 +134,7 @@ function AIRegistry.owned(surface, types)
   local m = owned_store()
   for un, e in pairs(m) do
     if not e.valid then m[un] = nil
-    elseif e.surface == surface and set[e.type] and e.last_user == nil then out[#out + 1] = e end
+    elseif e.surface == surface and set[e.type] then out[#out + 1] = e end
   end
   return out
 end

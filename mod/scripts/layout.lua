@@ -638,13 +638,16 @@ function AILayout.find_consumer_poles(character, e)
   local surface, force = character.surface, character.force
   local ex, ey = e.position.x, e.position.y
   local w, h = footprint(e.name)
-  if #surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
-                                     radius = math.max(w, h) / 2 + 2.5} > 0 then
-    return nil                      -- a pole's supply area already reaches it
-  end
   local live = {}
   for _, g in ipairs(surface.find_entities_filtered{type = {"generator", "electric-energy-interface"}, force = force}) do
     if g.electric_network_id then live[g.electric_network_id] = true end
+  end
+  local nearby_poles = surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
+                                                      radius = math.max(w, h) / 2 + 2.5}
+  for _, pole in ipairs(nearby_poles) do
+    if pole.electric_network_id and (next(live) == nil or live[pole.electric_network_id]) then
+      return nil                      -- a pole on a live generator network already reaches it
+    end
   end
   local goal, gd
   for _, pole in ipairs(surface.find_entities_filtered{type = "electric-pole", force = force, position = e.position,
@@ -655,6 +658,15 @@ function AILayout.find_consumer_poles(character, e)
     end
   end
   if not goal then return nil end
+  if #nearby_poles > 0 then
+    local p0 = nearby_poles[1]
+    local poles, joined = AILayout.pole_chain(character, p0.position, goal.position, {})
+    if poles and joined then
+      local place = {}
+      for _, pole in ipairs(poles) do place[#place + 1] = pole end
+      if #place > 0 then return {place = place} end
+    end
+  end
   local own = box(ex, ey, w, h)
   local spots = {}
   for k = -math.floor(h / 2), math.floor(h / 2) do

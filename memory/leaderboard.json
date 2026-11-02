@@ -1,0 +1,676 @@
+{
+  "red": {
+    "best_time": 12.0,
+    "best_seed": 424242,
+    "runs_total": 31,
+    "runs_completed": 1,
+    "history": [
+      {
+        "timestamp": 1793570134.8801901,
+        "seed": 424242,
+        "time": 12.0,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 0
+      },
+      {
+        "timestamp": 1793570365.1390812,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 15
+      },
+      {
+        "timestamp": 1793571011.9084277,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 19
+      },
+      {
+        "timestamp": 1793571658.751205,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 3
+      },
+      {
+        "timestamp": 1793572304.625181,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 8
+      },
+      {
+        "timestamp": 1793572946.9751031,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 21
+      },
+      {
+        "timestamp": 1793573593.597972,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 10
+      },
+      {
+        "timestamp": 1793574238.5024476,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 13
+      },
+      {
+        "timestamp": 1793574881.0350783,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 9
+      },
+      {
+        "timestamp": 1793575529.8755474,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 26
+      },
+      {
+        "timestamp": 1793576173.7160754,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 9
+      },
+      {
+        "timestamp": 1793576819.507154,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 3
+      },
+      {
+        "timestamp": 1793577467.2278204,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 24
+      },
+      {
+        "timestamp": 1793578113.627542,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 12
+      },
+      {
+        "timestamp": 1793578756.2168493,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 14
+      },
+      {
+        "timestamp": 1793579402.3289447,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 7
+      },
+      {
+        "timestamp": 1793580047.7436461,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 21
+      },
+      {
+        "timestamp": 1793580691.6822793,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "red": 0.0
+        },
+        "failures_count": 16
+      },
+      {
+        "timestamp": 1793581300.2871947,
+        "seed": 424242,
+        "time": 90.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 4
+      },
+      {
+        "timestamp": 1793581562.6190338,
+        "seed": 424242,
+        "time": 120.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 8
+      },
+      {
+        "timestamp": 1793581615.0691466,
+        "seed": 424242,
+        "time": 30.0,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 1
+      },
+      {
+        "timestamp": 1793581690.2659848,
+        "seed": 424242,
+        "time": 60.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 2
+      },
+      {
+        "timestamp": 1793591859.5753012,
+        "seed": 424242,
+        "time": 120.4,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 5
+      },
+      {
+        "timestamp": 1793592104.211738,
+        "seed": 424242,
+        "time": 120.4,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 5
+      },
+      {
+        "timestamp": 1793592312.0582576,
+        "seed": 424242,
+        "time": 140.0,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 6
+      },
+      {
+        "timestamp": 1793592915.3038561,
+        "seed": 424242,
+        "time": 180.3,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 18
+      },
+      {
+        "timestamp": 1793593061.8864489,
+        "seed": 424242,
+        "time": 45.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 2
+      },
+      {
+        "timestamp": 1793593483.5683315,
+        "seed": 424242,
+        "time": 90.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 7
+      },
+      {
+        "timestamp": 1793593694.9247267,
+        "seed": 424242,
+        "time": 120.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 9
+      },
+      {
+        "timestamp": 1793593973.413711,
+        "seed": 424242,
+        "time": 120.1,
+        "reached": false,
+        "rates": {
+          "red": 0
+        },
+        "failures_count": 11
+      },
+      {
+        "timestamp": 1793594314.9319007,
+        "seed": 424242,
+        "time": 12.0,
+        "reached": true,
+        "rates": {
+          "red": 5
+        },
+        "failures_count": 0
+      }
+    ]
+  },
+  "green": {
+    "best_time": null,
+    "best_seed": null,
+    "runs_total": 17,
+    "runs_completed": 0,
+    "history": [
+      {
+        "timestamp": 1793570579.1932,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 18
+      },
+      {
+        "timestamp": 1793571226.4161863,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 11
+      },
+      {
+        "timestamp": 1793571872.5918286,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 13
+      },
+      {
+        "timestamp": 1793572517.7791917,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 6
+      },
+      {
+        "timestamp": 1793573161.912519,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 23
+      },
+      {
+        "timestamp": 1793573811.0880792,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 12
+      },
+      {
+        "timestamp": 1793574452.0719717,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 14
+      },
+      {
+        "timestamp": 1793575096.2116694,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 12
+      },
+      {
+        "timestamp": 1793575745.3755176,
+        "seed": 2476103329,
+        "time": 200.1,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 20
+      },
+      {
+        "timestamp": 1793576387.2246969,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 23
+      },
+      {
+        "timestamp": 1793577035.536799,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 13
+      },
+      {
+        "timestamp": 1793577680.0756695,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 14
+      },
+      {
+        "timestamp": 1793578326.8030913,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 22
+      },
+      {
+        "timestamp": 1793578971.398968,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 30
+      },
+      {
+        "timestamp": 1793579615.4002194,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 9
+      },
+      {
+        "timestamp": 1793580260.5563247,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 10
+      },
+      {
+        "timestamp": 1793580908.4526377,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "green": 0.0
+        },
+        "failures_count": 16
+      }
+    ]
+  },
+  "steel": {
+    "best_time": null,
+    "best_seed": null,
+    "runs_total": 17,
+    "runs_completed": 0,
+    "history": [
+      {
+        "timestamp": 1793570794.3590066,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 9
+      },
+      {
+        "timestamp": 1793571443.3014402,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 11
+      },
+      {
+        "timestamp": 1793572089.4797244,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 17
+      },
+      {
+        "timestamp": 1793572732.6060693,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 5
+      },
+      {
+        "timestamp": 1793573378.3624973,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 6
+      },
+      {
+        "timestamp": 1793574024.2691543,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 26
+      },
+      {
+        "timestamp": 1793574665.5547574,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 27
+      },
+      {
+        "timestamp": 1793575313.1963105,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 11
+      },
+      {
+        "timestamp": 1793575959.2746096,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 3
+      },
+      {
+        "timestamp": 1793576604.21176,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 13
+      },
+      {
+        "timestamp": 1793577251.780766,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 7
+      },
+      {
+        "timestamp": 1793577894.4301083,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 13
+      },
+      {
+        "timestamp": 1793578539.8872678,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 10
+      },
+      {
+        "timestamp": 1793579184.6538427,
+        "seed": 2476103329,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 14
+      },
+      {
+        "timestamp": 1793579830.6532373,
+        "seed": 424242,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 23
+      },
+      {
+        "timestamp": 1793580474.0092945,
+        "seed": 3598211047,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 12
+      },
+      {
+        "timestamp": 1793581124.8989122,
+        "seed": 1873625901,
+        "time": 201.3,
+        "reached": false,
+        "rates": {
+          "steel": 0.0
+        },
+        "failures_count": 7
+      }
+    ]
+  }
+}

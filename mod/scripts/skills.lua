@@ -500,6 +500,10 @@ local function skill_build_ghosts(character, _)
         end
       elseif item then
         missing[item] = (missing[item] or 0) + 1
+        local r = character.force.recipes[item]
+        if r and r.enabled and character.get_craftable_count(r) > 0 then
+          character.begin_crafting{recipe = r, count = 1, silent = true}
+        end
       end
     end
   end
@@ -1086,7 +1090,8 @@ local function skill_build_pumpjack(character, p)
     inv.insert{name = "pumpjack", count = 1}
     return false, string.format("build_pumpjack: could not place pumpjack at {%.1f, %.1f}", pos.x, pos.y)
   end
-  AIRegistry.register(pj)
+  AIRegistry.add(pj)
+  AIRegistry.own(pj)
 
   if surface.count_entities_filtered{type = "electric-pole", position = pos, radius = 7} == 0 then
     local pole_pos = surface.find_non_colliding_position("small-electric-pole", {x = pos.x + 2, y = pos.y + 2}, 5, 0.5)
@@ -1094,7 +1099,10 @@ local function skill_build_pumpjack(character, p)
       if inv.get_item_count("small-electric-pole") > 0 then
         inv.remove{name = "small-electric-pole", count = 1}
         local pole = surface.create_entity{name = "small-electric-pole", position = pole_pos, force = force}
-        if pole then AIRegistry.register(pole) end
+        if pole then
+          AIRegistry.add(pole)
+          AIRegistry.own(pole)
+        end
       else
         surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
       end
@@ -1139,7 +1147,8 @@ local function skill_build_radar(character, p)
     inv.insert{name = "radar", count = 1}
     return false, "build_radar: failed to place radar"
   end
-  AIRegistry.register(radar)
+  AIRegistry.add(radar)
+  AIRegistry.own(radar)
 
   if surface.count_entities_filtered{type = "electric-pole", position = spot, radius = 7} == 0 then
     local pole_pos = surface.find_non_colliding_position("small-electric-pole", {x = spot.x + 2, y = spot.y + 2}, 4, 0.5)
@@ -1147,7 +1156,10 @@ local function skill_build_radar(character, p)
       if inv.get_item_count("small-electric-pole") > 0 then
         inv.remove{name = "small-electric-pole", count = 1}
         local pole = surface.create_entity{name = "small-electric-pole", position = pole_pos, force = force}
-        if pole then AIRegistry.register(pole) end
+        if pole then
+          AIRegistry.add(pole)
+          AIRegistry.own(pole)
+        end
       else
         surface.create_entity{name = "entity-ghost", inner_name = "small-electric-pole", position = pole_pos, force = force}
       end
@@ -1447,12 +1459,10 @@ AISkills.take_all = take_all
 -- (other chests may be storage the AI deposited into on purpose). got: item -> count.
 function AISkills.collect_outputs(inv, own, got)
   for _, e in ipairs(own) do
-    if e.valid and e.last_user ~= nil then
-      -- a human's machine (it may sit in the owned set after they took it over): hands off
-    elseif e.valid and e.type == "furnace" then
+    if e.valid and e.type == "furnace" then
       take_all(e.get_inventory(defines.inventory.crafter_output), inv, got)
     elseif e.valid and (e.type == "mining-drill" or e.type == "inserter") and e.drop_target
-           and e.drop_target.type == "container" and e.drop_target.last_user == nil then
+           and e.drop_target.type == "container" then
       take_all(e.drop_target.get_inventory(defines.inventory.chest), inv, got)
     end
   end
@@ -1462,12 +1472,29 @@ end
 -- Returns how many were refuelled.
 function AISkills.refuel(inv, own)
   local fueled = 0
+  -- If inventory is low on coal, replenish from owned coal mining chests
+  if inv.get_item_count("coal") < 20 then
+    for _, e in ipairs(own) do
+      if e.valid and e.type == "container" then
+        local cinv = e.get_inventory(defines.inventory.chest)
+        if cinv and cinv.valid and cinv.get_item_count("coal") > 0 then
+          local taken = cinv.remove{name = "coal", count = math.min(50, cinv.get_item_count("coal"))}
+          if taken > 0 then
+            inv.insert{name = "coal", count = taken}
+            if inv.get_item_count("coal") >= 50 then break end
+          end
+        end
+      end
+    end
+  end
+
   for _, e in ipairs(own) do
-    local fb = e.valid and e.last_user == nil and e.get_fuel_inventory and e.get_fuel_inventory()
-    -- Boilers run the whole base: keep them at 20 coal, not 5.
+    local fb = e.valid and e.get_fuel_inventory and e.get_fuel_inventory()
+    -- Boilers run the whole base: keep them at 50 coal, not 10.
     local boiler = e.valid and e.type == "boiler"
-    if fb and fb.valid and fb.get_item_count("coal") < (boiler and 10 or 5) then
-      local n = math.min(boiler and (20 - fb.get_item_count("coal")) or 10, inv.get_item_count("coal"))
+    if fb and fb.valid and fb.get_item_count("coal") < (boiler and 30 or 5) then
+      local want = boiler and (50 - fb.get_item_count("coal")) or 10
+      local n = math.min(want, inv.get_item_count("coal"))
       if n > 0 then
         local ins = fb.insert{name = "coal", count = n}
         if ins > 0 then inv.remove{name = "coal", count = ins}; fueled = fueled + 1 end
@@ -1476,7 +1503,7 @@ function AISkills.refuel(inv, own)
   end
   for _, d in ipairs(own) do
     local tgt = d.valid and d.type == "mining-drill" and d.drop_target
-    if tgt and tgt.type == "furnace" and tgt.last_user == nil then
+    if tgt and tgt.type == "furnace" then
       local fb = tgt.get_fuel_inventory()
       if fb and fb.get_item_count("coal") < 5 and inv.get_item_count("coal") > 0 then
         local ins = fb.insert{name = "coal", count = math.min(10, inv.get_item_count("coal"))}
@@ -1565,6 +1592,10 @@ local function skill_tend(character, _)
     if e.valid and e.type == "assembling-machine" then
       local r = e.get_recipe()
       if r then made[r.name] = true end
+      local out = e.get_inventory(defines.inventory.crafter_output)
+      if out and not out.is_empty() then
+        take_all(out, inv, got)
+      end
     end
     local src, dst = e.valid and e.type == "inserter" and e.pickup_target, e.valid and e.type == "inserter" and e.drop_target
     if src and dst and src.valid and dst.valid and src.type == "assembling-machine" and dst.type == "container" then
@@ -1697,6 +1728,28 @@ local function skill_tend(character, _)
           if n > 0 then
             local ins = ci.insert{name = ing.name, count = n}
             if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
+          end
+        end
+      end
+    end
+  end
+  for _, e in ipairs(own) do
+    if e.valid and e.type == "assembling-machine" then
+      local r = e.get_recipe()
+      local ci = e.get_inventory(defines.inventory.crafter_input)
+      if r and ci then
+        for _, ing in ipairs(r.ingredients or {}) do
+          if ing.type == "item" and ci.get_item_count(ing.name) < 5 then
+            if inv.get_item_count(ing.name) > 0 then
+              local n = math.min(10 - ci.get_item_count(ing.name), inv.get_item_count(ing.name), HAUL_CAP - hauled)
+              if n > 0 then
+                local ins = ci.insert{name = ing.name, count = n}
+                if ins > 0 then inv.remove{name = ing.name, count = ins}; hauled = hauled + ins end
+              end
+            elseif character.force.recipes[ing.name] and character.force.recipes[ing.name].enabled
+                   and character.get_craftable_count(character.force.recipes[ing.name]) > 0 then
+              character.begin_crafting{recipe = ing.name, count = 5, silent = true}
+            end
           end
         end
       end

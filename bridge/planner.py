@@ -191,7 +191,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             if bp_name not in placed_names:
                 yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular stone smelter column", True
             else:
-                if _rate(p, "iron-plate") < 30 or _rate(p, "copper-plate") < 15:
+                if (_rate(p, "iron-plate") < 30 or _rate(p, "copper-plate") < 15) and _count(p.get("ghosts")) == 0 and _rate(p, "iron-plate") > 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
                     if snap:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
@@ -224,7 +224,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 lab_entry = lib.get(lab_bp, {})
                 if lab_bp not in placed_names and _lab_count(p) < 2:
                     yield {"skill": "place_blueprint", "name": lab_bp}, "stamp modular tileable lab array", True
-                elif lab_bp in placed_names and _lab_count(p) < 6 and _rate(p, "automation-science-pack") >= 10:
+                elif lab_bp in placed_names and _lab_count(p) < 6 and _rate(p, "automation-science-pack") >= 10 and _count(p.get("ghosts")) == 0:
                     snap = blueprints.get_tile_target(placed_bps, lab_entry)
                     if snap:
                         yield ({"skill": "place_blueprint", "name": lab_bp, "position": snap},
@@ -234,9 +234,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 bp_entry = lib.get(bp_name, {})
                 if bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular red science unit", True
-                elif _rate(p, "automation-science-pack") < 5:
+                elif _rate(p, "automation-science-pack") < 5 and _count(p.get("ghosts")) == 0 and _rate(p, "automation-science-pack") > 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
-                    if snap and _rate(p, "automation-science-pack") > 0:
+                    if snap:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
                                "tile modular red science for higher output", True)
 
@@ -277,7 +277,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 bp_entry = lib.get(bp_name, {})
                 if bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular green science unit", True
-                elif _rate(p, "logistic-science-pack") < 5:
+                elif _rate(p, "logistic-science-pack") < 5 and _count(p.get("ghosts")) == 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
                     if snap and _rate(p, "logistic-science-pack") > 0:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
@@ -327,7 +327,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 bp_entry = lib.get(bp_name, {})
                 if bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular steel smelter column", True
-                elif _rate(p, "steel-plate") < 5:
+                elif _rate(p, "steel-plate") < 5 and _count(p.get("ghosts")) == 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
                     if snap and _rate(p, "steel-plate") > 0:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
@@ -441,15 +441,16 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     reflexes = _reflexes(p)
     drops = ("ground",) if reflexes else ("ground", "container", "furnace")
     stalled = [n for n in needs.get("outputs_full") or [] if n.get("drop") in drops]
-    if (needs.get("burners_low_fuel") and not reflexes) or stalled:
-        yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
-    elif (p.get("power") or {}).get("machines_no_power") and _lab_count(p) + _by_type(p, "assembling-machine"):
-        yield {"skill": "tend"}, "a lab or assembler has no power: tend wires it to the grid", True
     if inv.get("coal", 0) < 5:
         if (factory.get("miners_by_resource") or {}).get("coal") and not reflexes:
             yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
         yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
+
+    if (needs.get("burners_low_fuel") and not reflexes) or stalled:
+        yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True
+    elif (p.get("power") or {}).get("machines_no_power") and _lab_count(p) + _by_type(p, "assembling-machine"):
+        yield {"skill": "tend"}, "a lab or assembler has no power: tend wires it to the grid", True
 
     # 1b. Enemies near home or an attack on the AI's things: gun turrets with ammo.
     threat = p.get("threat") or {}

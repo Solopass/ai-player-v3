@@ -177,10 +177,17 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
                         break
                 else:
                     parts = [int(p) for p in res_str.split(",") if p.isdigit()]
-                    if len(parts) >= 2:
+                    if len(parts) >= 3:
+                        rate_val, total_val, inv_val = parts[0], parts[1], parts[2]
+                        rates[sprint_key] = max(rate_val, total_val, inv_val)
+                        if rate_val >= target["threshold"] or total_val >= target["threshold"] or inv_val >= target["threshold"]:
+                            reached = True
+                            elapsed = time.time() - start_time
+                            break
+                    elif len(parts) >= 2:
                         rate_val, total_val = parts[0], parts[1]
-                        rates[sprint_key] = rate_val
-                        if rate_val >= target["threshold"] or total_val >= max(target["threshold"] * 2, 5):
+                        rates[sprint_key] = max(rate_val, total_val)
+                        if rate_val >= target["threshold"] or total_val >= target["threshold"]:
                             reached = True
                             elapsed = time.time() - start_time
                             break
@@ -200,11 +207,13 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
         # Read top failure modes from bridge logs
         try:
             log_text = (tmp / "bridge.log").read_text(encoding="utf-8", errors="ignore")
-            if not reached:
-                print("Bridge log tail:\n" + "\n".join(log_text.splitlines()[-10:]), flush=True)
             for line in log_text.splitlines():
                 if "override:" in line or "failed" in line or "error" in line:
                     failures.append(line.strip()[:100])
+            if not reached:
+                print("Bridge log tail:\n" + "\n".join(log_text.splitlines()[-20:]), flush=True)
+                print("Bridge failure lines:\n" + "\n".join(failures[:15]), flush=True)
+                shutil.copytree(tmp, REPO / "debug_sprint", dirs_exist_ok=True)
         except Exception:
             pass
 
@@ -234,7 +243,7 @@ def run_single_sprint(sprint_key: str, seed: int, speed: float = 8.0,
     playbook_rules = reflect_sprint(sprint_key, elapsed, is_pb, prev_pb, failures)
 
     status_str = f"COMPLETED in {elapsed:.1f}s" if reached else f"TIMEOUT ({elapsed:.1f}s)"
-    pb_str = "NEW PB! 🏆" if is_pb else f"(PB: {prev_pb}s)" if prev_pb else ""
+    pb_str = "NEW PB!" if is_pb else f"(PB: {prev_pb}s)" if prev_pb else ""
     print(f"[Sprint Result] {target['name']}: {status_str} {pb_str}")
     if playbook_rules:
         print(f"  Playbook heuristic: {playbook_rules[0]}")

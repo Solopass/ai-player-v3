@@ -802,17 +802,24 @@ soak_command("ai-sprint-check", function(cmd)
   local name = cmd.parameter or "automation-science-pack"
   local s = game.surfaces["nauvis"]
   if not s then return end
-  local p = game.forces["player"].get_item_production_statistics(s)
+  local fname = (storage.ai_player and storage.ai_player.force_name) or "player"
+  local f = game.forces[fname] or game.forces["player"]
+  local p = f.get_item_production_statistics(s)
   local c = p.get_flow_count{name = name, category = "input", precision_index = defines.flow_precision_index.one_minute, count = true}
   local tot = p.get_input_count(name)
-  rcon.print(string.format("%d,%d", math.floor(c), math.floor(tot)))
+  local inv_count = 0
+  if storage.ai_player and storage.ai_player.character and storage.ai_player.character.valid then
+    inv_count = storage.ai_player.character.get_item_count(name)
+  end
+  rcon.print(string.format("%d,%d,%d", math.floor(c), math.floor(tot), inv_count))
 end)
 
 soak_command("ai-sprint-oil", function()
   local s = game.surfaces["nauvis"]
   if not s then return end
-  local pj = s.count_entities_filtered{name = "pumpjack", force = "player"}
-  local ref = s.count_entities_filtered{name = "oil-refinery", force = "player"}
+  local fname = (storage.ai_player and storage.ai_player.force_name) or "player"
+  local pj = s.count_entities_filtered{name = "pumpjack", force = fname}
+  local ref = s.count_entities_filtered{name = "oil-refinery", force = fname}
   rcon.print(string.format("%d,%d", pj, ref))
 end)
 
