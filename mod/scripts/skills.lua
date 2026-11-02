@@ -1031,11 +1031,6 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles)
 
   return nil
 end
-  if dx > 0 then return defines.direction.east end
-  if dx < 0 then return defines.direction.west end
-  if dy > 0 then return defines.direction.south end
-  return defines.direction.north
-end
 
 local function belt_path(a, b, horizontal_first)
   local ax, ay = math.floor(a.x) + 0.5, math.floor(a.y) + 0.5
