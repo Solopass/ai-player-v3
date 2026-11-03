@@ -251,6 +251,11 @@ def _print(report: dict) -> None:
             print(f"doctor attention: {doc.get('total_stuck')} stuck machine(s), {doc.get('recent_fixes', 0)} fixes in last 10m")
             for m in doc.get("attention") or []:
                 print(f"  {m.get('name')} {m.get('status')} ({m.get('seconds_ago')}s ago)")
+        ff = d.get("flow_faults")
+        if ff and ff.get("count", 0) > 0:
+            print(f"flow faults: {ff.get('count')} (last 10 min)")
+            for det in ff.get("details") or []:
+                print(f"  {det}")
 
     h(f"Mod events (last {len(report['events'])})")
     for e in report["events"]:

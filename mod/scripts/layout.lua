@@ -1462,6 +1462,18 @@ function AILayout.build(character, plan)
       if ins > 0 then inv.remove{name = "coal", count = ins} end
     end
   end
+
+  if AIFlow and AIFlow.check then
+    local flow_res = AIFlow.check(placed)
+    if not flow_res.ok then
+      local rep_ok, rep_detail = AIFlow.repair(character, flow_res)
+      if not rep_ok then
+        undo(character, placed)
+        return false, rep_detail
+      end
+    end
+  end
+
   return true, plan.place
 end
 

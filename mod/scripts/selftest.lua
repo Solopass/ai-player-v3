@@ -1092,6 +1092,162 @@ CASES.bp_ports = {
   end,
 }
 
+
+CASES.flow_reversed_inserter = {
+  delay = 60,
+  setup = function(c)
+    local s, f = c.surface, c.force
+    free_power(s, f, 5, 5)
+    local asm = s.create_entity{name = "assembling-machine-1", position = {0.5, 1.5}, force = f, recipe = "iron-gear-wheel"}
+    AIRegistry.own(asm)
+    c.asm = asm
+    local chest = s.create_entity{name = "wooden-chest", position = {0.5, 4.5}, force = f}
+    chest.insert{name = "iron-plate", count = 50}
+    AIRegistry.own(chest)
+    c.chest = chest
+    -- Reversed inserter: faces North (drops into chest to south, picks from asm to north)
+    local ins = s.create_entity{name = "inserter", position = {0.5, 3.5}, direction = defines.direction.north, force = f}
+    AIRegistry.own(ins)
+    c.ins = ins
+  end,
+  run = function(c) return {} end,
+  late = function(c)
+    local res = AIFlow.check({c.ins})
+    c.initial_fault = not res.ok
+    if not res.ok then
+      AIFlow.repair(c.character, res)
+    end
+    c.final_check = AIFlow.check({c.ins})
+    return {}
+  end,
+  late_after = 10,
+  check = function(c, add)
+    add("initial reversed inserter detected as fault", c.initial_fault == true, c.initial_fault)
+    add("inserter repaired to drop into assembler", c.ins.valid and (c.ins.drop_target == c.asm or c.ins.direction == defines.direction.south),
+        c.ins.valid and tostring(c.ins.direction) or "destroyed")
+    add("final flow check passes", c.final_check and c.final_check.ok == true,
+        c.final_check and #c.final_check.faults or "nil")
+  end,
+}
+
+CASES.flow_dead_end = {
+  delay = 60,
+  setup = function(c)
+    local s, f = c.surface, c.force
+    -- Subcase 1: Belt ending 1 tile before a chest (adjacent east)
+    local b1 = s.create_entity{name = "transport-belt", position = {0.5, 0.5}, direction = defines.direction.south, force = f}
+    local b2 = s.create_entity{name = "transport-belt", position = {0.5, 1.5}, direction = defines.direction.south, force = f}
+    local chest = s.create_entity{name = "wooden-chest", position = {1.5, 1.5}, force = f}
+    AIRegistry.own(b1); AIRegistry.own(b2); AIRegistry.own(chest)
+    c.b2 = b2
+    -- Subcase 2: Isolated belt leading nowhere
+    local isolated = s.create_entity{name = "transport-belt", position = {10.5, 10.5}, direction = defines.direction.north, force = f}
+    AIRegistry.own(isolated)
+    c.isolated = isolated
+  end,
+  run = function(c) return {} end,
+  late = function(c)
+    -- Repair subcase 1
+    local res1 = AIFlow.check({c.b2})
+    if not res1.ok then AIFlow.repair(c.character, res1) end
+    -- Repair subcase 2 (isolated)
+    local res2 = AIFlow.check({c.isolated})
+    if not res2.ok then AIFlow.repair(c.character, res2) end
+    return {}
+  end,
+  late_after = 10,
+  check = function(c, add)
+    add("dead-end belt rotated toward adjacent consumer", c.b2.valid and c.b2.direction == defines.direction.east,
+        c.b2.valid and tostring(c.b2.direction) or "destroyed")
+    add("isolated dead-end belt deconstructed", not c.isolated.valid,
+        c.isolated.valid and "still exists" or "deconstructed")
+  end,
+}
+
+CASES.flow_red_cell = {
+  delay = 300,
+  setup = function(c)
+    free_power(c.surface, c.force, 15, 15)
+    give(c.character, {inserter = 10, ["assembling-machine-1"] = 3, ["wooden-chest"] = 6, ["transport-belt"] = 20, ["small-electric-pole"] = 6})
+    AILayout.only_facing = c.facing
+  end,
+  run = function(c)
+    return {{skill = "build_red_cell"}}
+  end,
+  check = function(c, add)
+    add("build_red_cell ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local owned = AIRegistry.owned(c.surface, {"assembling-machine", "inserter", "transport-belt", "container"})
+    add("entities built", #owned > 0, #owned)
+    local res = AIFlow.check(owned)
+    add("flow check zero faults", res.ok == true and #res.faults == 0,
+        string.format("%d faults: %s", #res.faults, res.faults[1] and res.faults[1].detail or "none"))
+  end,
+}
+
+CASES.prod_red_cell = {
+  delay = 10800,
+  setup = function(c)
+    free_power(c.surface, c.force, 15, 15)
+    give(c.character, {inserter = 10, ["assembling-machine-1"] = 3, ["wooden-chest"] = 6, ["transport-belt"] = 20, ["small-electric-pole"] = 6})
+    c.saved_speed = game.speed
+    game.speed = 10
+  end,
+  run = function(c)
+    return {{skill = "build_red_cell"}}
+  end,
+  late = function(c)
+    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
+      ch.insert{name = "iron-plate", count = 200}
+      ch.insert{name = "copper-plate", count = 100}
+    end
+    return {}
+  end,
+  late_after = 60,
+  check = function(c, add)
+    game.speed = c.saved_speed or 1
+    add("build_red_cell ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local made = 0
+    for _, a in ipairs(c.surface.find_entities_filtered{type = "assembling-machine"}) do
+      local r = a.get_recipe()
+      if r and r.name == "automation-science-pack" then
+        made = made + a.products_finished
+      end
+    end
+    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
+      made = made + ch.get_item_count("automation-science-pack")
+    end
+    add("automation science packs produced autonomously", made >= 5, string.format("produced %d packs", made))
+  end,
+}
+
+CASES.prod_mining_field = {
+  delay = 10800,
+  setup = function(c)
+    free_power(c.surface, c.force, 15, 15)
+    paint_ore(c.surface, "iron-ore", 0, 0, 8, 2000)
+    give(c.character, {["electric-mining-drill"] = 4, ["transport-belt"] = 40, ["wooden-chest"] = 4, ["small-electric-pole"] = 10, inserter = 5})
+    c.saved_speed = game.speed
+    game.speed = 10
+  end,
+  run = function(c)
+    return {{skill = "build_miner", resource = "iron-ore", output = "belt", drill = "electric", count = 2}}
+  end,
+  check = function(c, add)
+    game.speed = c.saved_speed or 1
+    add("build_miner ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local total_ore = 0
+    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
+      total_ore = total_ore + ch.get_item_count("iron-ore")
+    end
+    for _, b in ipairs(c.surface.find_entities_filtered{type = "transport-belt"}) do
+      for i = 1, b.get_max_transport_line_index() do
+        total_ore = total_ore + b.get_transport_line(i).get_item_count("iron-ore")
+      end
+    end
+    add("iron ore produced into collector", total_ore >= 50, string.format("total ore: %d", total_ore))
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,

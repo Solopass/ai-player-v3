@@ -812,6 +812,10 @@ function AIReflexes.doctor_pass(ch, tick)
     end
   end
   doc.cursor = last_uid
+
+  if AIFlow and AIFlow.doctor_pass then
+    AIFlow.doctor_pass(ch, 5)
+  end
 end
 
 function AIReflexes.tick(event)

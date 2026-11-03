@@ -12,6 +12,7 @@ require("scripts.queries")
 require("scripts.brain")
 require("scripts.blueprints")
 require("scripts.layout")
+require("scripts.flowcheck")
 require("scripts.skills")
 require("scripts.reflexes")
 require("scripts.selftest")
@@ -111,6 +112,14 @@ remote.add_interface("ai_player", {
       placed = ap.placed_blueprints and { table.unpack(ap.placed_blueprints, math.max(1, #ap.placed_blueprints - 4)) } or {},
       bridge_status = ap.bridge_status, events = ap.events or {},
       reflex = AIReflexes.status(),
+      flow_faults = (function()
+        local faults = ap.flow_faults or {}
+        local details = {}
+        for i = 1, math.min(5, #faults) do
+          details[#details + 1] = faults[i].detail or faults[i].kind
+        end
+        return {count = #faults, details = details}
+      end)(),
       doctor = (function()
         local doc = ap.doctor
         if not doc then return {total_stuck = 0, attention = {}, recent_fixes = 0} end

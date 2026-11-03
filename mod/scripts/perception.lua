@@ -926,6 +926,7 @@ function AIPerception.gather(character)
     end
   end
   perception.deconstruction = {count = #decon_entities, list = decon_list}
+  perception.flow_faults = #(storage.ai_player and storage.ai_player.flow_faults or {})
 
   return perception
 end
