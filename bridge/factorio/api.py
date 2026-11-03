@@ -61,6 +61,8 @@ SKILLS: dict[str, list[str]] = {
     "place_blueprint": ["name"],
     "craft_for":     ["item"],
     "connect_belt":  ["from", "to"],
+    "connect_pipe":  ["from", "to"],
+    "connect_ports": ["from_bp", "from_port", "to_bp", "to_port"],
 }
 
 # Directions the move action accepts
@@ -73,6 +75,22 @@ _NUMERIC_DIRECTIONS = {
     "0": "north", "2": "northeast", "4": "east",  "6": "southeast",
     "8": "south", "10": "southwest", "12": "west", "14": "northwest",
 }
+
+
+LAYOUT_SKILLS = {"place_blueprint", "connect_belt", "connect_pipe", "connect_ports"}
+LAYOUT_ACTIONS = {"place"}
+
+
+def skills_for_model(llm_layout: bool = False) -> dict[str, list[str]]:
+    if llm_layout:
+        return dict(SKILLS)
+    return {k: v for k, v in SKILLS.items() if k not in LAYOUT_SKILLS}
+
+
+def actions_for_model(llm_layout: bool = False) -> dict[str, list[str]]:
+    if llm_layout:
+        return dict(ACTIONS)
+    return {k: v for k, v in ACTIONS.items() if k not in LAYOUT_ACTIONS}
 
 
 def validate(actions: list) -> list[dict]:

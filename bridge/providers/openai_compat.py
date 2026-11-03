@@ -55,7 +55,11 @@ def complete(messages: list[dict], config: ProviderConfig) -> str | None:
     kwargs = {}
     if config.json_schema:
         from ..schema import response_format
-        kwargs["response_format"] = response_format(blueprint_names=config.blueprint_names)
+        kwargs["response_format"] = response_format(
+            blueprint_names=config.blueprint_names,
+            llm_layout=config.llm_layout,
+            ghosts=config.ghosts,
+        )
 
     try:
         response = client.chat.completions.create(

@@ -218,9 +218,10 @@ def for_surface(lib: dict[str, dict], perception: dict) -> dict[str, dict]:
     return {n: e for n, e in lib.items() if e.get("planet") in (None, here)}
 
 
-def load_library() -> dict[str, dict]:
+def load_library(include_local: bool = False) -> dict[str, dict]:
     lib: dict[str, dict] = {}
-    for d in (REPO_DIR, LOCAL_DIR):
+    dirs = (REPO_DIR, LOCAL_DIR) if include_local else (REPO_DIR,)
+    for d in dirs:
         if not d.exists():
             continue
         for f in sorted(d.glob("*.json")):
@@ -230,7 +231,7 @@ def load_library() -> dict[str, dict]:
                 e = json.loads(f.read_text(encoding="utf-8"))
                 e.setdefault("hash", _hash(e["string"]))   # hand-written entries
                 e.setdefault("planet", _planet_from_name(e["name"]))
-                e.setdefault("source", "repo")
+                e.setdefault("source", "local" if d == LOCAL_DIR else "repo")
                 for k, v in (("category", "other"), ("placement", "clear"), ("entities", 0)):
                     e.setdefault(k, v)
                 lib[e["name"]] = e
@@ -410,7 +411,7 @@ def main() -> None:
             e = json.loads((LOCAL_DIR / f"{n}.json").read_text(encoding="utf-8"))
             print(f"  {n:40s} {e['category']:18s} {e['placement']:10s} {e['entities']} entities")
     elif args.cmd == "list":
-        lib = load_library()
+        lib = load_library(include_local=True)
         if not lib:
             print("Library is empty.")
         for n, e in sorted(lib.items()):

@@ -102,7 +102,9 @@ class Coach:
             "rewrite_craft_smelted": 0,
             "drop_redundant_research": 0,
             "drop_empty_build_ghosts": 0,
+            "drop_llm_layout": 0,
         }
+        self.llm_layout: bool = False
 
     def _note_progress(self, p: dict) -> None:
         names = {i.get("name") for i in p.get("inventory") or [] if isinstance(i, dict)}
@@ -203,7 +205,7 @@ class Coach:
 
     # -- per answer -------------------------------------------------------
     def guard(self, entries: list[dict] | None, payload: dict,
-              steps: Steps | None) -> tuple[list[dict], str | None]:
+              steps: Steps | None, llm_layout: bool | None = None) -> tuple[list[dict], str | None]:
         """Drop blocked moves. If nothing useful is left, or the AI is stuck,
         use the planner's moves, but never against a player directive /
         forced skill. Returns (entries, reason-if-overridden)."""
@@ -211,12 +213,17 @@ class Coach:
         p = payload.get("perception") or {}
         blocked = self.blocked()
         player_led = mem.get("user_directive") or mem.get("force_skill")
+        layout_allowed = self.llm_layout if llm_layout is None else llm_layout
 
         cleaned_entries = []
         for e in (entries or []):
             if not isinstance(e, dict):
                 continue
             skill = e.get("skill") or e.get("action")
+            if not layout_allowed and e.get("source") != "autopilot":
+                if skill in ("place_blueprint", "connect_belt", "connect_pipe", "connect_ports") or e.get("action") == "place":
+                    self.rewrites["drop_llm_layout"] += 1
+                    continue
             if skill == "fuel_all":
                 self.rewrites["drop_fuel_all"] += 1
                 continue

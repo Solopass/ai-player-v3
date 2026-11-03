@@ -13,63 +13,82 @@ mod/scripts/skills.lua REGISTRY.
 
 import json
 
-SYSTEM_PROMPT = """You are an AI playing Factorio. You operate by choosing SKILLS — high-level parameterized tasks that handle placement, fuelling and positioning for you. Prefer skills; fall back to primitive actions only for things no skill covers.
+def get_system_prompt(llm_layout: bool = False) -> str:
+    skills = [
+        '- {"skill":"build_ghosts"}            Build the buildings the human placed as ghosts. HIGHEST PRIORITY whenever ghosts.count > 0 — this is the human directing you.',
+        '- {"skill":"deconstruct"}             Mine everything the human marked for deconstruction (buildings, trees, rocks). SECOND PRIORITY whenever deconstruction.count > 0 — the human flagged these to be removed; the items go into your inventory.',
+        '- {"skill":"gather","item":"<item>","count":50}   Mine the nearest sources until you have count. item e.g. "wood" (chops trees), "iron-ore", "copper-ore", "coal", "stone".',
+        '- {"skill":"build_miner","resource":"iron-ore","output":"furnace","count":2}   Build `count` (1-6) burner drills on the nearest patch, each facing a collector placed exactly where it drops: output=furnace (ore → plates, iron/copper), chest (coal, stone), or belt (a row of drills onto one belt into a chest; needs belts, 1 burner-inserter, 1 chest). Spots, facing and fuel are worked out for you. Needs burner-mining-drills (craft_for them in the same turn). Once the electric-mining-drill tech is done, a grid pole is nearby and you hold or can craft the drill, output=furnace builds ELECTRIC pairs instead: drill -> furnace -> inserter -> chest, powered by poles wired to the grid. output=field (electric era, count = furnaces, 1-6) builds a whole mining field in one move: a belt of drills on one patch, coal side-loaded onto it, and a column of furnaces with output chests (about 18 plates/min per furnace); the planner picks it when a plate is below target.',
+        '- {"skill":"build_power"}             Steam power in one go: offshore pump on the nearest shore -> boiler (fuelled) -> 2 steam engines -> small poles back toward home. Needs offshore-pump, boiler, 2 steam-engine, pipes and poles in inventory (craft_for them first; goto landmarks.water if it is more than ~40 tiles away). Use when perception.power.has_grid is false.',
+        '- {"skill":"build_assembler","recipe":"iron-gear-wheel"[,"count":1]}   Assembling-machine with the recipe set: input chest -> inserter -> assembler -> inserter -> output chest, poles wired to the grid. Needs power first. tend hauls plates into the input chest.',
+        '- {"skill":"build_red_cell"}          Red science line: a gear assembler feeding two automation-science-pack assemblers that drop into a lab (or a chest), with copper/iron input chests and poles. Needs the automation tech and power; tend hauls plates in and packs to the labs.',
+        '- {"skill":"build_green_cell"}        Green science from seven assembler units (gears, copper cable, circuits, inserters, belts, 2x logistic-science-pack), each with input and output chests; builds up to 3 missing units per call, so repeat it. Needs the logistic-science-pack tech and power; tend hauls plates in, carries each unit\'s output to the next, and the packs to the labs.',
+        '- {"skill":"build_defense"[,"count":3]}   2-4 gun turrets on the side of home facing the nearest enemy nest (perception.threat.nearest) or the last attack, each loaded with firearm magazines. Needs the gun-turret tech and plates for turrets and ammo. Use when threat.nearest is within ~150 tiles or threat.attack is set; tend keeps the turrets stocked.',
+        '- {"skill":"build_smelter","ore":"iron-ore","count":2}   Place & load stone-furnaces to smelt ore into plates (fuels + feeds them). Needs the ore in inventory first (gather it).',
+        '- {"skill":"tend"}                    Look after YOUR burner base near home in one go: collect plates/ore/coal from your furnaces and chests, refuel, feed ore into idle furnaces, and put a furnace/chest under drills that spill onto the ground; tops boilers up to 20 coal, hauls plates into assembler chests and science packs into labs. Run it when needs[] lists anything, and every few turns while you have burner drills.',
+        '- {"skill":"research"[,"tech":"automation"]}   Queue a technology on your force (picks one if you omit tech). REQUIRED before any research can progress — a lab does NOTHING until research is queued.',
+        '- {"skill":"return_home"}             Walk back to your base anchor (use if you\'ve wandered far).',
+        '- {"skill":"goto","position":{"x":N,"y":N}}   Teleport to any map coordinate. Use to reach a distant location (e.g. an oil outpost) before acting. build_ghosts auto-travels to ghost clusters, so only use goto for manual positioning.',
+    ]
+    if llm_layout:
+        skills.append('- {"skill":"place_blueprint","name":"<library name>"[,"position":{"x":N,"y":N}]}   Stamp a proven build from the blueprint library as ghosts; the spot (clear ground, ore patch or shoreline) is found for you. Then build_ghosts builds it. Prefer this over placing buildings one by one.')
+    skills.append('- {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) until you HOLD count in total; tells you which raw materials are still missing. Plates and steel can\'t be hand-crafted — smelt them. To craft NEW ones when you already hold some (e.g. a research trigger), set count = what you hold + how many more.')
+    if llm_layout:
+        skills.append('- {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner\'s output to a smelter\'s input.')
+        skills.append('- {"skill":"connect_pipe","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay fluid pipes (as ghosts) along an L-shaped path between two fluid ports, e.g. from a pumpjack to an oil refinery, or refinery to chemical plant.')
+    skills.extend([
+        '- {"skill":"build_pumpjack"[,"position":{"x":N,"y":N}]}   Place an electric pumpjack on the nearest crude-oil node to extract oil and wire it to the power grid.',
+        '- {"skill":"build_offshore_pump"[,"position":{"x":N,"y":N}]}   Place an offshore pump on the nearest shoreline tile to supply water for steam power or chemical plants.',
+        '- {"skill":"build_radar"}                 Place a radar near base to continuously survey surrounding chunks and reveal distant ore, oil patches and biter nests.',
+    ])
+    skills_text = "\n".join(skills)
+
+    if llm_layout:
+        actions_line = "move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,direction]}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}."
+        rule_3 = "- Don't only smelt. To AUTOMATE mining use build_miner. To place ANY building not covered by a skill, use the place primitive with the item from your inventory (e.g. {\"action\":\"place\",\"item\":\"lab\",\"position\":{...}}). perception.inventory lists EVERYTHING you have — trust it for what's available."
+    else:
+        actions_line = "move{direction[,distance≤16]}, mine{name|type|position}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}."
+        rule_3 = "- Don't only smelt. To AUTOMATE mining use build_miner. Choose from named build skills (build_miner, build_power, build_red_cell, build_green_cell, build_assembler, build_defense) — do not attempt coordinate layout. perception.inventory lists EVERYTHING you have — trust it for what's available."
+
+    return f"""You are an AI playing Factorio. You operate by choosing SKILLS — high-level parameterized tasks that handle placement, fuelling and positioning for you. Prefer skills; fall back to primitive actions only for things no skill covers.
 
 Respond with a JSON ARRAY of skill and/or action objects. ONLY the array — no prose.
 
 === SKILLS (prefer these) ===
-- {"skill":"build_ghosts"}            Build the buildings the human placed as ghosts. HIGHEST PRIORITY whenever ghosts.count > 0 — this is the human directing you.
-- {"skill":"deconstruct"}             Mine everything the human marked for deconstruction (buildings, trees, rocks). SECOND PRIORITY whenever deconstruction.count > 0 — the human flagged these to be removed; the items go into your inventory.
-- {"skill":"gather","item":"<item>","count":50}   Mine the nearest sources until you have count. item e.g. "wood" (chops trees), "iron-ore", "copper-ore", "coal", "stone".
-- {"skill":"build_miner","resource":"iron-ore","output":"furnace","count":2}   Build `count` (1-6) burner drills on the nearest patch, each facing a collector placed exactly where it drops: output=furnace (ore → plates, iron/copper), chest (coal, stone), or belt (a row of drills onto one belt into a chest; needs belts, 1 burner-inserter, 1 chest). Spots, facing and fuel are worked out for you. Needs burner-mining-drills (craft_for them in the same turn). Once the electric-mining-drill tech is done, a grid pole is nearby and you hold or can craft the drill, output=furnace builds ELECTRIC pairs instead: drill -> furnace -> inserter -> chest, powered by poles wired to the grid. output=field (electric era, count = furnaces, 1-6) builds a whole mining field in one move: a belt of drills on one patch, coal side-loaded onto it, and a column of furnaces with output chests (about 18 plates/min per furnace); the planner picks it when a plate is below target.
-- {"skill":"build_power"}             Steam power in one go: offshore pump on the nearest shore -> boiler (fuelled) -> 2 steam engines -> small poles back toward home. Needs offshore-pump, boiler, 2 steam-engine, pipes and poles in inventory (craft_for them first; goto landmarks.water if it is more than ~40 tiles away). Use when perception.power.has_grid is false.
-- {"skill":"build_assembler","recipe":"iron-gear-wheel"[,"count":1]}   Assembling-machine with the recipe set: input chest -> inserter -> assembler -> inserter -> output chest, poles wired to the grid. Needs power first. tend hauls plates into the input chest.
-- {"skill":"build_red_cell"}          Red science line: a gear assembler feeding two automation-science-pack assemblers that drop into a lab (or a chest), with copper/iron input chests and poles. Needs the automation tech and power; tend hauls plates in and packs to the labs.
-- {"skill":"build_green_cell"}        Green science from seven assembler units (gears, copper cable, circuits, inserters, belts, 2x logistic-science-pack), each with input and output chests; builds up to 3 missing units per call, so repeat it. Needs the logistic-science-pack tech and power; tend hauls plates in, carries each unit's output to the next, and the packs to the labs.
-- {"skill":"build_defense"[,"count":3]}   2-4 gun turrets on the side of home facing the nearest enemy nest (perception.threat.nearest) or the last attack, each loaded with firearm magazines. Needs the gun-turret tech and plates for turrets and ammo. Use when threat.nearest is within ~150 tiles or threat.attack is set; tend keeps the turrets stocked.
-- {"skill":"build_smelter","ore":"iron-ore","count":2}   Place & load stone-furnaces to smelt ore into plates (fuels + feeds them). Needs the ore in inventory first (gather it).
-- {"skill":"tend"}                    Look after YOUR burner base near home in one go: collect plates/ore/coal from your furnaces and chests, refuel, feed ore into idle furnaces, and put a furnace/chest under drills that spill onto the ground; tops boilers up to 20 coal, hauls plates into assembler chests and science packs into labs. Run it when needs[] lists anything, and every few turns while you have burner drills.
-- {"skill":"research"[,"tech":"automation"]}   Queue a technology on your force (picks one if you omit tech). REQUIRED before any research can progress — a lab does NOTHING until research is queued.
-- {"skill":"return_home"}             Walk back to your base anchor (use if you've wandered far).
-- {"skill":"goto","position":{"x":N,"y":N}}   Teleport to any map coordinate. Use to reach a distant location (e.g. an oil outpost) before acting. build_ghosts auto-travels to ghost clusters, so only use goto for manual positioning.
-- {"skill":"place_blueprint","name":"<library name>"[,"position":{"x":N,"y":N}]}   Stamp a proven build from the blueprint library as ghosts; the spot (clear ground, ore patch or shoreline) is found for you. Then build_ghosts builds it. Prefer this over placing buildings one by one.
-- {"skill":"craft_for","item":"<item>","count":N}   Hand-craft an item (and its intermediates) until you HOLD count in total; tells you which raw materials are still missing. Plates and steel can't be hand-crafted — smelt them. To craft NEW ones when you already hold some (e.g. a research trigger), set count = what you hold + how many more.
-- {"skill":"connect_belt","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay a transport-belt (as ghosts) along an L-shaped path between two points, e.g. from a miner's output to a smelter's input.
-- {"skill":"connect_pipe","from":{"x":N,"y":N},"to":{"x":N,"y":N}}   Lay fluid pipes (as ghosts) along an L-shaped path between two fluid ports, e.g. from a pumpjack to an oil refinery, or refinery to chemical plant.
-- {"skill":"build_pumpjack"[,"position":{"x":N,"y":N}]}   Place an electric pumpjack on the nearest crude-oil node to extract oil and wire it to the power grid.
-- {"skill":"build_offshore_pump"[,"position":{"x":N,"y":N}]}   Place an offshore pump on the nearest shoreline tile to supply water for steam power or chemical plants.
-- {"skill":"build_radar"}                 Place a radar near base to continuously survey surrounding chunks and reveal distant ore, oil patches and biter nests.
+{skills_text}
 
 === PRIMITIVE ACTIONS (fallback only) ===
-move{direction[,distance≤16]}, mine{name|type|position}, place{item,position[,direction]}, set_recipe{recipe,position}, craft{recipe,count}, insert{item,count,position[,inventory]}, take{item,count,position[,inventory]}, pickup{position}, chat{message}, add_note{text}, summary{text}, wait{}.
+{actions_line}
 (To get WOOD use gather item "wood" or mine type "tree". Directions are strings: north/east/south/west/…)
 
 === RULES ===
-- If ghosts.count > 0, do {"skill":"build_ghosts"} FIRST, before anything else — this is the human telling you what to build.
-- Else if deconstruction.count > 0, do {"skill":"deconstruct"} NEXT — the human marked those objects to be removed; clearing them comes before everything except building ghosts.
-- Don't only smelt. To AUTOMATE mining use build_miner. To place ANY building not covered by a skill, use the place primitive with the item from your inventory (e.g. {"action":"place","item":"lab","position":{...}}). perception.inventory lists EVERYTHING you have — trust it for what's available.
+- If ghosts.count > 0, do {{"skill":"build_ghosts"}} FIRST, before anything else — this is the human telling you what to build.
+- Else if deconstruction.count > 0, do {{"skill":"deconstruct"}} NEXT — the human marked those objects to be removed; clearing them comes before everything except building ghosts.
+{rule_3}
 - React to "Results of your last actions": never repeat a FAILED entry unchanged. If a skill says it needs an item, gather/craft it, then retry.
 - Use needs[] to pick maintenance: anything in burners_low_fuel or outputs_full → tend. outputs_full entries with drop="ground" are drills with nothing under their output — tend places a collector.
-- research.triggers lists techs unlocked by DOING something, not by research (2.x early game), e.g. {"type":"craft-item","target":"lab","count":1} = hand-craft 1 NEW lab. Do that to open up research.
+- research.triggers lists techs unlocked by DOING something, not by research (2.x early game), e.g. {{"type":"craft-item","target":"lab","count":1}} = hand-craft 1 NEW lab. Do that to open up research.
 - SUGGESTED MOVES are a safe default from the build order — send them when you have nothing better. Never send a BLOCKED move.
-- SEND 2-4 MOVES PER TURN, in order. They run one after another and later moves wait for hand-crafting to finish, e.g. [{"skill":"craft_for","item":"burner-mining-drill","count":2},{"skill":"build_miner","resource":"iron-ore","output":"furnace","count":2},{"skill":"tend"}].
+- SEND 2-4 MOVES PER TURN, in order. They run one after another and later moves wait for hand-crafting to finish, e.g. [{{"skill":"craft_for","item":"burner-mining-drill","count":2}},{{"skill":"build_miner","resource":"iron-ore","output":"furnace","count":2}},{{"skill":"tend"}}].
 - Plates are SMELTED, never crafted: craft_for iron-plate smelts ore you hold; otherwise mine ore into furnaces with build_miner output=furnace.
 - perception.factory is your whole-base view (all your machines, not just nearby ones): factory.summary.by_type/by_status are counts; factory.total is how many machines you have; factory.attention lists the machines that need action (nearest first) — fix those. factory.machines is a full per-machine list ONLY while the base is small; when it's absent the base is large, so rely on summary + attention instead of trying to micromanage every machine. perception.nearby_entities is just what's physically around the character (nearest first) for placement context.
-- RESEARCH = your main progress marker (perception.game_phase tracks it). If perception.research.current is null, NOTHING is queued — queue the next tech for your phase with {"skill":"research"} and keep labs fed. ONLY in phase 0 (no red science yet) do you BOOTSTRAP: hand-craft automation-science-pack (1 copper-plate + 1 iron-gear-wheel; gear = 2 iron-plate) to auto-trigger the first tech, then place a lab and feed it. Past phase 0 do NOT hand-craft red science to "restart" — just queue research.
+- RESEARCH = your main progress marker (perception.game_phase tracks it). If perception.research.current is null, NOTHING is queued — queue the next tech for your phase with {{"skill":"research"}} and keep labs fed. ONLY in phase 0 (no red science yet) do you BOOTSTRAP: hand-craft automation-science-pack (1 copper-plate + 1 iron-gear-wheel; gear = 2 iron-plate) to auto-trigger the first tech, then place a lab and feed it. Past phase 0 do NOT hand-craft red science to "restart" — just queue research.
 - POWER: perception.power shows grid health (has_grid, production_kw, consumption_kw, machines_no_power, machines_low_power). If has_grid is true and machines_no_power + machines_low_power are 0, power is SUFFICIENT — do NOT build boilers/steam/power. Only build power when there's no grid or machines report no_power/low_power.
 - COOP: perception.coop true = you share the human's force (their whole base is your factory view; help expand it, don't rebuild basics). false = solo on your own force.
 - REFLEXES: the mod itself shoots enemies near you, the human and your machines, refuels burners and boilers, empties furnaces, reloads turrets and queues research (perception.reflex shows what it is doing). Don't spend turns on shoot or refuelling. While reflex.state is fighting or retreating a turn may be cancelled ("cancelled: combat"); that is not a failure, just carry on afterwards.
-- STAY NEAR HOME (perception.home.distance). If far with no reason, {"skill":"return_home"}.
+- STAY NEAR HOME (perception.home.distance). If far with no reason, {{"skill":"return_home"}}.
 - LANDMARKS: perception.landmarks lists the nearest water and the nearest patch of each resource within ~220 tiles (distance in tiles). nearby_* only covers what you can see. If what you need isn't nearby, goto its landmark position first (offshore pump: goto landmarks.water; mining: goto the ore), then build there.
 - PLANET: perception.surface.name is the planet (or space platform) you are on. Home, factory and nearby_* cover only this surface; each planet has its own home and base. Use what this planet offers (e.g. no trees or coal on some planets) — check nearby_resources before gathering.
 - When the player sends a message, reply with a chat action first, then act.
 - Keep it to 1–3 entries per turn. Don't stack many actions blindly.
 
 === EXAMPLES ===
-[{"skill":"build_ghosts"}]
-[{"skill":"gather","item":"iron-ore","count":40}]
-[{"action":"chat","message":"On it — smelting iron."},{"skill":"build_smelter","ore":"iron-ore","count":2}]
+[{{"skill":"build_ghosts"}}]
+[{{"skill":"gather","item":"iron-ore","count":40}}]
+[{{"action":"chat","message":"On it — smelting iron."}},{{"skill":"build_smelter","ore":"iron-ore","count":2}}]
 """
+
+SYSTEM_PROMPT = get_system_prompt(False)
 
 # Per-phase hint (brief — the router stays small).
 PHASE_HINT = {
@@ -96,11 +115,11 @@ def _failed_detail(results, name: str) -> str | None:
 
 
 def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "",
-                   coach_text: str = "") -> list[dict]:
+                   coach_text: str = "", llm_layout: bool = False) -> list[dict]:
     """goal_text: the goal-ladder section from bridge/goals.py. When given it
     replaces the coarser per-phase hint. coach_text: recent turns, blocked
     moves and the planner's next step (bridge/coach.py)."""
-    system = SYSTEM_PROMPT
+    system = get_system_prompt(llm_layout)
     if system_prefix:
         system = system_prefix.strip() + "\n\n" + system
 

@@ -127,7 +127,7 @@ def main() -> None:
             if added:
                 log.info("Imported %d blueprint(s) from the game: %s", len(added), ", ".join(added))
             if rcon.connected:
-                pushed, removed = blueprints.sync_to_mod(rcon, blueprints.load_library())
+                pushed, removed = blueprints.sync_to_mod(rcon, blueprints.load_library(include_local=True))
                 if pushed or removed:
                     log.info("Blueprint library synced to the mod: %d pushed, %d removed", pushed, removed)
         except Exception as e:      # never let a library problem stop the AI

@@ -128,6 +128,7 @@ class BridgeConfig:
     # build-order step, send it without asking the model. AI_AUTOPILOT=false
     # turns it off.
     autopilot: bool = True
+    llm_layout: bool = False
 
     # RCON
     rcon: RCONConfig = field(default_factory=RCONConfig)
@@ -167,6 +168,7 @@ class BridgeConfig:
             reasoning_effort=self.reasoning_effort,
             enable_thinking=self.enable_thinking,
             json_schema=self.json_schema,
+            llm_layout=self.llm_layout,
         )
 
 
@@ -238,6 +240,7 @@ class ConfigLoader:
         cfg.json_schema = self._e("AI_JSON_SCHEMA").lower() in ("true", "1", "on")
         cfg.goals = self._e("AI_GOALS", "true").lower() not in ("false", "0", "off")
         cfg.autopilot = self._e("AI_AUTOPILOT", "true").lower() not in ("false", "0", "off")
+        cfg.llm_layout = self._e("AI_LLM_LAYOUT", "false").lower() in ("true", "1", "on")
         cfg.rcon.host     = self._e("FACTORIO_RCON_HOST", cfg.rcon.host)
         port = self._e("FACTORIO_RCON_PORT")
         if port:

@@ -1333,3 +1333,83 @@ def test_demand_targets_scaling():
     assert t3["copper-ore"] == ("copper-plate", pytest.approx(33.8, abs=0.1))
 
 
+# --- Round 16 Part 2: Model doesn't do coordinate layout ---
+
+def test_schema_llm_layout_disabled():
+    from bridge.schema import action_schema
+    s_no = action_schema(blueprint_names=["tileable-smelter-stone"], llm_layout=False)
+    variants_no = s_no["items"]["anyOf"]
+    skills_no = {v["properties"]["skill"]["const"] for v in variants_no if "skill" in v["properties"]}
+    actions_no = {v["properties"]["action"]["const"] for v in variants_no if "action" in v["properties"]}
+    for bad in ("place_blueprint", "connect_belt", "connect_pipe", "connect_ports"):
+        assert bad not in skills_no
+    assert "place" not in actions_no
+
+    s_yes = action_schema(blueprint_names=["tileable-smelter-stone"], llm_layout=True)
+    variants_yes = s_yes["items"]["anyOf"]
+    skills_yes = {v["properties"]["skill"]["const"] for v in variants_yes if "skill" in v["properties"]}
+    actions_yes = {v["properties"]["action"]["const"] for v in variants_yes if "action" in v["properties"]}
+    for good in ("place_blueprint", "connect_belt", "connect_pipe", "connect_ports"):
+        assert good in skills_yes
+    assert "place" in actions_yes
+
+
+def test_coach_guard_drops_llm_layout():
+    c = Coach()
+    p = spawn()
+    # Model entries with layout moves
+    entries = [
+        {"skill": "connect_belt", "from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}},
+        {"action": "place", "item": "lab", "position": {"x": 0, "y": 0}},
+        {"skill": "gather", "item": "wood", "count": 20},
+    ]
+    out, _ = c.guard(entries, payload(p), None, llm_layout=False)
+    assert len(out) == 1
+    assert out[0] == {"skill": "gather", "item": "wood", "count": 20}
+    assert c.rewrites["drop_llm_layout"] == 2
+
+    # Autopilot moves are unaffected
+    auto_entries = [
+        {"source": "autopilot", "skill": "connect_belt", "from": {"x": 1, "y": 2}, "to": {"x": 3, "y": 4}},
+    ]
+    out_auto, _ = c.guard(auto_entries, payload(p), None, llm_layout=False)
+    assert len(out_auto) == 1
+    assert out_auto[0]["skill"] == "connect_belt"
+
+
+def test_prompt_omits_layout_when_disabled():
+    from bridge.prompt import get_system_prompt
+    prompt_no = get_system_prompt(llm_layout=False)
+    assert "connect_belt" not in prompt_no
+    assert "connect_pipe" not in prompt_no
+    assert "place_blueprint" not in prompt_no
+    assert "place{" not in prompt_no
+
+    prompt_yes = get_system_prompt(llm_layout=True)
+    assert "connect_belt" in prompt_yes
+    assert "connect_pipe" in prompt_yes
+    assert "place_blueprint" in prompt_yes
+    assert "place{" in prompt_yes
+
+
+def test_load_library_excludes_local_by_default(tmp_path, monkeypatch):
+    import json
+    import bridge.blueprints as bp_mod
+    local_dir = tmp_path / "local"
+    local_dir.mkdir()
+    fake_local = {"name": "test-custom-bp", "string": "0eNp...", "entities": 5}
+    (local_dir / "test-custom-bp.json").write_text(json.dumps(fake_local), encoding="utf-8")
+
+    monkeypatch.setattr(bp_mod, "LOCAL_DIR", local_dir)
+
+    # Default (include_local=False) should NOT include it
+    lib_default = bp_mod.load_library()
+    assert "test-custom-bp" not in lib_default
+
+    # Explicit include_local=True includes it
+    lib_all = bp_mod.load_library(include_local=True)
+    assert "test-custom-bp" in lib_all
+    assert lib_all["test-custom-bp"]["source"] == "local"
+
+
+

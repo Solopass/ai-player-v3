@@ -29,6 +29,8 @@ class ProviderConfig:
     json_schema: bool = False
     # Set per request by the agent: library blueprints the mod holds, used as
     # the place_blueprint name enum in the schema.
+    llm_layout: bool = False
+    ghosts: int = 1
     blueprint_names: list[str] = field(default_factory=list)
 
 

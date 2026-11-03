@@ -71,6 +71,7 @@ class Agent:
         # Coach/planner bugs must never stop the AI: on error, play without them.
         suggestion, coach_text, plan = [], "", []
         try:
+            self.coach.llm_layout = config.llm_layout
             self.coach.observe(payload)
             plan = planner.next_plan(perception, self.coach.blocked())
             suggestion = [(e, r) for e, r, _ in plan]
@@ -97,11 +98,19 @@ class Agent:
                             "bridge", "autopilot", source="autopilot")
             return entries
         self.auto_streak = 0
-        messages = build_messages(payload, config.system_prefix, goal_text, coach_text)
+        messages = build_messages(payload, config.system_prefix, goal_text, coach_text,
+                                  llm_layout=config.llm_layout)
         # place_blueprint may only name blueprints the mod holds and that fit
         # this planet.
         in_mod = set(perception.get("blueprint_library") or [])
-        provider_cfg = replace(provider_cfg, blueprint_names=sorted(in_mod & set(usable)))
+        _ghosts_raw = perception.get("ghosts") or 0
+        ghost_count = _ghosts_raw.get("count", 0) if isinstance(_ghosts_raw, dict) else int(_ghosts_raw)
+        provider_cfg = replace(
+            provider_cfg,
+            blueprint_names=sorted(in_mod & set(usable)),
+            llm_layout=config.llm_layout,
+            ghosts=ghost_count,
+        )
 
         log.info("Routing request %s via %s (model=%s)",
                  req.req_id, provider_cfg.provider, provider_cfg.model)
@@ -180,7 +189,8 @@ class Agent:
 
     def _guard(self, req_id: str, entries: list[dict], payload: dict, suggestion) -> list[dict]:
         try:
-            out, why = self.coach.guard(entries, payload, suggestion)
+            out, why = self.coach.guard(entries, payload, suggestion,
+                                        llm_layout=self.coach.llm_layout)
         except Exception:
             log.exception("Coach guard failed — sending the model's answer as is")
             return entries
