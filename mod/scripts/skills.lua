@@ -1247,7 +1247,7 @@ local function astar_path(surface, force, name, start_pt, goal_pt, max_tiles, op
   return nil
 end
 
-local function belt_path(a, b, horizontal_first)
+local function belt_path(a, b, horizontal_first, final_dir)
   local ax, ay = math.floor(a.x) + 0.5, math.floor(a.y) + 0.5
   local bx, by = math.floor(b.x) + 0.5, math.floor(b.y) + 0.5
   local pts = {{x = ax, y = ay}}
@@ -1267,7 +1267,7 @@ local function belt_path(a, b, horizontal_first)
     local nxt = pts[i + 1]
     local d
     if nxt then d = step_dir(nxt.x - pt.x, nxt.y - pt.y)
-    else d = tiles[#tiles] and tiles[#tiles].direction or step_dir(bx - ax, by - ay) end
+    else d = final_dir or (tiles[#tiles] and tiles[#tiles].direction or step_dir(bx - ax, by - ay)) end
     tiles[#tiles + 1] = {position = pt, direction = d}
   end
   return tiles
@@ -1289,12 +1289,19 @@ local function skill_connect_belt(character, p)
 
   -- 1. Try fast L-paths first
   for _, hfirst in ipairs({true, false}) do
-    local tiles = belt_path(a, b, hfirst)
+    local tiles = belt_path(a, b, hfirst, p.final_dir)
     if #tiles <= MAX_BELT then
       local ok = true
-      for _, t in ipairs(tiles) do
-        if not tile_traversable(surface, force, "transport-belt", t.position, t.direction, ends) then
-          ok = false; blocked_at = t.position; break
+      if p.final_dir and #tiles > 1 then
+        local p_step = step_dir(tiles[#tiles].position.x - tiles[#tiles - 1].position.x,
+                                tiles[#tiles].position.y - tiles[#tiles - 1].position.y)
+        if (p_step + 8) % 16 == p.final_dir then ok = false end
+      end
+      if ok then
+        for _, t in ipairs(tiles) do
+          if not tile_traversable(surface, force, "transport-belt", t.position, t.direction, ends) then
+            ok = false; blocked_at = t.position; break
+          end
         end
       end
       if ok then chosen_tiles = tiles; break end
@@ -1317,10 +1324,15 @@ local function skill_connect_belt(character, p)
           if nxt then
             d = (nxt.ug == "output") and nxt.ug_dir or step_dir(nxt.x - pt.x, nxt.y - pt.y)
           else
-            d = tiles[#tiles] and tiles[#tiles].direction or step_dir(b.x - a.x, b.y - a.y)
+            d = p.final_dir or (tiles[#tiles] and tiles[#tiles].direction or step_dir(b.x - a.x, b.y - a.y))
           end
           tiles[#tiles + 1] = {position = {x = pt.x, y = pt.y}, direction = d, name = "transport-belt"}
         end
+      end
+      if p.final_dir and #tiles > 1 then
+        local p_step = step_dir(tiles[#tiles].position.x - tiles[#tiles - 1].position.x,
+                                tiles[#tiles].position.y - tiles[#tiles - 1].position.y)
+        if (p_step + 8) % 16 == p.final_dir then tiles = nil end
       end
       chosen_tiles = tiles
     end
@@ -1524,6 +1536,114 @@ local function skill_connect_pipe(character, p)
 
   return false, string.format("connect_pipe: no route found (L-paths and A* blocked near {%.0f,%.0f}); routes may not run through or beside existing pipes — deconstruct obstacles or pick other endpoints",
                               blocked_at and blocked_at.x or 0, blocked_at and blocked_at.y or 0)
+end
+
+-- -------------------------------------------------------------------------
+-- connect_ports(from_bp, from_port, to_bp, to_port) — route belt or pipe
+-- between blueprint ports using world port positions and facings.
+-- -------------------------------------------------------------------------
+local function skill_connect_ports(character, p)
+  local from_bp = p.from_bp
+  local from_port = p.from_port
+  local to_bp = p.to_bp
+  local to_port = p.to_port
+  if not (from_bp and from_port and to_bp and to_port) then
+    return false, "connect_ports: 'from_bp', 'from_port', 'to_bp', 'to_port' are required"
+  end
+
+  local function find_placed(name_or_idx)
+    local placed = storage.ai_player and storage.ai_player.placed_blueprints or {}
+    if type(name_or_idx) == "number" then return placed[name_or_idx] end
+    for i = #placed, 1, -1 do
+      if placed[i].name == name_or_idx then return placed[i] end
+    end
+    return nil
+  end
+
+  local f_entry = find_placed(from_bp)
+  if not f_entry then return false, string.format("connect_ports: blueprint '%s' not placed", tostring(from_bp)) end
+  local t_entry = find_placed(to_bp)
+  if not t_entry then return false, string.format("connect_ports: blueprint '%s' not placed", tostring(to_bp)) end
+
+  local function find_port(bp, port_name)
+    for _, pt in ipairs(bp.ports or {}) do
+      if pt.name == port_name then return pt end
+    end
+    return nil
+  end
+
+  local fp = find_port(f_entry, from_port)
+  if not fp then return false, string.format("connect_ports: port '%s' not found on '%s'", tostring(from_port), tostring(from_bp)) end
+  local tp = find_port(t_entry, to_port)
+  if not tp then return false, string.format("connect_ports: port '%s' not found on '%s'", tostring(to_port), tostring(to_bp)) end
+
+  local function dir_step(d)
+    if d == defines.direction.north then return 0, -1
+    elseif d == defines.direction.east then return 1, 0
+    elseif d == defines.direction.south then return 0, 1
+    elseif d == defines.direction.west then return -1, 0
+    end
+    return 0, 0
+  end
+
+  local fdx, fdy = dir_step(fp.dir)
+  local tdx, tdy = dir_step(tp.dir)
+
+  local is_pipe = (fp.kind == "pipe" or tp.kind == "pipe")
+
+  -- Direct connection check: out port faces straight into in port
+  if fp.x + fdx == tp.x and fp.y + fdy == tp.y then
+    if is_pipe then
+      storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
+      table.insert(storage.ai_player.connected_pipes, {
+        from_bp = from_bp, from_port = from_port,
+        to_bp = to_bp, to_port = to_port,
+        from = {x = fp.x, y = fp.y}, to = {x = tp.x, y = tp.y}
+      })
+    else
+      storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
+      table.insert(storage.ai_player.connected_belts, {
+        from_bp = from_bp, from_port = from_port,
+        to_bp = to_bp, to_port = to_port,
+        from = {x = fp.x, y = fp.y}, to = {x = tp.x, y = tp.y}
+      })
+    end
+    return true, string.format("connect_ports: %s:%s and %s:%s are directly adjacent", from_bp, from_port, to_bp, to_port)
+  end
+
+  local start_pt = {x = fp.x + fdx, y = fp.y + fdy}
+  local end_pt = {x = tp.x - tdx, y = tp.y - tdy}
+
+  if is_pipe then
+    local ok, detail = skill_connect_pipe(character, {from = start_pt, to = end_pt})
+    if ok then
+      storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
+      table.insert(storage.ai_player.connected_pipes, {
+        from_bp = from_bp, from_port = from_port,
+        to_bp = to_bp, to_port = to_port,
+        from = start_pt, to = end_pt
+      })
+      return true, string.format("connect_ports: connected pipe %s:%s -> %s:%s (%s)", from_bp, from_port, to_bp, to_port, detail)
+    end
+    return false, detail
+  else
+    local ok, detail = skill_connect_belt(character, {
+      from = start_pt,
+      to = end_pt,
+      final_dir = tp.dir,
+      underground = p.underground
+    })
+    if ok then
+      storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
+      table.insert(storage.ai_player.connected_belts, {
+        from_bp = from_bp, from_port = from_port,
+        to_bp = to_bp, to_port = to_port,
+        from = start_pt, to = end_pt
+      })
+      return true, string.format("connect_ports: connected belt %s:%s -> %s:%s (%s)", from_bp, from_port, to_bp, to_port, detail)
+    end
+    return false, detail
+  end
 end
 
 -- -------------------------------------------------------------------------
@@ -2481,6 +2601,7 @@ AISkills.REGISTRY = {
   craft_for        = skill_craft_for,
   connect_belt     = skill_connect_belt,
   connect_pipe     = skill_connect_pipe,
+  connect_ports    = skill_connect_ports,
   build_pumpjack   = skill_build_pumpjack,
   build_offshore_pump = skill_build_offshore_pump,
   build_radar      = skill_build_radar,

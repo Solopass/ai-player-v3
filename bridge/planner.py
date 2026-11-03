@@ -76,7 +76,8 @@ def entry_key(d: dict) -> str:
     else:
         name = str(d.get("action") or "?")
     parts = [name]
-    for k in ("item", "tech", "resource", "recipe", "name", "ore", "output", "count"):
+    for k in ("item", "tech", "resource", "recipe", "name", "ore", "output", "count",
+              "from_bp", "from_port", "to_bp", "to_port"):
         # build_miner's count shrinks as drills get built; the move is the same.
         if k == "count" and name == "skill:build_miner":
             continue
@@ -262,6 +263,37 @@ def _find_placed(p: dict, bp_name: str) -> dict | None:
     return None
 
 
+PORT_LINKS: dict[tuple[str, str], tuple[str, str]] = {
+    ("tileable-smelter-stone", "out2"): ("tileable-science-red", "in1"),
+    ("tileable-science-red", "out2"): ("tileable-labs", "in1"),
+    ("tileable-smelter-stone", "out2"): ("tileable-science-green", "in1"),
+    ("tileable-science-green", "out2"): ("tileable-labs", "in1"),
+    ("tileable-smelter-stone", "out2"): ("tileable-steel", "in2"),
+    ("tileable-steel", "out2"): ("tileable-engine", "in1"),
+    ("tileable-plastic", "out1"): ("tileable-red-circuits", "in1"),
+    ("tileable-engine", "out1"): ("tileable-science-blue", "in1"),
+    ("tileable-science-blue", "out1"): ("tileable-labs", "in1"),
+}
+
+
+def _is_ports_connected(connected: list[dict], from_bp: str, from_port: str, to_bp: str, to_port: str) -> bool:
+    for c in connected or []:
+        if c.get("from_bp") == from_bp and c.get("from_port") == from_port and c.get("to_bp") == to_bp and c.get("to_port") == to_port:
+            return True
+        if c.get("from_bp") == to_bp and c.get("from_port") == to_port and c.get("to_bp") == from_bp and c.get("to_port") == from_port:
+            return True
+    return False
+
+
+def _get_bp_port(placed_blueprints: list[dict], bp_name: str, port_name: str) -> dict | None:
+    for bp in reversed(placed_blueprints or []):
+        if isinstance(bp, dict) and bp.get("name") == bp_name:
+            for port in bp.get("ports") or []:
+                if port.get("name") == port_name:
+                    return port
+    return None
+
+
 def _is_connected(connected: list[dict], pt1: dict, pt2: dict) -> bool:
     for c in connected:
         f = c.get("from") or {}
@@ -346,7 +378,8 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 yield ({"skill": "build_miner", "resource": "coal", "output": "chest", "drill": "electric", "count": 1},
                        "place electric miner on coal to power boilers", True)
             coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
-            power_fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
+            power_in = _get_bp_port(placed_bps, power_bp, "in1")
+            power_fuel_in = {"x": power_in["x"], "y": power_in["y"]} if power_in else {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
             if not _is_connected(conns, coal_src, power_fuel_in):
                 yield ({"skill": "connect_belt", "from": coal_src, "to": power_fuel_in},
                        "feed automated coal belt to boilers", True)
@@ -378,7 +411,8 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
             yield {"skill": "build_offshore_pump"}, "place offshore pump on shoreline for steam power", True
 
         if power_pos:
-            power_water_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 3.0}
+            power_pipe = _get_bp_port(placed_bps, power_bp, "pipe1")
+            power_water_in = {"x": power_pipe["x"], "y": power_pipe["y"]} if power_pipe else {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 3.0}
             src_pt = pump_pos or ({"x": water_lm["x"], "y": water_lm["y"]} if water_lm else None)
             if src_pt and not _is_connected(pipes, src_pt, power_water_in):
                 yield from _craft(inv, "pipe", 15, "pipes to connect offshore pump to steam power")
@@ -504,18 +538,16 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 red_pos = _find_placed(p, bp_name)
                 smelt_pos = _find_placed(p, "tileable-smelter-stone")
                 if smelt_pos and red_pos:
-                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
-                    red_in = {"x": red_pos["x"] + 0.5, "y": red_pos["y"] + 5.5}
-                    if not _is_connected(conns, smelt_out, red_in):
-                        yield ({"skill": "connect_belt", "from": smelt_out, "to": red_in},
+                    if not _is_ports_connected(conns, "tileable-smelter-stone", "out2", bp_name, "in1"):
+                        yield ({"skill": "connect_ports", "from_bp": "tileable-smelter-stone", "from_port": "out2",
+                                "to_bp": bp_name, "to_port": "in1"},
                                "connect smelter output belt to red science input belt", True)
 
                 lab_pos = _find_placed(p, lab_bp)
                 if red_pos and lab_pos:
-                    red_out = {"x": red_pos["x"] + 6.0, "y": red_pos["y"] + 0.5}
-                    lab_in = {"x": lab_pos["x"] + 0.5, "y": lab_pos["y"] + 0.5}
-                    if not _is_connected(conns, red_out, lab_in):
-                        yield ({"skill": "connect_belt", "from": red_out, "to": lab_in},
+                    if not _is_ports_connected(conns, bp_name, "out2", lab_bp, "in1"):
+                        yield ({"skill": "connect_ports", "from_bp": bp_name, "from_port": "out2",
+                                "to_bp": lab_bp, "to_port": "in1"},
                                "connect red science output belt to lab input belt", True)
 
                 yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
@@ -551,18 +583,16 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 green_pos = _find_placed(p, bp_name)
                 smelt_pos = _find_placed(p, "tileable-smelter-stone")
                 if smelt_pos and green_pos:
-                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
-                    green_in = {"x": green_pos["x"] + 0.5, "y": green_pos["y"] + 5.5}
-                    if not _is_connected(conns, smelt_out, green_in):
-                        yield ({"skill": "connect_belt", "from": smelt_out, "to": green_in},
+                    if not _is_ports_connected(conns, "tileable-smelter-stone", "out2", bp_name, "in1"):
+                        yield ({"skill": "connect_ports", "from_bp": "tileable-smelter-stone", "from_port": "out2",
+                                "to_bp": bp_name, "to_port": "in1"},
                                "connect smelter output belt to green science input belt", True)
 
                 lab_pos = _find_placed(p, "tileable-labs")
                 if green_pos and lab_pos:
-                    green_out = {"x": green_pos["x"] + 6.0, "y": green_pos["y"] + 0.5}
-                    lab_side_in = {"x": lab_pos["x"] + 1.5, "y": lab_pos["y"] + 0.5}
-                    if not _is_connected(conns, green_out, lab_side_in):
-                        yield ({"skill": "connect_belt", "from": green_out, "to": lab_side_in},
+                    if not _is_ports_connected(conns, bp_name, "out2", "tileable-labs", "in1"):
+                        yield ({"skill": "connect_ports", "from_bp": bp_name, "from_port": "out2",
+                                "to_bp": "tileable-labs", "to_port": "in1"},
                                "side-load green science onto lab dual-science bus", True)
 
                 yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
@@ -601,10 +631,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 steel_pos = _find_placed(p, bp_name)
                 smelt_pos = _find_placed(p, "tileable-smelter-stone")
                 if smelt_pos and steel_pos:
-                    smelt_out = {"x": smelt_pos["x"] + 5.0, "y": smelt_pos["y"] + 0.5}
-                    steel_in = {"x": steel_pos["x"] + 0.5, "y": steel_pos["y"] + 5.5}
-                    if not _is_connected(conns, smelt_out, steel_in):
-                        yield ({"skill": "connect_belt", "from": smelt_out, "to": steel_in},
+                    if not _is_ports_connected(conns, "tileable-smelter-stone", "out2", bp_name, "in2"):
+                        yield ({"skill": "connect_ports", "from_bp": "tileable-smelter-stone", "from_port": "out2",
+                                "to_bp": bp_name, "to_port": "in2"},
                                "connect iron plate belt to steel smelter input belt", True)
 
                 yield {"skill": "tend"}, "keep steel smelters fueled and fed with iron plates", True
@@ -685,10 +714,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
             steel_pos = _find_placed(p, "tileable-steel")
             eng_pos = _find_placed(p, eng_bp)
             if steel_pos and eng_pos:
-                steel_out = {"x": steel_pos["x"] + 5.0, "y": steel_pos["y"] + 0.5}
-                eng_in = {"x": eng_pos["x"] + 0.5, "y": eng_pos["y"] + 0.5}
-                if not _is_connected(conns, steel_out, eng_in):
-                    yield ({"skill": "connect_belt", "from": steel_out, "to": eng_in},
+                if not _is_ports_connected(conns, "tileable-steel", "out2", eng_bp, "in1"):
+                    yield ({"skill": "connect_ports", "from_bp": "tileable-steel", "from_port": "out2",
+                            "to_bp": eng_bp, "to_port": "in1"},
                            "feed steel plates to engine plant", True)
             yield {"skill": "tend"}, "maintain engine assemblers and feed steel", True
     elif goal_id == "red-circuits":
@@ -701,10 +729,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
             plas_pos = _find_placed(p, "tileable-plastic")
             red_pos = _find_placed(p, red_bp)
             if plas_pos and red_pos:
-                plas_out = {"x": plas_pos["x"] + 7.5, "y": plas_pos["y"] + 0.5}
-                red_in = {"x": red_pos["x"] + 0.5, "y": red_pos["y"] + 0.5}
-                if not _is_connected(conns, plas_out, red_in):
-                    yield ({"skill": "connect_belt", "from": plas_out, "to": red_in},
+                if not _is_ports_connected(conns, "tileable-plastic", "out1", red_bp, "in1"):
+                    yield ({"skill": "connect_ports", "from_bp": "tileable-plastic", "from_port": "out1",
+                            "to_bp": red_bp, "to_port": "in1"},
                            "feed plastic into advanced circuit plant", True)
             yield {"skill": "tend"}, "maintain advanced circuit assemblers", True
     elif goal_id == "blue":
@@ -717,18 +744,16 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
             eng_pos = _find_placed(p, "tileable-engine")
             blue_pos = _find_placed(p, blue_bp)
             if eng_pos and blue_pos:
-                eng_out = {"x": eng_pos["x"] + 10.5, "y": eng_pos["y"] + 0.5}
-                blue_in = {"x": blue_pos["x"] + 0.5, "y": blue_pos["y"] + 0.5}
-                if not _is_connected(conns, eng_out, blue_in):
-                    yield ({"skill": "connect_belt", "from": eng_out, "to": blue_in},
+                if not _is_ports_connected(conns, "tileable-engine", "out1", blue_bp, "in1"):
+                    yield ({"skill": "connect_ports", "from_bp": "tileable-engine", "from_port": "out1",
+                            "to_bp": blue_bp, "to_port": "in1"},
                            "feed engine units to chemical science plant", True)
 
             lab_pos = _find_placed(p, "tileable-labs")
             if lab_pos and blue_pos:
-                blue_out = {"x": blue_pos["x"] + 6.0, "y": blue_pos["y"] + 5.5}
-                lab_in = {"x": lab_pos["x"] + 0.5, "y": lab_pos["y"] + 0.5}
-                if not _is_connected(conns, blue_out, lab_in):
-                    yield ({"skill": "connect_belt", "from": blue_out, "to": lab_in},
+                if not _is_ports_connected(conns, blue_bp, "out1", "tileable-labs", "in1"):
+                    yield ({"skill": "connect_ports", "from_bp": blue_bp, "from_port": "out1",
+                            "to_bp": "tileable-labs", "to_port": "in1"},
                            "sideload chemical science into lab line", True)
             yield {"skill": "tend"}, "feed chemical science packs into labs", True
     elif goal_id == "robotics":

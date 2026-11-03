@@ -1008,7 +1008,7 @@ def test_planner_connects_belt_between_red_science_and_labs():
         {"name": "tileable-labs", "position": {"x": 30, "y": 0}}
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 16.0, "y": 0.5}, "to": {"x": 30.5, "y": 0.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-science-red", "from_port": "out2", "to_bp": "tileable-labs", "to_port": "in1"} in moves
 
 
 def test_planner_connects_belt_between_smelter_and_red_science():
@@ -1023,7 +1023,7 @@ def test_planner_connects_belt_between_smelter_and_red_science():
         {"name": "tileable-science-red", "position": {"x": 10, "y": 10}}
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 5.0, "y": 0.5}, "to": {"x": 10.5, "y": 15.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-smelter-stone", "from_port": "out2", "to_bp": "tileable-science-red", "to_port": "in1"} in moves
 
 
 def test_military_escalation_crafts_red_ammo_when_researched():
@@ -1043,7 +1043,7 @@ def test_planner_connects_belt_between_smelter_and_green_science():
         {"name": "tileable-science-green", "position": {"x": 10, "y": 10}}
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 5.0, "y": 0.5}, "to": {"x": 10.5, "y": 15.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-smelter-stone", "from_port": "out2", "to_bp": "tileable-science-green", "to_port": "in1"} in moves
 
 
 def test_planner_sideloads_green_science_into_labs():
@@ -1054,7 +1054,7 @@ def test_planner_sideloads_green_science_into_labs():
         {"name": "tileable-labs", "position": {"x": 30, "y": 0}}
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 16.0, "y": 0.5}, "to": {"x": 31.5, "y": 0.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-science-green", "from_port": "out2", "to_bp": "tileable-labs", "to_port": "in1"} in moves
 
 
 def test_planner_selects_and_connects_modular_steel_smelter():
@@ -1184,7 +1184,7 @@ def test_planner_selects_and_connects_modular_engine_plant():
         {"name": "tileable-engine", "position": {"x": 25, "y": 20}},
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 15.0, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-steel", "from_port": "out2", "to_bp": "tileable-engine", "to_port": "in1"} in moves
 
 
 def test_planner_selects_and_connects_modular_red_circuits():
@@ -1209,7 +1209,7 @@ def test_planner_selects_and_connects_modular_red_circuits():
         {"name": "tileable-red-circuits", "position": {"x": 25, "y": 20}},
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 17.5, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-plastic", "from_port": "out1", "to_bp": "tileable-red-circuits", "to_port": "in1"} in moves
 
 
 def test_planner_selects_and_connects_modular_blue_science():
@@ -1236,8 +1236,8 @@ def test_planner_selects_and_connects_modular_blue_science():
         {"name": "tileable-science-blue", "position": {"x": 25, "y": 20}},
     ]
     moves = [e for e, _ in planner.next_steps(p, limit=4)]
-    assert {"skill": "connect_belt", "from": {"x": 20.5, "y": 20.5}, "to": {"x": 25.5, "y": 20.5}} in moves
-    assert {"skill": "connect_belt", "from": {"x": 31.0, "y": 25.5}, "to": {"x": 40.5, "y": 20.5}} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-engine", "from_port": "out1", "to_bp": "tileable-science-blue", "to_port": "in1"} in moves
+    assert {"skill": "connect_ports", "from_bp": "tileable-science-blue", "from_port": "out1", "to_bp": "tileable-labs", "to_port": "in1"} in moves
 
 
 def test_planner_selects_and_crafts_construction_robotics():
@@ -1556,3 +1556,45 @@ def test_blueprint_ports_loop_has_no_ports():
 
 
 
+
+
+# --- Round 16 Part 1c-1d: Port-to-port connections ---
+
+def test_entry_key_distinguishes_connect_ports():
+    from bridge.planner import entry_key
+    k1 = entry_key({"skill": "connect_ports", "from_bp": "bp_a", "from_port": "out1", "to_bp": "bp_b", "to_port": "in1"})
+    k2 = entry_key({"skill": "connect_ports", "from_bp": "bp_b", "from_port": "out1", "to_bp": "bp_c", "to_port": "in1"})
+    assert k1 != k2
+    assert "from_bp=bp_a" in k1
+    assert "to_bp=bp_c" in k2
+
+
+def test_is_ports_connected_helper():
+    from bridge.planner import _is_ports_connected
+    conns = [
+        {"from_bp": "tileable-smelter-stone", "from_port": "out2", "to_bp": "tileable-science-red", "to_port": "in1"}
+    ]
+    assert _is_ports_connected(conns, "tileable-smelter-stone", "out2", "tileable-science-red", "in1")
+    # Bi-directional check
+    assert _is_ports_connected(conns, "tileable-science-red", "in1", "tileable-smelter-stone", "out2")
+    # Different port
+    assert not _is_ports_connected(conns, "tileable-smelter-stone", "out1", "tileable-science-red", "in1")
+
+
+def test_get_bp_port_helper():
+    from bridge.planner import _get_bp_port
+    placed = [
+        {
+            "name": "tileable-steam-power",
+            "position": {"x": 10, "y": 20},
+            "ports": [
+                {"name": "in1", "kind": "belt_in", "x": 10.5, "y": 20.5, "dir": 4},
+                {"name": "pipe1", "kind": "pipe", "x": 10.5, "y": 23.0, "dir": 12},
+            ]
+        }
+    ]
+    p_in = _get_bp_port(placed, "tileable-steam-power", "in1")
+    assert p_in is not None and p_in["x"] == 10.5 and p_in["dir"] == 4
+    p_pipe = _get_bp_port(placed, "tileable-steam-power", "pipe1")
+    assert p_pipe is not None and p_pipe["y"] == 23.0
+    assert _get_bp_port(placed, "tileable-steam-power", "nonexistent") is None
