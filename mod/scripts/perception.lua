@@ -797,6 +797,20 @@ function AIPerception.gather(character)
   end
   perception.research.done = done
 
+  local available = {}
+  for name, t in pairs(force.technologies) do
+    if #available >= 30 then break end
+    if t.enabled and not t.researched then
+      local ready = true
+      for _, pre in pairs(t.prerequisites) do
+        if not pre.researched then ready = false; break end
+      end
+      if ready then available[#available + 1] = name end
+    end
+  end
+  table.sort(available)
+  perception.research.available = available
+
   -- Blueprints the AI placed on this surface (newest last), and what the
   -- library holds, so the bridge's goal ladder can tell what's already down.
   local placed = {}

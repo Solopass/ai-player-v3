@@ -1412,4 +1412,90 @@ def test_load_library_excludes_local_by_default(tmp_path, monkeypatch):
     assert lib_all["test-custom-bp"]["source"] == "local"
 
 
+# --- Round 16 Part 4: Stop wasted moves ---
+
+def test_planner_build_defense_gating():
+    p = threatened()
+    p["research"]["done"] += ["gun-turret"]
+    # Case 1: 0 turrets -> proposes build_defense
+    moves1 = [e for e, _ in planner.next_steps(p, limit=5)]
+    assert {"skill": "build_defense", "count": 3} in moves1
+
+    # Case 2: 3 turrets standing with plenty of ammo -> does NOT propose build_defense
+    p["factory"]["by_type"]["ammo-turret"] = 3
+    p["factory"]["machines"] = [
+        {"type": "ammo-turret", "contents": {"firearm-magazine": 20}},
+        {"type": "ammo-turret", "contents": {"firearm-magazine": 20}},
+        {"type": "ammo-turret", "contents": {"firearm-magazine": 20}},
+    ]
+    moves2 = [e for e, _ in planner.next_steps(p, limit=5)]
+    assert not any(e.get("skill") == "build_defense" for e in moves2)
+
+    # Case 3: 3 turrets standing but low/no ammo -> crafts ammo and yields tend, NOT build_defense
+    p["factory"]["machines"][0]["contents"] = {"firearm-magazine": 2}
+    p["factory"]["by_status"] = {"no_ammo": 1}
+    moves3 = [e for e, _ in planner.next_steps(p, limit=5)]
+    assert not any(e.get("skill") == "build_defense" for e in moves3)
+    assert any(e.get("skill") == "tend" for e in moves3)
+
+
+def test_coach_guard_drops_redundant_defense():
+    c = Coach()
+    p = spawn()
+    p["tick"] = 1000
+    # Simulate a failed build_defense reporting "already stand"
+    fail_res = [{"action": "skill:build_defense", "ok": False,
+                 "detail": "build_defense: 3 gun turrets already stand near home — tend keeps them stocked"}]
+    payload_prev = payload(p)
+    payload_prev["memory"]["last_action_results"] = fail_res
+    payload_prev["memory"]["last_results_req_id"] = "req-def-1"
+    c.observe(payload_prev)
+
+    # Next turn at tick 2000 (< 18000 ticks): model repeats build_defense
+    p["tick"] = 2000
+    out, _ = c.guard([{"skill": "build_defense", "count": 3}], payload(p), None)
+    assert out == [{"action": "wait"}]
+    assert c.rewrites["drop_redundant_defense"] == 1
+
+
+def test_coach_guard_drops_research_done_and_prereqs():
+    c = Coach()
+    p = spawn()
+    p["research"]["done"] = ["automation", "stone-wall"]
+    p["research"]["available"] = ["logistic-science-pack", "gun-turret"]
+
+    # Tech in done is dropped
+    out1, _ = c.guard([{"skill": "research", "tech": "automation"}], payload(p), None)
+    assert out1 == [{"action": "wait"}]
+    assert c.rewrites["drop_redundant_research"] == 1
+
+    # Tech whose prerequisites are not done (not in available) is dropped
+    out2, _ = c.guard([{"skill": "research", "tech": "chemical-science-pack"}], payload(p), None)
+    assert out2 == [{"action": "wait"}]
+    assert c.rewrites["drop_redundant_research"] == 2
+
+    # Tech in available is kept
+    out3, _ = c.guard([{"skill": "research", "tech": "gun-turret"}], payload(p), None)
+    assert len(out3) == 1
+    assert out3[0] == {"skill": "research", "tech": "gun-turret"}
+
+
+def test_schema_part4_craft_for_and_ghosts():
+    from bridge.schema import action_schema
+    # craft_for excludes smelted plates
+    s = action_schema(ghosts=0)
+    cf_variant = next(v for v in s["items"]["anyOf"] if v.get("properties", {}).get("skill", {}).get("const") == "craft_for")
+    craft_enum = cf_variant["properties"]["item"]["enum"]
+    for plate in ("iron-plate", "copper-plate", "steel-plate"):
+        assert plate not in craft_enum
+
+    # build_ghosts omitted when ghosts <= 0
+    assert not any(v.get("properties", {}).get("skill", {}).get("const") == "build_ghosts" for v in s["items"]["anyOf"])
+
+    # build_ghosts present when ghosts > 0
+    s_ghosts = action_schema(ghosts=5)
+    assert any(v.get("properties", {}).get("skill", {}).get("const") == "build_ghosts" for v in s_ghosts["items"]["anyOf"])
+
+
+
 

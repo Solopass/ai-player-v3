@@ -152,6 +152,31 @@ def _tech(p: dict, name: str) -> bool:
     return name in ((p.get("research") or {}).get("done") or [])
 
 
+def _ammo_per_turret(p: dict) -> float:
+    factory = p.get("factory") or {}
+    turret_count = _by_type(p, "ammo-turret")
+    if turret_count == 0:
+        return 0.0
+    by_status = factory.get("by_status") or {}
+    if by_status.get("no_ammo", 0) > 0:
+        return 0.0
+    machines = factory.get("machines") or []
+    ammo_total = 0
+    found_turrets = 0
+    for m in machines:
+        if m.get("type") == "ammo-turret":
+            found_turrets += 1
+            contents = m.get("contents") or {}
+            ammo_total += sum(int(v) for v in contents.values())
+    if found_turrets > 0:
+        return ammo_total / found_turrets
+    attention = factory.get("attention") or []
+    for a in attention:
+        if a.get("type") == "ammo-turret":
+            return 0.0
+    return 10.0
+
+
 def _rate(p: dict, item: str) -> int:
     return int((((p.get("production") or {}).get("items") or {}).get(item) or {}).get("per_min", 0))
 
@@ -780,19 +805,24 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
     attack = threat.get("attack") or {}
     attacked_power = attack.get("name") in ("boiler", "steam-engine", "offshore-pump")
     if (nest and nest.get("distance", 1e9) <= DEFENSE_RANGE) or threat.get("attack"):
-        if _by_type(p, "ammo-turret") < DEFENSE_TURRETS:
+        turret_count = _by_type(p, "ammo-turret")
+        if turret_count < DEFENSE_TURRETS or _ammo_per_turret(p) < 10.0:
             if not _tech(p, "gun-turret"):
                 if research.get("current") != "gun-turret" and _lab_count(p):
                     yield {"skill": "research", "tech": "gun-turret"}, "enemies are near: gun turrets need research", True
             else:
-                need = DEFENSE_TURRETS - _by_type(p, "ammo-turret")
-                yield from _craft(inv, "gun-turret", need, f"{need} gun turret(s) against the nearby enemies")
+                need = DEFENSE_TURRETS - turret_count
+                if need > 0:
+                    yield from _craft(inv, "gun-turret", need, f"{need} gun turret(s) against the nearby enemies")
                 ammo_item = "piercing-rounds-magazine" if _tech(p, "military-2") else "firearm-magazine"
-                yield from _craft(inv, ammo_item, 10 * need, f"{ammo_item} for the turrets")
-                defense_entry = {"skill": "build_defense", "count": DEFENSE_TURRETS}
-                if attacked_power:
-                    defense_entry["site"] = "power"
-                yield defense_entry, f"enemies near {'power' if attacked_power else 'home'}: turrets toward them", True
+                yield from _craft(inv, ammo_item, 10 * max(1, need), f"{ammo_item} for the turrets")
+                if need > 0:
+                    defense_entry = {"skill": "build_defense", "count": DEFENSE_TURRETS}
+                    if attacked_power:
+                        defense_entry["site"] = "power"
+                    yield defense_entry, f"enemies near {'power' if attacked_power else 'home'}: turrets toward them", True
+                else:
+                    yield {"skill": "tend"}, "restock ammo in standing turrets", True
 
     # 2. Burner bootstrap: drills on coal, iron, copper, stone.
     # Phased out entirely once electric mining drill is researched and power grid is up.

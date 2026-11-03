@@ -25,6 +25,7 @@ against a player directive).
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 
 from .planner import entry_key
@@ -103,7 +104,10 @@ class Coach:
             "drop_redundant_research": 0,
             "drop_empty_build_ghosts": 0,
             "drop_llm_layout": 0,
+            "drop_redundant_defense": 0,
         }
+        self.defense_stand_time: float = 0.0
+        self.defense_stand_tick: int = 0
         self.llm_layout: bool = False
 
     def _note_progress(self, p: dict) -> None:
@@ -131,6 +135,13 @@ class Coach:
 
         rid = mem.get("last_results_req_id")
         results = mem.get("last_action_results") or []
+        tick = p.get("tick") or 0
+        for r in results:
+            if isinstance(r, dict) and not r.get("ok"):
+                detail = str(r.get("detail") or "")
+                if "already stand" in detail:
+                    self.defense_stand_time = time.monotonic()
+                    self.defense_stand_tick = tick
         if rid and rid not in self.seen_ids:
             self.seen_ids.append(rid)
             line = []
@@ -233,12 +244,23 @@ class Coach:
                 cnt = 1 if e.get("item") == "copper-plate" else 2
                 cleaned_entries.append({"skill": "build_miner", "resource": res, "output": "furnace", "count": cnt})
                 continue
+            if skill == "build_defense":
+                cur_tick = p.get("tick") or 0
+                tick_blocked = (cur_tick > 0 and self.defense_stand_tick > 0 and (cur_tick - self.defense_stand_tick) < 18000)
+                time_blocked = (self.defense_stand_time > 0 and (time.monotonic() - self.defense_stand_time) < 300.0)
+                if tick_blocked or time_blocked:
+                    self.rewrites["drop_redundant_defense"] += 1
+                    continue
             if skill == "research":
                 r_info = p.get("research") or {}
                 tech = e.get("tech")
                 cur = r_info.get("current")
                 done = set(r_info.get("done") or [])
+                available = set(r_info.get("available") or [])
                 if (tech and (tech in done or tech == cur)) or (not tech and cur is not None):
+                    self.rewrites["drop_redundant_research"] += 1
+                    continue
+                if tech and "available" in r_info and tech not in available:
                     self.rewrites["drop_redundant_research"] += 1
                     continue
             if skill == "build_ghosts":
