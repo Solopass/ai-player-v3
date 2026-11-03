@@ -27,5 +27,49 @@
   "snap_grid": {
     "x": 11,
     "y": 6
-  }
+  },
+  "ports": [
+    {
+      "name": "in1",
+      "kind": "belt_in",
+      "x": 0.5,
+      "y": 0.5,
+      "dir": 8
+    },
+    {
+      "name": "in2",
+      "kind": "belt_in",
+      "x": 5.0,
+      "y": 0.5,
+      "dir": 8
+    },
+    {
+      "name": "in3",
+      "kind": "belt_in",
+      "x": 10.0,
+      "y": 0.5,
+      "dir": 8
+    },
+    {
+      "name": "out1",
+      "kind": "belt_out",
+      "x": 0.5,
+      "y": 5.5,
+      "dir": 8
+    },
+    {
+      "name": "out2",
+      "kind": "belt_out",
+      "x": 5.0,
+      "y": 5.5,
+      "dir": 8
+    },
+    {
+      "name": "out3",
+      "kind": "belt_out",
+      "x": 10.0,
+      "y": 5.5,
+      "dir": 8
+    }
+  ]
 }

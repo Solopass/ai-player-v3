@@ -22,5 +22,35 @@
     "engine-unit",
     "iron-gear-wheel",
     "pipe"
+  ],
+  "ports": [
+    {
+      "name": "in1",
+      "kind": "belt_in",
+      "x": 0.5,
+      "y": 0.5,
+      "dir": 8
+    },
+    {
+      "name": "in2",
+      "kind": "belt_in",
+      "x": 10.5,
+      "y": 0.5,
+      "dir": 8
+    },
+    {
+      "name": "out1",
+      "kind": "belt_out",
+      "x": 0.5,
+      "y": 5.5,
+      "dir": 8
+    },
+    {
+      "name": "out2",
+      "kind": "belt_out",
+      "x": 10.5,
+      "y": 5.5,
+      "dir": 8
+    }
   ]
 }

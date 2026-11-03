@@ -1039,6 +1039,59 @@ CASES.doctor_ingredients = {
   end,
 }
 
+CASES.bp_ports = {
+  delay = 60,
+  setup = function(c)
+    storage.ai_player = storage.ai_player or {}
+    storage.ai_player.blueprints = storage.ai_player.blueprints or {}
+    storage.ai_player.blueprints["tileable-science-red"] = {
+      string = "0eNqd1dFOwyAUBuBXabjSZCylLXXtnQ/gjcYrYwxrT+aJFBqgxmXZu0u7ZZtuGthlKXznL4GeDVnKAXqDypF6Q6RYgiQ1edDtIIVJHqFNnhoE1UDyrNAlN1lyby10SwnG3pIZwUYrS+qXDbG4UkKOilv34BF00PkZSnTjkxic7oRDrajdibQXzQfZekO18EVqtn2dEatET52mK4PtaPnxuxlZk7r0E0E5dAi7etPD+k0N3RKMX32stAuIakU70byjAsp8jl5bHMvv1XyeTi6bcy8baLD/P+ZZxexQEZUF4/zYWRX2o0qLvs7ubXEBzANAHgMWV+5JcfWe8Ig9KUI+oYzYkyDw7gA6I5TttXHUH3p3zqZzPrHpb3ZxgV0Es+U+bRBbRadlISxLo+OGuSw6bxbkZtF5w9w8Om8e5BbRecNcHp23CHLL6Lxhbvxt40Fu/HULc4/3zXZCSgrSTzfY0F5L+PtXNt7lSx0ijeP4yVkYm+HUQeuTFj0jn77vTgt4mVVFVfG8yFjOsu32Gzhfj2E=",
+      hash = "840ae8bb49b8b275",
+      meta = {
+        category = "science-red",
+        placement = "clear",
+        tileable = true,
+        ports = {
+          {name = "in1", kind = "belt_in", x = 0.5, y = 0.5, dir = 8},
+          {name = "in2", kind = "belt_in", x = 6.0, y = 0.5, dir = 8},
+          {name = "out1", kind = "belt_out", x = 0.5, y = 5.5, dir = 8},
+          {name = "out2", kind = "belt_out", x = 6.0, y = 5.5, dir = 8},
+        }
+      }
+    }
+    AIBlueprints.only_facing = c.facing
+  end,
+  run = function(c)
+    return {{skill = "place_blueprint", name = "tileable-science-red"}}
+  end,
+  check = function(c, add)
+    add("place_blueprint ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    local placed = storage.ai_player.placed_blueprints or {}
+    local bp = placed[#placed]
+    add("blueprint recorded in placed_blueprints", bp ~= nil, bp and bp.name)
+    if not bp then return end
+    add("blueprint ports recorded", bp.ports ~= nil and #bp.ports == 4, bp.ports and #bp.ports or 0)
+    for _, p in ipairs(bp.ports or {}) do
+      local ents = c.surface.find_entities_filtered{
+        area = {{p.x - 0.4, p.y - 0.4}, {p.x + 0.4, p.y + 0.4}},
+        type = {"entity-ghost", "transport-belt"}
+      }
+      local found = nil
+      for _, e in ipairs(ents) do
+        local is_ghost_belt = (e.type == "entity-ghost" and e.ghost_name == "transport-belt")
+        local is_belt = (e.name == "transport-belt")
+        if is_ghost_belt or is_belt then
+          found = e
+          break
+        end
+      end
+      add(string.format("port %s at (%.1f, %.1f) lands on belt facing %d", p.name, p.x, p.y, p.dir),
+          found ~= nil and found.direction == p.dir,
+          found and string.format("dir=%s", tostring(found.direction)) or "no belt found")
+    end
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,
@@ -1050,6 +1103,7 @@ AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = l
 local function finish(result)
   local st = storage.selftest
   AILayout.only_facing = nil
+  AIBlueprints.only_facing = nil
   if st and st.prev then               -- a reflex case: give the AI slot back
     local ap, prev = storage.ai_player, st.prev
     ap.character, ap.surface_name, ap.combat_mode = prev.character, prev.surface_name, prev.combat_mode

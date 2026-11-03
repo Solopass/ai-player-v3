@@ -28,5 +28,35 @@
   "snap_grid": {
     "x": 3,
     "y": 12
-  }
+  },
+  "ports": [
+    {
+      "name": "in1",
+      "kind": "belt_in",
+      "x": 0.5,
+      "y": 0.5,
+      "dir": 4
+    },
+    {
+      "name": "out1",
+      "kind": "belt_out",
+      "x": 2.5,
+      "y": 0.5,
+      "dir": 4
+    },
+    {
+      "name": "pipe1",
+      "kind": "pipe",
+      "x": 0.5,
+      "y": 3.0,
+      "dir": 12
+    },
+    {
+      "name": "pipe2",
+      "kind": "pipe",
+      "x": 2.5,
+      "y": 3.0,
+      "dir": 4
+    }
+  ]
 }

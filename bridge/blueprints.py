@@ -332,7 +332,7 @@ def sync_to_mod(rcon, lib: dict[str, dict]) -> tuple[int, int]:
         # items: what the build needs, so the mod can report which blueprints
         # are still locked by research.
         meta = json.dumps({
-            **{k: e.get(k) for k in ("category", "placement", "resource", "label", "hash", "tileable", "tile_offset", "snap_grid", "size") if e.get(k) is not None},
+            **{k: e.get(k) for k in ("category", "placement", "resource", "label", "hash", "tileable", "tile_offset", "snap_grid", "size", "ports") if e.get(k) is not None},
             "items": sorted(e.get("cost") or {})
         })
         ok = True
@@ -384,6 +384,118 @@ def get_tile_target(placed: list[dict], entry: dict) -> dict | None:
 # CLI
 # ---------------------------------------------------------------------------
 
+DIR_DELTAS = {0: (0, -1), 4: (1, 0), 8: (0, 1), 12: (-1, 0)}
+
+
+def find_ports(bp_data: dict) -> list[dict]:
+    """Compute ports (belt_in, belt_out, pipe) for a blueprint."""
+    if "blueprint" in bp_data:
+        bp = bp_data["blueprint"]
+    elif "string" in bp_data:
+        bp = decode(bp_data["string"])["blueprint"]
+    else:
+        return []
+
+    ents = bp.get("entities") or []
+    if not ents:
+        return []
+
+    # Map all belts
+    belts = {}
+    for e in ents:
+        name = e.get("name", "")
+        if "belt" in name and "loader" not in name:
+            pos = (round(e["position"]["x"], 2), round(e["position"]["y"], 2))
+            belts[pos] = e
+
+    belt_ins = []
+    belt_outs = []
+    for pos, e in belts.items():
+        x, y = pos
+        d = e.get("direction", 0)
+        dx, dy = DIR_DELTAS.get(d, (0, -1))
+        is_ug = "underground-belt" in e.get("name", "")
+        ug_type = e.get("type")
+
+        # In port check
+        if not (is_ug and ug_type == "output"):
+            fed_by_belt = False
+            for other_pos, other_e in belts.items():
+                if other_pos == pos:
+                    continue
+                o_d = other_e.get("direction", 0)
+                o_dx, o_dy = DIR_DELTAS.get(o_d, (0, -1))
+                o_down = (round(other_pos[0] + o_dx, 2), round(other_pos[1] + o_dy, 2))
+                if o_down == pos:
+                    fed_by_belt = True
+                    break
+            if not fed_by_belt:
+                belt_ins.append({"kind": "belt_in", "x": x, "y": y, "dir": d})
+
+        # Out port check
+        if not (is_ug and ug_type == "input"):
+            down_pos = (round(x + dx, 2), round(y + dy, 2))
+            if down_pos not in belts:
+                belt_outs.append({"kind": "belt_out", "x": x, "y": y, "dir": d})
+
+    # Pipe ports
+    pipe_ports = []
+    for e in ents:
+        name = e.get("name", "")
+        x = round(e["position"]["x"], 2)
+        y = round(e["position"]["y"], 2)
+        d = e.get("direction", 0)
+        if name == "pipe":
+            size_map = {"oil-refinery": (2.5, 2.5), "chemical-plant": (1.5, 1.5), "boiler": (1.5, 1.0)}
+            machine_dir = None
+            for p_dir, (p_dx, p_dy) in DIR_DELTAS.items():
+                adj = (round(x + p_dx, 2), round(y + p_dy, 2))
+                for other_e in ents:
+                    oname = other_e.get("name", "")
+                    if other_e is e or oname == "pipe" or oname not in size_map:
+                        continue
+                    hw, hh = size_map[oname]
+                    ox = other_e["position"]["x"]
+                    oy = other_e["position"]["y"]
+                    if (ox - hw - 0.1) <= adj[0] <= (ox + hw + 0.1) and (oy - hh - 0.1) <= adj[1] <= (oy + hh + 0.1):
+                        machine_dir = p_dir
+                        break
+                if machine_dir is not None:
+                    break
+            if machine_dir is not None:
+                outward_dir = (machine_dir + 8) % 16
+                pipe_ports.append({"kind": "pipe", "x": x, "y": y, "dir": outward_dir})
+            else:
+                pipe_ports.append({"kind": "pipe", "x": x, "y": y, "dir": 0})
+        elif name == "boiler":
+            if d in (0, 8):
+                pipe_ports.append({"kind": "pipe", "x": round(x - 1.0, 2), "y": y, "dir": 12})
+                pipe_ports.append({"kind": "pipe", "x": round(x + 1.0, 2), "y": y, "dir": 4})
+            elif d in (4, 12):
+                pipe_ports.append({"kind": "pipe", "x": x, "y": round(y - 1.0, 2), "dir": 0})
+                pipe_ports.append({"kind": "pipe", "x": x, "y": round(y + 1.0, 2), "dir": 8})
+
+    belt_ins.sort(key=lambda p: (p["y"], p["x"]))
+    belt_outs.sort(key=lambda p: (p["y"], p["x"]))
+    pipe_ports.sort(key=lambda p: (p["y"], p["x"]))
+
+    ports = []
+    for i, p in enumerate(belt_ins, 1):
+        ports.append({"name": f"in{i}", **p})
+    for i, p in enumerate(belt_outs, 1):
+        ports.append({"name": f"out{i}", **p})
+    for i, p in enumerate(pipe_ports, 1):
+        ports.append({"name": f"pipe{i}", **p})
+
+    old_ports = {p.get("name"): p for p in bp_data.get("ports", []) if isinstance(p, dict)}
+    for p in ports:
+        old = old_ports.get(p["name"])
+        if old and "item" in old:
+            p["item"] = old["item"]
+
+    return ports
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m bridge.blueprints", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -393,6 +505,7 @@ def main() -> None:
     p.add_argument("--name")
     p.add_argument("--category")
     sub.add_parser("list", help="list the library")
+    sub.add_parser("ports", help="compute and write ports into each tileable JSON")
     p = sub.add_parser("remove", help="remove a local blueprint")
     p.add_argument("name")
     args = ap.parse_args()
@@ -422,6 +535,16 @@ def main() -> None:
             sys.exit(f"No local blueprint named {args.name}")
         f.unlink()
         print(f"Removed {args.name}")
+    elif args.cmd == "ports":
+        for f in sorted(REPO_DIR.glob("tileable-*.json")):
+            data = json.loads(f.read_text(encoding="utf-8"))
+            ports = find_ports(data)
+            data["ports"] = ports
+            f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            print(f"{f.stem} ({len(ports)} ports):")
+            for pt in ports:
+                it = f" [{pt['item']}]" if "item" in pt else ""
+                print(f"  {pt['name']:6s} {pt['kind']:10s} ({pt['x']}, {pt['y']}) dir={pt['dir']}{it}")
 
 
 if __name__ == "__main__":

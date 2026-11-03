@@ -1497,5 +1497,62 @@ def test_schema_part4_craft_for_and_ghosts():
     assert any(v.get("properties", {}).get("skill", {}).get("const") == "build_ghosts" for v in s_ghosts["items"]["anyOf"])
 
 
+# --- Round 16 Part 1a: Blueprint ports discovery ---
+
+def test_blueprint_ports_straight_belt():
+    from bridge.blueprints import find_ports
+    bp = {
+        "blueprint": {
+            "entities": [
+                {"entity_number": 1, "name": "transport-belt", "position": {"x": 0.5, "y": 0.5}, "direction": 4},
+                {"entity_number": 2, "name": "transport-belt", "position": {"x": 1.5, "y": 0.5}, "direction": 4},
+                {"entity_number": 3, "name": "transport-belt", "position": {"x": 2.5, "y": 0.5}, "direction": 4},
+            ]
+        }
+    }
+    ports = find_ports(bp)
+    assert len(ports) == 2
+    ins = [p for p in ports if p["kind"] == "belt_in"]
+    outs = [p for p in ports if p["kind"] == "belt_out"]
+    assert len(ins) == 1 and ins[0]["name"] == "in1" and ins[0]["x"] == 0.5 and ins[0]["dir"] == 4
+    assert len(outs) == 1 and outs[0]["name"] == "out1" and outs[0]["x"] == 2.5 and outs[0]["dir"] == 4
+
+
+def test_blueprint_ports_l_belt():
+    from bridge.blueprints import find_ports
+    bp = {
+        "blueprint": {
+            "entities": [
+                {"entity_number": 1, "name": "transport-belt", "position": {"x": 0.5, "y": 0.5}, "direction": 4},
+                {"entity_number": 2, "name": "transport-belt", "position": {"x": 1.5, "y": 0.5}, "direction": 8},
+                {"entity_number": 3, "name": "transport-belt", "position": {"x": 1.5, "y": 1.5}, "direction": 8},
+            ]
+        }
+    }
+    ports = find_ports(bp)
+    assert len(ports) == 2
+    ins = [p for p in ports if p["kind"] == "belt_in"]
+    outs = [p for p in ports if p["kind"] == "belt_out"]
+    assert len(ins) == 1 and ins[0]["x"] == 0.5 and ins[0]["dir"] == 4
+    assert len(outs) == 1 and outs[0]["x"] == 1.5 and outs[0]["y"] == 1.5 and outs[0]["dir"] == 8
+
+
+def test_blueprint_ports_loop_has_no_ports():
+    from bridge.blueprints import find_ports
+    bp = {
+        "blueprint": {
+            "entities": [
+                {"entity_number": 1, "name": "transport-belt", "position": {"x": 0.5, "y": 0.5}, "direction": 4},
+                {"entity_number": 2, "name": "transport-belt", "position": {"x": 1.5, "y": 0.5}, "direction": 8},
+                {"entity_number": 3, "name": "transport-belt", "position": {"x": 1.5, "y": 1.5}, "direction": 12},
+                {"entity_number": 4, "name": "transport-belt", "position": {"x": 0.5, "y": 1.5}, "direction": 0},
+            ]
+        }
+    }
+    ports = find_ports(bp)
+    assert len(ports) == 0
+
+
+
 
 

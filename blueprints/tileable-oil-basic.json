@@ -28,5 +28,21 @@
   "snap_grid": {
     "x": 6,
     "y": 7
-  }
+  },
+  "ports": [
+    {
+      "name": "pipe1",
+      "kind": "pipe",
+      "x": 2.0,
+      "y": 0.0,
+      "dir": 0
+    },
+    {
+      "name": "pipe2",
+      "kind": "pipe",
+      "x": 3.0,
+      "y": 6.0,
+      "dir": 8
+    }
+  ]
 }

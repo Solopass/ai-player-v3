@@ -816,7 +816,12 @@ function AIPerception.gather(character)
   local placed = {}
   for _, b in ipairs(storage.ai_player.placed_blueprints or {}) do
     if b.surface == surface.name then
-      placed[#placed + 1] = {name = b.name, position = b.position}
+      placed[#placed + 1] = {
+        name = b.name,
+        position = b.position,
+        direction = b.direction,
+        ports = b.ports,
+      }
     end
   end
   while #placed > 15 do table.remove(placed, 1) end
@@ -824,7 +829,13 @@ function AIPerception.gather(character)
 
   local seen_belts, conns = {}, {}
   for _, c in ipairs(storage.ai_player.connected_belts or {}) do
-    if c.from and c.to then
+    if c.from_bp and c.to_bp and c.from_port and c.to_port then
+      local k = string.format("%s:%s->%s:%s", c.from_bp, c.from_port, c.to_bp, c.to_port)
+      if not seen_belts[k] then
+        seen_belts[k] = true
+        conns[#conns + 1] = {from_bp = c.from_bp, from_port = c.from_port, to_bp = c.to_bp, to_port = c.to_port, from = c.from, to = c.to}
+      end
+    elseif c.from and c.to then
       local k = string.format("%d,%d->%d,%d", math.floor(c.from.x), math.floor(c.from.y), math.floor(c.to.x), math.floor(c.to.y))
       if not seen_belts[k] then
         seen_belts[k] = true
@@ -838,7 +849,13 @@ function AIPerception.gather(character)
 
   local seen_pipes, pipes = {}, {}
   for _, c in ipairs(storage.ai_player.connected_pipes or {}) do
-    if c.from and c.to then
+    if c.from_bp and c.to_bp and c.from_port and c.to_port then
+      local k = string.format("%s:%s->%s:%s", c.from_bp, c.from_port, c.to_bp, c.to_port)
+      if not seen_pipes[k] then
+        seen_pipes[k] = true
+        pipes[#pipes + 1] = {from_bp = c.from_bp, from_port = c.from_port, to_bp = c.to_bp, to_port = c.to_port, from = c.from, to = c.to}
+      end
+    elseif c.from and c.to then
       local k = string.format("%d,%d->%d,%d", math.floor(c.from.x), math.floor(c.from.y), math.floor(c.to.x), math.floor(c.to.y))
       if not seen_pipes[k] then
         seen_pipes[k] = true

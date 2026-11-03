@@ -12,6 +12,7 @@
 -- cached in storage.ai_player.bp_geo[name].
 
 AIBlueprints = {}
+AIBlueprints.only_facing = nil
 
 local LAB = "ai-player-bp-lab"
 local DIRS = {defines.direction.north, defines.direction.east,
@@ -287,12 +288,14 @@ local function spiral(center, max_r, step)
 end
 
 -- (origin, direction) candidates for each placement type.
-local function candidates(surface, home, geo, placement, resource, hint)
+local function candidates(surface, home, geo, placement, resource, hint, target_d)
   local out = {}
   local function add(p, d) if #out < MAX_CANDIDATES then out[#out + 1] = {p = p, d = d} end end
 
+  local dirs = target_d and {target_d} or DIRS
+
   if hint then
-    for _, d in ipairs(DIRS) do add({x = math.floor(hint.x), y = math.floor(hint.y)}, d) end
+    for _, d in ipairs(dirs) do add({x = math.floor(hint.x), y = math.floor(hint.y)}, d) end
   end
 
   if placement == "near_water" then
@@ -306,7 +309,7 @@ local function candidates(surface, home, geo, placement, resource, hint)
     local seen = {}
     for i = 1, #tiles, 3 do
       local tp = tiles[i].position
-      for _, d in ipairs(DIRS) do
+      for _, d in ipairs(dirs) do
         local g = geo.dirs[d]
         if g and g.anchor and g.anchor.name == "offshore-pump" then
           for dx = -1, 1 do for dy = -1, 1 do
@@ -334,7 +337,7 @@ local function candidates(surface, home, geo, placement, resource, hint)
     local oil = resource == "crude-oil"
     for i = 1, #ores, oil and 1 or 7 do
       local op = ores[i].position
-      for _, d in ipairs(DIRS) do
+      for _, d in ipairs(dirs) do
         local g = geo.dirs[d]
         if g and oil and g.anchor and g.anchor.name == "pumpjack" then
           add({x = math.floor(op.x - g.anchor.x + 0.5), y = math.floor(op.y - g.anchor.y + 0.5)}, d)
@@ -344,7 +347,12 @@ local function candidates(surface, home, geo, placement, resource, hint)
       end
     end
   else
-    for _, p in ipairs(spiral(home, 160, 6)) do add(p, defines.direction.north) end
+    local clear_dirs = target_d and {target_d} or {defines.direction.north}
+    for _, p in ipairs(spiral(home, 160, 6)) do
+      for _, d in ipairs(clear_dirs) do
+        add(p, d)
+      end
+    end
   end
   return out
 end
@@ -371,11 +379,31 @@ local function missing_for(ghosts, inv)
   return parts
 end
 
-local function log_placed(surface, name, p, d)
+local function make_world_ports(ports, cp, cd, g)
+  if not ports then return nil end
+  local out = {}
+  local tx = g and g.tx or 0
+  local ty = g and g.ty or 0
+  for _, p in ipairs(ports) do
+    local rx, ry = rot(cd, p.x, p.y)
+    out[#out + 1] = {
+      name = p.name,
+      kind = p.kind,
+      x = cp.x + rx + tx,
+      y = cp.y + ry + ty,
+      dir = (p.dir + cd) % 16,
+      item = p.item,
+    }
+  end
+  return out
+end
+
+local function log_placed(surface, name, p, d, ports, g)
   storage.ai_player.placed_blueprints = storage.ai_player.placed_blueprints or {}
   local log = storage.ai_player.placed_blueprints
+  local world_ports = make_world_ports(ports, p, d, g)
   log[#log + 1] = {name = name, surface = surface.name, position = {x = p.x, y = p.y},
-                   direction = d, tick = game.tick}
+                   direction = d, tick = game.tick, ports = world_ports}
   while #log > MAX_PLACED_LOG do table.remove(log, 1) end
 end
 
@@ -404,7 +432,8 @@ function AIBlueprints.place(character, name, opts)
 
     -- Why spots were turned down, for the debug log and the failure message.
     local rejected, partial = {}, {}
-    local cands = candidates(surface, home, geo, placement, resource, opts.position)
+    local target_d = opts.direction or (AIBlueprints.only_facing and defines.direction[AIBlueprints.only_facing])
+    local cands = candidates(surface, home, geo, placement, resource, opts.position, target_d)
     local tries = 0
     local is_tiling = opts.position ~= nil
     for _, c in ipairs(cands) do
@@ -426,7 +455,7 @@ function AIBlueprints.place(character, name, opts)
           end
         end
         if n >= geo.required then
-          log_placed(surface, name, c.p, c.d)
+          log_placed(surface, name, c.p, c.d, entry.meta.ports, g)
           local need = missing_for(built, character.get_inventory(defines.inventory.character_main))
           local detail = string.format("placed '%s' at {%d,%d}: %d ghost(s) to build", name, c.p.x, c.p.y, n)
           -- A forced build marks trees/rocks in the way; ghosts on them can't be
