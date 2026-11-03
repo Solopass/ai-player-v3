@@ -34,20 +34,28 @@ def _tech(p: dict, name: str) -> bool:
     return name in ((p.get("research") or {}).get("done") or [])
 
 
+# Plates/min kept in hand while the base grows (not scaled by the headroom).
+IRON_BUFFER = 30.0
+COPPER_BUFFER = 15.0
+HEADROOM = 1.5
+
+
 def demand_targets(p: dict) -> dict[str, tuple[str, float]]:
-    iron_need = 30.0
-    copper_need = 15.0
-    if _tech(p, "automation"):
+    """Plate targets (ore -> (plate, per_min)) from the science running or unlocked: each adds its
+    plate need, x1.5 headroom, plus a flat build buffer. The planner and the ladder share this."""
+    iron_need = 0.0
+    copper_need = 0.0
+    if _tech(p, "automation"):               # red science, 5/min
         iron_need += 10.0
         copper_need += 5.0
-    if _tech(p, "logistic-science-pack"):
+    if _tech(p, "logistic-science-pack"):    # green science, 5/min
         iron_need += 27.5
         copper_need += 7.5
     if _tech(p, "steel-processing"):
         iron_need += 25.0
     return {
-        "iron-ore": ("iron-plate", round(iron_need * 1.5, 1)),
-        "copper-ore": ("copper-plate", round(copper_need * 1.5, 1)),
+        "iron-ore": ("iron-plate", round(iron_need * HEADROOM + IRON_BUFFER, 1)),
+        "copper-ore": ("copper-plate", round(copper_need * HEADROOM + COPPER_BUFFER, 1)),
     }
 
 

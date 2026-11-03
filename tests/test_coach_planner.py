@@ -119,11 +119,14 @@ def labbed() -> dict:
 
 
 def research_moves(p, blocked=frozenset()):
-    return [e for e, _, _ in planner.next_plan(p, blocked, 8) if e.get("skill") == "research"]
+    return [e for e, _, _ in planner.next_plan(p, blocked, 24) if e.get("skill") == "research"]
 
 
 def test_research_order_queues_the_next_unresearched_tech():
     p = labbed()
+    # electric drills come right after automation: the economy-first ladder depends on them
+    assert research_moves(p)[0] == {"skill": "research", "tech": "electric-mining-drill"}
+    p["research"]["done"] += ["electric-mining-drill"]
     assert research_moves(p)[0] == {"skill": "research", "tech": "logistics"}
     p["research"]["done"] += ["logistics"]
     assert research_moves(p)[0] == {"skill": "research", "tech": "logistic-science-pack"}
@@ -131,6 +134,8 @@ def test_research_order_queues_the_next_unresearched_tech():
 
 def test_research_order_skips_trigger_techs_and_blocked_ones():
     p = labbed()
+    p["research"]["done"] += ["electric-mining-drill"]
+    p["production"]["items"].update({"iron-plate": {"per_min": 200}, "copper-plate": {"per_min": 100}})
     p["research"]["triggers"] = [{"tech": "logistics", "type": "craft-item", "target": "lab", "count": 1}]
     assert research_moves(p)[0]["tech"] == "logistic-science-pack"
     p["research"]["triggers"] = []
@@ -159,6 +164,7 @@ def test_research_order_threat_moves_military_to_front():
 def test_research_order_holds_green_techs_until_green_science_runs():
     p = labbed()
     p["research"]["done"] += [t for t, g in planner.RESEARCH_ORDER if not g]
+    p["production"]["items"].update({"iron-plate": {"per_min": 200}, "copper-plate": {"per_min": 100}})  # no field wanted
     assert all("tech" not in e for e in research_moves(p))
     p["production"]["items"]["logistic-science-pack"] = {"per_min": 3}
     assert research_moves(p)[0]["tech"] == "automation-2"
@@ -524,18 +530,134 @@ def test_automation_waits_for_pending_trigger_techs():
     assert first[0]["skill"] == "craft_for" and first[2] is False     # a guess, not a sure move
 
 
-def test_smelting_counts_electric_pairs_from_current_rates():
+def field_blocked(*ores):
+    return {planner.entry_key({"skill": "build_miner", "resource": o, "output": "field", "count": 1}) for o in ores}
+
+
+def test_smelting_pairs_use_the_demand_targets_when_a_field_is_blocked():
+    # automation done: iron target 45, copper 22.5 (demand_targets, not the old fixed 30/15)
     p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
-    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 0}}
-    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
+    blocked = field_blocked("iron-ore", "copper-ore")
+    p["production"]["items"] = {"iron-plate": {"per_min": 27}, "copper-plate": {"per_min": 30}}
+    builds = [e for e in moves(p, blocked, limit=8) if e.get("skill") == "build_miner"]
     assert builds[0] == {"skill": "build_miner", "resource": "iron-ore", "output": "furnace", "count": 1,
-                         "drill": "electric"}
-    p["production"]["items"] = {"iron-plate": {"per_min": 11}, "copper-plate": {"per_min": 0}}
-    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
-    assert builds[0]["resource"] == "iron-ore" and builds[0]["count"] == 2
-    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 0}}
-    builds = [e for e in moves(p, limit=8) if e.get("skill") == "build_miner"]
-    assert builds[0]["resource"] == "copper-ore" and builds[0]["count"] == 1
+                         "drill": "electric"}                    # (45 - 27) / 18 = 1 pair
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 30}}
+    builds = [e for e in moves(p, blocked, limit=8) if e.get("skill") == "build_miner"]
+    assert builds[0]["resource"] == "iron-ore" and builds[0]["count"] == 2     # 45 - 12 = 33 -> 2 pairs
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 0}}
+    builds = [e for e in moves(p, blocked, limit=8) if e.get("skill") == "build_miner"]
+    assert builds[0]["resource"] == "copper-ore" and builds[0]["count"] == 2   # 22.5 / 18 -> 2 pairs
+
+
+def test_field_move_picks_the_plate_furthest_below_target():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    # iron 12/45 = 27%, copper 15/22.5 = 67%: iron first, sized for the 33/min gap (2 furnaces)
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 15}}
+    plan = planner.next_plan(p, limit=8)
+    fields = [(e, sure) for e, _, sure in plan if e.get("output") == "field"]
+    assert fields == [({"skill": "build_miner", "resource": "iron-ore", "output": "field", "count": 2}, True)]
+    # copper furthest below target: that plate gets the field
+    p["production"]["items"] = {"iron-plate": {"per_min": 44}, "copper-plate": {"per_min": 3}}
+    fields = [e for e, _, _ in planner.next_plan(p, limit=8) if e.get("output") == "field"]
+    assert fields == [{"skill": "build_miner", "resource": "copper-ore", "output": "field", "count": 2}]
+    # both met: no field; the power rules stay ahead of the field when the grid is down
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 30}}
+    assert not [e for e in moves(p, limit=8) if e.get("output") == "field"]
+    q = post_bootstrap()
+    q["research"]["done"] = ["automation", "electric-mining-drill"]
+    assert planner.next_plan(q)[0][0] == {"skill": "build_power"}
+
+
+def test_field_move_follows_power_and_counts_built_drills():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 30}}
+    ms = moves(p, limit=8)
+    assert ms.index({"skill": "build_miner", "resource": "iron-ore", "output": "field", "count": 2}) >= 0
+    p["factory"]["electric_miners"] = {"iron-ore": 3}              # 3 drills will make 54/min: enough
+    assert not [e for e in moves(p, limit=8) if e.get("output") == "field"]
+    # a blocked field move gives way (the pair rule takes over)
+    p["factory"]["electric_miners"] = {}
+    blocked = field_blocked("iron-ore")
+    assert not [e for e in moves(p, blocked, limit=8) if e.get("output") == "field"]
+    assert [e for e in moves(p, blocked, limit=8) if e.get("output") == "furnace"]
+
+
+def test_depleted_field_gets_a_replacement():
+    p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 30}}   # targets met
+    p["fields"] = [{"resource": "iron-ore", "furnaces": 3, "remaining_pct": 60, "position": {"x": 1, "y": 1}}]
+    assert not [e for e in moves(p, limit=8) if e.get("output") == "field"]
+    p["fields"][0]["remaining_pct"] = 15
+    plan = planner.next_plan(p, limit=8)
+    repl = [(e, why, sure) for e, why, sure in plan if e.get("output") == "field"]
+    assert len(repl) == 1
+    assert repl[0][0] == {"skill": "build_miner", "resource": "iron-ore", "output": "field", "count": 3}
+    assert repl[0][2] is True and "15%" in repl[0][1]
+    # once a fresh field of the same ore exists, nothing more is built
+    p["fields"].append({"resource": "iron-ore", "furnaces": 3, "remaining_pct": 100, "position": {"x": 9, "y": 9}})
+    assert not [e for e in moves(p, limit=8) if e.get("output") == "field"]
+    # a depleted copper field is replaced independently
+    p["fields"] = [{"resource": "copper-ore", "furnaces": 1, "remaining_pct": 5}]
+    repl = [e for e in moves(p, limit=8) if e.get("output") == "field"]
+    assert repl == [{"skill": "build_miner", "resource": "copper-ore", "output": "field", "count": 1}]
+
+
+def test_science_blocks_wait_while_a_needed_field_is_queued():
+    # automation done: targets 45 iron / 22.5 copper -> blocks start at 36 / 18 (built drills x 18)
+    def red(iron_drills, copper_drills, blocked=frozenset()):
+        p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+        p["production"]["items"] = {"iron-plate": {"per_min": 18 * iron_drills},
+                                    "copper-plate": {"per_min": 18 * copper_drills}}
+        p["factory"]["electric_miners"] = {"iron-ore": iron_drills, "copper-ore": copper_drills}
+        return moves(p, blocked, limit=12)
+    low = red(1, 1)
+    assert {"skill": "build_red_cell"} not in low                   # fields queued, under 80%
+    assert any(e.get("output") == "field" for e in low)
+    assert {"skill": "build_red_cell"} in red(2, 1)                 # 36 / 18: at 80%
+    assert {"skill": "build_red_cell"} in red(3, 2)                 # targets met: no field queued
+    # past the ladder's smelting step (30/15) but under the gate (36/18): a field that keeps
+    # failing must not hold science back forever
+    def short(blocked=frozenset()):
+        p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
+        p["production"]["items"] = {"iron-plate": {"per_min": 32}, "copper-plate": {"per_min": 16}}
+        p["factory"]["electric_miners"] = {"iron-ore": 1, "copper-ore": 0}
+        return moves(p, blocked, limit=12)
+    first = short()
+    assert {"skill": "build_red_cell"} not in first
+    fields = frozenset(planner.entry_key(e) for e in first if e.get("output") == "field")
+    assert fields
+    for _ in range(3):                          # block each field move the planner falls back to
+        again = short(fields)
+        more = frozenset(planner.entry_key(e) for e in again if e.get("output") == "field")
+        if not more - fields:
+            break
+        fields |= more
+    assert {"skill": "build_red_cell"} in again
+    # the gate is for the electric era only: with no electric drill tech nothing waits
+    p = powered(post_bootstrap(), ["automation"])
+    assert planner._plates_ready(p, p["factory"], set())
+
+
+def test_every_tech_the_planner_gates_on_is_researched_and_reported():
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "mod" / "scripts"
+    lua_order = set(re.findall(r'\{"([a-z0-9-]+)", (?:true|false)\}',
+                               re.search(r"AISkills\.RESEARCH_ORDER = \{(.*?)\n\}", (root / "skills.lua").read_text("utf-8"), re.S).group(1)))
+    key_techs = set(re.findall(r'"([a-z0-9-]+)"', re.search(r"KEY_TECHS = \{(.*?)\n\}", (root / "perception.lua").read_text("utf-8"), re.S).group(1)))
+    src = (Path(planner.__file__)).read_text("utf-8")
+    gated = set(re.findall(r'_tech\(p, "([a-z0-9-]+)"\)', src))
+    py_order = {t for t, _ in planner.RESEARCH_ORDER}
+    optional = {"military-2"}          # an ammo upgrade the AI never queues; the planner only prefers it when present
+    assert "electric-mining-drill" in gated
+    for tech in sorted(gated - optional):
+        assert tech in lua_order, f"{tech} is gated on in planner.py but never researched (skills.lua RESEARCH_ORDER)"
+        assert tech in py_order, f"{tech} is missing from planner.RESEARCH_ORDER"
+        assert tech in key_techs, f"{tech} is not in perception KEY_TECHS, so research.done never reports it"
+    assert lua_order == py_order, "skills.lua RESEARCH_ORDER and planner.RESEARCH_ORDER drifted apart"
+    order = [t for t, _ in planner.RESEARCH_ORDER]
+    assert order.index("electric-mining-drill") == order.index("automation") + 1
 
 
 def test_smelting_needs_the_electric_drill_tech():
@@ -546,7 +668,7 @@ def test_smelting_needs_the_electric_drill_tech():
 
 def test_red_cell_after_automation_and_smelting():
     p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
-    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 30}}
     ms = moves(p)
     craft = {"skill": "craft_for", "item": "assembling-machine-1", "count": 3}
     assert {"skill": "build_red_cell"} in ms
@@ -555,7 +677,7 @@ def test_red_cell_after_automation_and_smelting():
 
 def test_built_red_cell_is_tended():
     p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
-    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 30}}
     p["factory"]["by_type"]["assembling-machine-1"] = 3
     p["factory"]["assemblers"] = [{"recipe": "automation-science-pack", "status": "working"}]
     assert moves(p)[0] == {"skill": "tend"}
@@ -563,7 +685,7 @@ def test_built_red_cell_is_tended():
 
 def test_a_lone_gear_assembler_does_not_block_the_red_cell():
     p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
-    p["production"]["items"] = {"iron-plate": {"per_min": 40}, "copper-plate": {"per_min": 20}}
+    p["production"]["items"] = {"iron-plate": {"per_min": 60}, "copper-plate": {"per_min": 30}}
     p["factory"]["assemblers"] = [{"recipe": "iron-gear-wheel", "status": "working"}]
     assert {"skill": "build_red_cell"} in moves(p, limit=8)
 
@@ -571,7 +693,7 @@ def test_a_lone_gear_assembler_does_not_block_the_red_cell():
 def test_built_electric_pairs_count_before_the_rate_catches_up():
     p = powered(post_bootstrap(), ["automation", "electric-mining-drill"])
     p["production"]["items"] = {"iron-plate": {"per_min": 12}, "copper-plate": {"per_min": 20}}
-    p["factory"]["electric_miners"] = {"iron-ore": 2}
+    p["factory"]["electric_miners"] = {"iron-ore": 3}              # 3 x 18 = 54/min vs the 45 target
     assert not [e for e in moves(p, limit=8) if e.get("resource") == "iron-ore"]
 
 
@@ -763,7 +885,7 @@ def test_research_order_comes_from_the_mod_when_it_reports_one():
     p["research"]["order"] = [{"tech": "toolbelt", "green": False}, {"tech": "logistics", "green": False}]
     assert research_moves(p)[0] == {"skill": "research", "tech": "toolbelt"}
     p["research"]["order"] = []
-    assert research_moves(p)[0] == {"skill": "research", "tech": "logistics"}    # falls back to the built-in list
+    assert research_moves(p)[0] == {"skill": "research", "tech": "electric-mining-drill"}    # falls back to the built-in list
 
 
 def test_a_turn_cancelled_by_combat_is_not_a_failure():
@@ -1187,24 +1309,27 @@ def test_prompt_strips_heavy_perception_fields():
 
 
 def test_demand_targets_scaling():
+    # need x1.5 headroom + a flat buffer (iron 30, copper 15) that is NOT scaled
+    from bridge import goals
+    assert planner.demand_targets is goals.demand_targets          # one shared copy
     p = spawn()
     t0 = planner.demand_targets(p)
-    assert t0["iron-ore"] == ("iron-plate", 45.0)
-    assert t0["copper-ore"] == ("copper-plate", 22.5)
+    assert t0["iron-ore"] == ("iron-plate", 30.0)
+    assert t0["copper-ore"] == ("copper-plate", 15.0)
 
-    p["research"]["done"] = ["automation"]
+    p["research"]["done"] = ["automation"]                         # red 5/min: iron 10, copper 5
     t1 = planner.demand_targets(p)
-    assert t1["iron-ore"] == ("iron-plate", 60.0)
-    assert t1["copper-ore"] == ("copper-plate", 30.0)
+    assert t1["iron-ore"] == ("iron-plate", 45.0)
+    assert t1["copper-ore"] == ("copper-plate", 22.5)
 
-    p["research"]["done"] += ["logistic-science-pack"]
+    p["research"]["done"] += ["logistic-science-pack"]             # green 5/min: iron 27.5, copper 7.5
     t2 = planner.demand_targets(p)
-    assert t2["iron-ore"] == ("iron-plate", 101.2)
-    assert t2["copper-ore"] == ("copper-plate", 41.2)
+    assert t2["iron-ore"] == ("iron-plate", pytest.approx(86.2, abs=0.1))
+    assert t2["copper-ore"] == ("copper-plate", pytest.approx(33.8, abs=0.1))
 
-    p["research"]["done"] += ["steel-processing"]
+    p["research"]["done"] += ["steel-processing"]                  # steel: iron 25
     t3 = planner.demand_targets(p)
-    assert t3["iron-ore"] == ("iron-plate", 138.8)
-    assert t3["copper-ore"] == ("copper-plate", 41.2)
+    assert t3["iron-ore"] == ("iron-plate", pytest.approx(123.8, abs=0.1))
+    assert t3["copper-ore"] == ("copper-plate", pytest.approx(33.8, abs=0.1))
 
 

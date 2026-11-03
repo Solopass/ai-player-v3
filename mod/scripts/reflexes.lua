@@ -599,7 +599,46 @@ local function release_held(ch)
 end
 
 local DOCTOR_EVERY = 600
-local DOCTOR_CAP = 20
+local DOCTOR_CAP = 20            -- machines checked per pass (round-robin through the owned ones)
+local DOCTOR_POWER_CAP = 2       -- no_power machines handled per pass
+local DOCTOR_POWER_RADIUS = 30   -- pole searches stay this close to the machine
+local DOCTOR_TAKE_CAP = 50       -- items moved from machines/chests into the AI per pass
+local DOCTOR_CHEST_BIG = 2000    -- a chest is only emptied into the AI above this many items
+
+local function doctor_status(st)
+  local s = defines.entity_status
+  if st == s.full_output or st == s.not_enough_space_in_output
+     or st == s.waiting_for_space_in_destination then
+    return "full_output"
+  elseif st == s.no_fuel then
+    return "no_fuel"
+  elseif st == s.no_power or st == s.low_power or st == s.not_plugged_in_electric_network then
+    return "no_power"
+  elseif st == s.waiting_for_source_items or st == s.item_ingredient_shortage then
+    return "no_ingredients"
+  elseif st == s.no_recipe then
+    return "no_recipe"
+  end
+  return nil
+end
+
+-- Move up to `budget` items out of `from` into the AI's inventory; only what the AI really took is
+-- removed. Returns how many moved.
+local function take_into(inv, from, budget)
+  local moved = 0
+  for _, item in ipairs(from.get_contents()) do
+    if moved >= budget then break end
+    local want = math.min(item.count, budget - moved)
+    if want > 0 and inv.can_insert{name = item.name, count = 1, quality = item.quality} then
+      local inserted = inv.insert{name = item.name, count = want, quality = item.quality}
+      if inserted > 0 then
+        from.remove{name = item.name, count = inserted, quality = item.quality}
+        moved = moved + inserted
+      end
+    end
+  end
+  return moved
+end
 
 function AIReflexes.doctor_pass(ch, tick)
   local ap = storage.ai_player
@@ -608,8 +647,7 @@ function AIReflexes.doctor_pass(ch, tick)
   local doc = ap.doctor
   local surface = ch.surface
   local inv = main_inv(ch)
-  local machines = AIRegistry.machines()
-  local fixed = 0
+  local fixed, power_done, take_left = 0, 0, DOCTOR_TAKE_CAP
 
   local recent_hist = {}
   for _, h in ipairs(doc.history or {}) do
@@ -617,93 +655,102 @@ function AIReflexes.doctor_pass(ch, tick)
   end
   doc.history = recent_hist
 
-  for _, e in ipairs(AIRegistry.owned(surface, {"container"})) do
-    if fixed >= DOCTOR_CAP then break end
+  -- Forget machines that are gone (and their remembered recipe).
+  for uid, info in pairs(doc.tracked) do
+    if not (info.entity and info.entity.valid) then
+      doc.tracked[uid] = nil
+      if ap.remembered_recipes then ap.remembered_recipes[uid] = nil end
+    end
+  end
+
+  -- Owned machines only (never the player's), in a stable order; the cursor remembers where the
+  -- last pass stopped so every machine gets its turn.
+  local machines = {}
+  for _, e in ipairs(AIRegistry.machines()) do
+    if AIRegistry.is_owned(e) then machines[#machines + 1] = e end
+  end
+  table.sort(machines, function(a, b) return a.unit_number < b.unit_number end)
+  local chests = AIRegistry.owned(surface, {"container"})   -- once per pass
+
+  -- Big chests drain into the AI a little at a time.
+  for _, e in ipairs(chests) do
+    if take_left <= 0 then break end
     if e.valid then
       local cinv = e.get_inventory(defines.inventory.chest)
-      if cinv and not cinv.is_empty() and cinv.get_item_count() >= 2000 then
-        local contents = cinv.get_contents()
-        for _, item in ipairs(contents) do
-          local inserted = inv.insert{name = item.name, count = math.min(item.count, 200), quality = item.quality}
-          if inserted > 0 then
-            cinv.remove{name = item.name, count = inserted, quality = item.quality}
-            table.insert(doc.history, {action = "cleared_output", unit_number = e.unit_number or 0, tick = tick, name = e.name})
-            fixed = fixed + 1
-            break
-          end
+      if cinv and cinv.get_item_count() >= DOCTOR_CHEST_BIG then
+        local moved = take_into(inv, cinv, take_left)
+        if moved > 0 then
+          take_left = take_left - moved
+          doc.history[#doc.history + 1] = {action = "cleared_output", unit_number = e.unit_number or 0, tick = tick, name = e.name}
+          fixed = fixed + 1
         end
       end
     end
   end
 
-  for _, e in ipairs(machines) do
-    if fixed >= DOCTOR_CAP then break end
+  local n = #machines
+  if n == 0 then return end
+  local first = 1
+  local cursor = doc.cursor or 0
+  for i = 1, n do
+    if machines[i].unit_number > cursor then first = i; break end
+    first = i + 1
+  end
+  if first > n then first = 1 end
+  local last_uid = cursor
+  for k = 0, math.min(n, DOCTOR_CAP) - 1 do
+    local e = machines[(first - 1 + k) % n + 1]
+    last_uid = e.unit_number
     if e.valid then
       local uid = e.unit_number
-      local st = e.status
-      local st_name = nil
-      if st == defines.entity_status.full_output
-         or st == defines.entity_status.not_enough_space_in_output
-         or st == defines.entity_status.waiting_for_space_in_destination then
-        st_name = "full_output"
-      elseif st == defines.entity_status.no_fuel then
-        st_name = "no_fuel"
-      elseif st == defines.entity_status.no_power or st == defines.entity_status.low_power
-         or st == defines.entity_status.not_plugged_in_electric_network then
-        st_name = "no_power"
-      elseif st == defines.entity_status.waiting_for_source_items
-         or st == defines.entity_status.item_ingredient_shortage then
-        st_name = "no_ingredients"
-      elseif st == defines.entity_status.no_recipe then
-        st_name = "no_recipe"
-      end
-
-      if st == defines.entity_status.working or st == defines.entity_status.normal or not st_name then
-        if uid and doc.tracked[uid] then doc.tracked[uid] = nil end
-      elseif uid then
-        if not doc.tracked[uid] or doc.tracked[uid].status ~= st_name then
-          doc.tracked[uid] = {status = st_name, since = tick, name = e.name, type = e.type}
+      local st_name = doctor_status(e.status)
+      if not st_name then
+        doc.tracked[uid] = nil
+      else
+        local t = doc.tracked[uid]
+        if not t or t.status ~= st_name then
+          doc.tracked[uid] = {status = st_name, since = tick, name = e.name, type = e.type, entity = e}
         end
 
-        if st_name == "full_output" or (e.type == "container" and e.get_inventory(defines.inventory.chest) and not e.get_inventory(defines.inventory.chest).is_empty()) then
-          local out_inv = (e.type == "container") and e.get_inventory(defines.inventory.chest) or e.get_output_inventory()
-          if out_inv and not out_inv.is_empty() then
-            local contents = out_inv.get_contents()
-            for _, item in ipairs(contents) do
-              local inserted = inv.insert{name = item.name, count = item.count, quality = item.quality}
-              if inserted > 0 then
-                out_inv.remove{name = item.name, count = inserted, quality = item.quality}
-                table.insert(doc.history, {action = "cleared_output", unit_number = uid, tick = tick, name = e.name})
-                fixed = fixed + 1
-                break
-              end
+        if st_name == "full_output" then
+          local out_inv = (e.type == "furnace" or e.type == "assembling-machine") and e.get_output_inventory() or nil
+          if out_inv and not out_inv.is_empty() and take_left > 0 then
+            local moved = take_into(inv, out_inv, take_left)
+            if moved > 0 then
+              take_left = take_left - moved
+              doc.history[#doc.history + 1] = {action = "cleared_output", unit_number = uid, tick = tick, name = e.name}
+              fixed = fixed + 1
             end
           end
         elseif st_name == "no_fuel" then
-          local fueled = AISkills.refuel(inv, {e})
-          if fueled > 0 then
-            table.insert(doc.history, {action = "refueled", unit_number = uid, tick = tick, name = e.name})
+          if AISkills.refuel(inv, {e}) > 0 then
+            doc.history[#doc.history + 1] = {action = "refueled", unit_number = uid, tick = tick, name = e.name}
             fixed = fixed + 1
           end
         elseif st_name == "no_power" then
-          local pole_plan = AILayout.find_consumer_poles(ch, e)
-          if pole_plan and pole_plan.place and #pole_plan.place <= 2 then
-            local placed_any = false
-            for _, p in ipairs(pole_plan.place) do
-              if inv.get_item_count("small-electric-pole") > 0 or storage.selftest then
-                local ent = surface.create_entity{name = "small-electric-pole", position = p.position, force = ch.force}
-                if ent then
-                  AIRegistry.own(ent)
-                  if inv.get_item_count("small-electric-pole") > 0 then
+          -- A pole gap: only the unplugged/unpowered case, a few per pass, from the AI's own poles.
+          -- (low_power is a brownout: more poles would not help.)
+          local st = e.status
+          if power_done < DOCTOR_POWER_CAP and inv.get_item_count("small-electric-pole") > 0
+             and (st == defines.entity_status.no_power or st == defines.entity_status.not_plugged_in_electric_network) then
+            power_done = power_done + 1
+            local plan = AILayout.find_consumer_poles(ch, e, DOCTOR_POWER_RADIUS)
+            if plan and plan.place and #plan.place <= 2 and inv.get_item_count("small-electric-pole") >= #plan.place then
+              local placed_any = false
+              for _, p in ipairs(plan.place) do
+                if surface.can_place_entity{name = "small-electric-pole", position = p.position, force = ch.force} then
+                  local ent = surface.create_entity{name = "small-electric-pole", position = p.position, force = ch.force}
+                  if ent then
+                    AIRegistry.own(ent)
                     inv.remove{name = "small-electric-pole", count = 1}
+                    placed_any = true
                   end
-                  placed_any = true
                 end
               end
-            end
-            if placed_any then
-              table.insert(doc.history, {action = "placed_pole", unit_number = uid, tick = tick, name = e.name})
-              fixed = fixed + 1
+              if placed_any then
+                doc.history[#doc.history + 1] = {action = "placed_pole", unit_number = uid, tick = tick, name = e.name}
+                fixed = fixed + 1
+              end
             end
           end
         elseif st_name == "no_ingredients" and e.type == "assembling-machine" then
@@ -713,48 +760,58 @@ function AIReflexes.doctor_pass(ch, tick)
               has_belt_feed = true; break
             end
           end
-          if not has_belt_feed then
-            local recipe = e.get_recipe()
-            if recipe then
-              local in_inv = e.get_inventory(defines.inventory.crafter_input)
-              for _, ing in ipairs(recipe.ingredients or {}) do
+          local recipe = (not has_belt_feed) and e.get_recipe() or nil
+          local in_inv = recipe and e.get_inventory(defines.inventory.crafter_input) or nil
+          if in_inv then
+            local hauled = false
+            for _, ing in ipairs(recipe.ingredients or {}) do
+              if hauled then break end
+              if ing.type == "item" then              -- fluids can't be carried
+                local amount = ing.amount or 1
                 local have = in_inv.get_item_count(ing.name)
-                local needed = math.max(1, (ing.amount or 1) * 2 - have)
-                if have < (ing.amount or 1) then
-                  if inv.get_item_count(ing.name) >= (ing.amount or 1) then
-                    local ins_cnt = in_inv.insert{name = ing.name, count = math.min(needed, inv.get_item_count(ing.name))}
-                    inv.remove{name = ing.name, count = ins_cnt}
-                    table.insert(doc.history, {action = "hauled_ingredients", unit_number = uid, tick = tick, name = e.name})
-                    fixed = fixed + 1
-                    break
+                if have < amount then
+                  local needed = math.max(1, amount * 2 - have)
+                  local mine = inv.get_item_count(ing.name)
+                  if mine >= amount then
+                    -- insert first, remove only what went in
+                    local ins_cnt = in_inv.insert{name = ing.name, count = math.min(needed, mine)}
+                    if ins_cnt > 0 then
+                      inv.remove{name = ing.name, count = ins_cnt}
+                      hauled = true
+                    end
                   else
-                    for _, chest_ent in ipairs(AIRegistry.owned(surface, {"container"})) do
-                      local cinv = chest_ent.get_inventory(defines.inventory.chest)
+                    for _, chest_ent in ipairs(chests) do
+                      local cinv = chest_ent.valid and chest_ent.get_inventory(defines.inventory.chest)
                       if cinv and cinv.get_item_count(ing.name) > 0 then
-                        local take_cnt = math.min(needed, cinv.get_item_count(ing.name))
-                        cinv.remove{name = ing.name, count = take_cnt}
-                        in_inv.insert{name = ing.name, count = take_cnt}
-                        table.insert(doc.history, {action = "hauled_ingredients", unit_number = uid, tick = tick, name = e.name})
-                        fixed = fixed + 1
-                        break
+                        local ins_cnt = in_inv.insert{name = ing.name, count = math.min(needed, cinv.get_item_count(ing.name))}
+                        if ins_cnt > 0 then
+                          cinv.remove{name = ing.name, count = ins_cnt}
+                          hauled = true
+                          break
+                        end
                       end
                     end
                   end
                 end
               end
             end
+            if hauled then
+              doc.history[#doc.history + 1] = {action = "hauled_ingredients", unit_number = uid, tick = tick, name = e.name}
+              fixed = fixed + 1
+            end
           end
         elseif st_name == "no_recipe" and e.type == "assembling-machine" then
           local rem = ap.remembered_recipes and ap.remembered_recipes[uid]
           if rem and ch.force.recipes[rem] and ch.force.recipes[rem].enabled then
             e.set_recipe(rem)
-            table.insert(doc.history, {action = "restored_recipe", unit_number = uid, tick = tick, name = e.name})
+            doc.history[#doc.history + 1] = {action = "restored_recipe", unit_number = uid, tick = tick, name = e.name}
             fixed = fixed + 1
           end
         end
       end
     end
   end
+  doc.cursor = last_uid
 end
 
 function AIReflexes.tick(event)

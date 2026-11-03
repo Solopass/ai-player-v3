@@ -336,6 +336,18 @@ CASES.electric_row = {
       add("drill is powered", d.status ~= defines.entity_status.no_power
           and d.status ~= defines.entity_status.not_plugged_in_electric_network, d.status)
     end
+    -- The collector at the belt's end: a powered inserter into a chest that fills with ore.
+    local chests = s.find_entities_filtered{type = "container"}
+    add("collector chest built", #chests >= 1, #chests)
+    local ins = s.find_entities_filtered{name = "inserter"}
+    add("collector inserter built", #ins >= 1, #ins)
+    for _, i in ipairs(ins) do
+      add("collector inserter is powered", i.status ~= defines.entity_status.no_power
+          and i.status ~= defines.entity_status.not_plugged_in_electric_network, i.status)
+    end
+    local ore = 0
+    for _, ch in ipairs(chests) do ore = ore + ch.get_item_count("iron-ore") end
+    add("ore reached the collector chest", ore > 0, ore)
   end,
 }
 
@@ -613,16 +625,24 @@ CASES.connect_pipe = {
     add("route around obstacle placed", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
     local pipes = c.surface.find_entities_filtered{type = {"pipe", "entity-ghost"}}
     add("pipes placed", #pipes > 5, #pipes .. " pipes/ghosts")
-    local conns = {}
-    if c.foreign and c.foreign.valid then
-      local ok, cs = pcall(function() return c.foreign.get_fluid_box_pipe_connections(1) end)
-      if ok and cs then
-        for _, conn in ipairs(cs) do
-          if conn.target_entity then conns[#conns + 1] = conn end
-        end
-      end
+    -- No pcall here: if the API call itself were wrong this check must crash, not pass.
+    -- (2.1: LuaEntity.get_fluid_box_pipe_connections(index); the old entity.fluidbox is gone.)
+    assert(c.foreign and c.foreign.valid, "foreign pipe vanished")
+    local conns, all = {}, c.foreign.get_fluid_box_pipe_connections(1)
+    assert(all and #all > 0, "the foreign pipe reports no pipe connections at all")
+    for _, conn in ipairs(all) do
+      if conn.target ~= nil then conns[#conns + 1] = conn end
     end
     add("foreign pipe not merged", #conns == 0, #conns .. " connections to foreign pipe")
+    -- Nothing of the AI's (real or ghost) sits next to the foreign pipe either.
+    local beside = 0
+    for _, e in ipairs(c.surface.find_entities_filtered{position = c.foreign.position, radius = 1.2}) do
+      if e ~= c.foreign and (e.type == "pipe" or e.type == "pipe-to-ground"
+          or (e.type == "entity-ghost" and (e.ghost_type == "pipe" or e.ghost_type == "pipe-to-ground"))) then
+        beside = beside + 1
+      end
+    end
+    add("no AI pipe placed beside the foreign pipe", beside == 0, beside)
     add("route through foreign fluid corridor refused", c.results[2] and not c.results[2].ok, c.results[2] and c.results[2].detail)
     add("pipe route with underground placed", c.results[3] and c.results[3].ok, c.results[3] and c.results[3].detail)
     local ptgs = c.surface.find_entities_filtered{type = "entity-ghost", ghost_name = "pipe-to-ground"}
@@ -721,6 +741,23 @@ CASES.connect_belt = {
 
 
 
+    -- The clean route (r1) is a real chain: revive its ghosts, then follow belt_neighbours.outputs
+    -- ({inputs, outputs}) from the first belt to the last.
+    for _, g in ipairs(c.surface.find_entities_filtered{type = "entity-ghost", ghost_name = "transport-belt",
+                                                         area = {{0, 0}, {9, 14}}}) do
+      g.silent_revive()
+    end
+    local cur = c.surface.find_entities_filtered{name = "transport-belt", position = {2.5, 2.5}, radius = 1.5}[1]
+    local steps, reached = 0, false
+    while cur and cur.valid and steps < 80 do
+      if math.abs(cur.position.x - 7.5) < 1.5 and math.abs(cur.position.y - 12.5) < 1.5 then reached = true; break end
+      local outs = cur.belt_neighbours.outputs
+      cur = outs and outs[1]
+      steps = steps + 1
+    end
+    add("belt_neighbours chain runs from the start to the end of the clean route", reached and steps > 3,
+        steps .. " steps, reached=" .. tostring(reached))
+
     local mid = c.surface.find_entities_filtered{position = {15.5, 5.5}, radius = 0.3}[1]
     add("existing belt intact", mid and mid.direction == defines.direction.south, mid and mid.direction)
   end,
@@ -790,53 +827,140 @@ CASES.field_sizing = {
   end,
 }
 
+-- A rectangle of ore tiles (inclusive tile coords).
+local function paint_rect(surface, name, x1, y1, x2, y2, amount)
+  for x = x1, x2 do
+    for y = y1, y2 do
+      surface.create_entity{name = name, position = {x + 0.5, y + 0.5}, amount = amount or 500}
+    end
+  end
+end
+
+-- A tiny iron patch (6x6 tiles of 100 ore) around (cx, cy).
+local function tiny_patch(surface, cx, cy)
+  paint_ore(surface, "iron-ore", cx, cy, 3, 100)
+end
+
 CASES.field_depletion = {
-  delay = 60,
+  delay = 600,
   setup = function(c)
-    paint_ore(c.surface, "iron-ore", 10, 10, 4)
+    free_power(c.surface, c.force, -3, -23)
+    tiny_patch(c.surface, 0, 12)                       -- the field's patch
+    tiny_patch(c.surface, -40, 12)                     -- where the replacement goes
+    give(c.character, {["electric-mining-drill"] = 6, ["transport-belt"] = 80, ["stone-furnace"] = 4,
+                       inserter = 8, ["iron-chest"] = 4, ["wooden-chest"] = 4, ["small-electric-pole"] = 40})
+    c.ap = storage.ai_player
+    c.ap.fields = nil
   end,
-  run = function(c) return {} end,
+  run = function(c)
+    return {{skill = "build_miner", resource = "iron-ore", output = "field", count = 1}}
+  end,
+  late_after = 120,
+  late = function(c)
+    local fields = c.ap.fields or {}
+    c.first = fields[1] and {initial = fields[1].initial, furnaces = fields[1].furnaces} or nil
+    c.fresh = AILayout.fields_report(c.surface)[1]
+    -- Run the patch down to 5% (what mining does over time) and force the 5-minute re-count.
+    for _, e in ipairs(c.surface.find_entities_filtered{name = "iron-ore", area = {{-4, 8}, {4, 16}}}) do e.amount = 5 end
+    for _, f in ipairs(fields) do f.checked = -1000000 end
+    c.low = AILayout.fields_report(c.surface)[1]
+    -- The planner's rule (bridge/planner.py _field_moves): every field of the ore below 20%.
+    c.all_low = c.low ~= nil and c.low.remaining_pct < 20
+    -- The replacement is the same skill call the planner sends; the AI stands at the other patch.
+    c.character.teleport({-40, 2})
+    return {{skill = "build_miner", resource = "iron-ore", output = "field", count = c.low and c.low.furnaces or 1}}
+  end,
   check = function(c, add)
-    local total = AILayout.field_resource_remaining(c.surface, {{5, 5}, {15, 15}}, "iron-ore")
-    add("field remaining resource calculated", total > 0, total)
-    local empty = AILayout.field_resource_remaining(c.surface, {{50, 50}, {60, 60}}, "iron-ore")
-    add("depleted/empty area returns 0", empty == 0, empty)
-    local initial = 10000
-    local remaining = 1500
-    local needs_replacement = (remaining / initial) < 0.20
-    add("below 20% triggers replacement", needs_replacement, string.format("%.1f%%", (remaining/initial)*100))
+    add("first field built", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    add("field recorded with its patch total", c.first ~= nil and c.first.initial > 0, c.first and c.first.initial)
+    add("a fresh field reports ~100% left", c.fresh ~= nil and c.fresh.remaining_pct >= 95, c.fresh and c.fresh.remaining_pct)
+    add("run-down patch reports under 20%", c.low ~= nil and c.low.remaining_pct < 20, c.low and c.low.remaining_pct)
+    add("planner condition (all fields of the ore below 20%) holds", c.all_low, tostring(c.all_low))
+    add("replacement field built on the other patch", c.results[2] and c.results[2].ok, c.results[2] and c.results[2].detail)
+    local report = AILayout.fields_report(c.surface)
+    add("two fields tracked", #report == 2, #report)
+    local fresh = 0
+    for _, f in ipairs(report) do if f.remaining_pct >= 95 then fresh = fresh + 1 end end
+    add("the replacement field is full, so no further replacement is due", fresh == 1, fresh)
+    c.ap.fields = nil
   end,
 }
 
+-- A whole mining field (drills on one belt side -> near lane, coal side-loaded onto the far lane,
+-- furnace column, chests). The iron patch lies 8..15 tiles out in the facing direction; a coal
+-- patch lies beyond it (18..30 tiles out), so the coal belt must run out to it.
 CASES.mining_field = {
-  delay = 2400,
+  delay = 5400,                                         -- 90 s
   setup = function(c)
     local facing = c.facing or "south"
     local d = STEP[facing]
     free_power(c.surface, c.force, -d[1] * 20 - 3, -d[2] * 20 - 3)
-    paint_ore(c.surface, "iron-ore", 12 * d[1], 12 * d[2], 12)
+    paint_ore(c.surface, "iron-ore", 12 * d[1], 12 * d[2], 4)
+    -- coal: 18..30 tiles out along d, 12 tiles either side
+    local x1, x2, y1, y2
+    if d[1] ~= 0 then
+      x1, x2 = math.min(18 * d[1], 30 * d[1]), math.max(18 * d[1], 30 * d[1])
+      y1, y2 = -12, 12
+    else
+      y1, y2 = math.min(18 * d[2], 30 * d[2]), math.max(18 * d[2], 30 * d[2])
+      x1, x2 = -12, 12
+    end
+    paint_rect(c.surface, "coal", x1, y1, x2, y2, 500)
     give(c.character, {["electric-mining-drill"] = 4, ["transport-belt"] = 60,
-                       ["stone-furnace"] = 4, inserter = 8, ["iron-chest"] = 4,
-                       ["small-electric-pole"] = 15, coal = 50})
+                       ["stone-furnace"] = 4, inserter = 8, ["iron-chest"] = 4, ["wooden-chest"] = 4,
+                       ["small-electric-pole"] = 40, coal = 50})
+    AILayout.only_facing = c.facing
   end,
   run = function(c)
     return {{skill = "build_miner", resource = "iron-ore", output = "field", count = 2}}
   end,
   check = function(c, add)
     local s = c.surface
+    local f = STEP[c.facing or "south"]
+    local function unpowered(e)
+      return e.status == defines.entity_status.no_power or e.status == defines.entity_status.not_plugged_in_electric_network
+    end
     add("build_miner field ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
     local drills = s.find_entities_filtered{name = "electric-mining-drill"}
-    add("drills placed", #drills >= 2, #drills)
+    add("2 ore drills + 1 coal drill placed", #drills == 3, #drills)
     local furnaces = s.find_entities_filtered{name = "stone-furnace"}
-    add("furnaces placed", #furnaces >= 2, #furnaces)
-    local belts = s.find_entities_filtered{name = "transport-belt"}
-    add("belts placed", #belts >= 10, #belts)
-    local inserters = s.find_entities_filtered{name = "inserter"}
-    add("inserters placed", #inserters >= 4, #inserters)
+    add("2 furnaces placed", #furnaces == 2, #furnaces)
     for _, d in ipairs(drills) do
-      add("drill is powered", d.status ~= defines.entity_status.no_power
-          and d.status ~= defines.entity_status.not_plugged_in_electric_network, d.status)
+      add("drill at " .. math.floor(d.position.x) .. "," .. math.floor(d.position.y) .. " is powered", not unpowered(d), d.status)
+      local t = d.drop_target
+      add("drill drops onto a belt", t ~= nil and t.type == "transport-belt", t and t.name or "nothing")
     end
+    for _, i in ipairs(s.find_entities_filtered{name = "inserter"}) do
+      add("inserter at " .. math.floor(i.position.x) .. "," .. math.floor(i.position.y) .. " is powered", not unpowered(i), i.status)
+    end
+    -- Lanes. flow = the ore belt's direction (east/south); line 1 is the left lane.
+    local flow_dir = (f[1] ~= 0) and defines.direction.south or defines.direction.east
+    local ax, ay = (f[1] ~= 0) and 0 or 1, (f[1] ~= 0) and 1 or 0
+    local left = {ay, -ax}                                 -- unit vector to the left of the travel direction
+    local near_line = ((left[1] * -f[1] + left[2] * -f[2]) > 0) and 1 or 2   -- the lane on the drills' side
+    local far_line = 3 - near_line
+    local ore_near, ore_far, coal_near, coal_far, belts = 0, 0, 0, 0, 0
+    for _, b in ipairs(s.find_entities_filtered{name = "transport-belt", direction = flow_dir}) do
+      belts = belts + 1
+      local nl, fl = b.get_transport_line(near_line), b.get_transport_line(far_line)
+      ore_near = ore_near + nl.get_item_count("iron-ore")
+      coal_near = coal_near + nl.get_item_count("coal")
+      ore_far = ore_far + fl.get_item_count("iron-ore")
+      coal_far = coal_far + fl.get_item_count("coal")
+    end
+    add("ore belt placed", belts >= 10, belts)
+    add("ore rides the near lane", ore_near > 0, ore_near)
+    add("coal rides the far lane", coal_far > 0, coal_far)
+    add("no ore on the far lane", ore_far == 0, ore_far)
+    add("no coal on the near lane", coal_near == 0, coal_near)
+    local plates = 0
+    for _, ch in ipairs(s.find_entities_filtered{type = "container"}) do plates = plates + ch.get_item_count("iron-plate") end
+    add("plates reached the chests", plates > 0, plates)
+    local fed_coal = 0
+    for _, fu in ipairs(furnaces) do
+      if fu.get_inventory(defines.inventory.fuel).get_item_count("coal") > 0 then fed_coal = fed_coal + 1 end
+    end
+    add("furnaces hold coal", fed_coal == #furnaces and #furnaces > 0, fed_coal .. "/" .. #furnaces)
   end,
 }
 

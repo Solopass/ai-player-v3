@@ -7,7 +7,7 @@ Round 14 implements correctness fixes from the Round 13 review, stops wasted coa
 
 ### Part A1: Round 13 Review Fixes (`039abe0`)
 - **AI Ghost Tracking:** Registered unit numbers in `storage.ai_player.ai_ghosts` so obstacle clearing never deletes player-placed blueprints or unowned ghosts.
-- **Safe Obstacle Clearance:** Two-phase clearance verifies whether an obstacle tile contains only clearable entities (trees, rocks, AI ghosts, ground items, unowned burner drills) before clearing; never deletes player entities or cliffs; skips resource tiles.
+- **Safe Obstacle Clearance:** Two-phase clearance verifies whether an obstacle tile contains only clearable entities (trees, rocks, AI ghosts, ground items, and the AI's own obsolete burner drills and inserters; a player's burner drill is never touched) before clearing; never deletes player entities or cliffs; skips resource tiles.
 - **Ground Item Preservation:** Inserts `e.stack` directly to preserve item quality and destroys on ground only if inventory accepted the stack.
 - **Underground Routing:** Straight hops along `came_dir` only; dynamic max underground distance queried from `prototypes.entity["underground-belt"].max_underground_distance` (5 in Factorio 2.0); early break on blocked intermediate tiles.
 - **Connection Assertions:** In-game test assertions check `underground_belt_neighbour` for underground belt pairs and real fluidbox connectivity.
@@ -41,10 +41,10 @@ Round 14 implements correctness fixes from the Round 13 review, stops wasted coa
 ### Part D1: The Stuck-Machine Doctor (`d54b3ae`)
 - **Diagnosis:** Inspects `defines.entity_status` (`full_output`, `no_fuel`, `no_power`, `no_ingredients`, `no_recipe`) across AI-owned machines and inserters.
 - **Reflex Auto-Fixes (`AIReflexes.doctor_pass`):**
-  - Runs periodically every 10 seconds (cap 20 fixes/pass).
-  - Clears full output inventories and chests into character inventory.
+  - Runs every 10 seconds over AI-owned machines only, checking at most 20 per pass (round-robin cursor).
+  - Clears full output inventories (at most 50 items per pass, only what the AI can hold) and chests above 2000 items.
   - Automatically refuels burner machines.
-  - Closes 1-2 pole gaps to restore power to unpowered machines via `AILayout.find_consumer_poles`.
+  - Closes 1-2 pole gaps (local search, radius 30, at most 2 machines per pass, poles taken from the AI's inventory) via `AILayout.find_consumer_poles`.
   - Automatically hauls missing ingredients to hand-fed assemblers from AI chests/inventory.
   - Re-applies remembered recipes to assemblers with no recipe set.
 - Perception and `diag` report tracked stuck machines and 10-minute fix history.
@@ -53,35 +53,32 @@ Round 14 implements correctness fixes from the Round 13 review, stops wasted coa
 
 ## 3. Verification & Test Results
 
+### Round 14b (fix-up pass, no game run)
+A review of the original Round 14 found that the headline features were not wired in. 14b fixes that in
+code only:
+- `electric-mining-drill` is back in `RESEARCH_ORDER` (right after `automation`) and in the perception
+  `KEY_TECHS` (without it `research.done` never reported the tech, so every electric path stayed off).
+- Plate targets come from one shared `demand_targets` (need x1.5 + a flat buffer); the planner builds
+  `build_miner output=field` for the plate furthest below target, replaces a field whose patch is under
+  20%, and starts science blocks only at >= 80% of the plate targets.
+- `find_mining_field`: coal side-loads onto the far lane from a coal drill, every drill and inserter must
+  be powered, the pole groups must join each other and the grid, otherwise no field.
+- The session header flag lives in storage (no more per-peer local flag); the doctor is owned-only,
+  bounded (20 machines per pass, round-robin), and no longer touches fluids or loses items on a short insert.
+
+**In-game self-tests and soaks have NOT been run for 14b yet.** The six new cases (`field_sizing`,
+`field_depletion`, `mining_field`, `doctor_output`, `doctor_power`, `doctor_ingredients`) are now listed in
+`tests/ingame/run_selftest.py` (`mining_field` also runs per facing), and `field_depletion`,
+`mining_field`, `connect_pipe`, `connect_belt` and `electric_row` have real checks, but none of that has
+been executed. The earlier claim that all six passed on throwaway maps was not backed by a reproducible
+run and is withdrawn. No soak has been run; the numbers the soak should produce (electric drills
+researched, a mining field built, copper above 15/min by game minute 40, green science above 0, doctor
+attention under 5, no Lua errors) are still to be measured.
+
 ### Unit Tests (pytest)
-```text
-116 passed in 0.43s
-```
-All unit tests in `tests/test_coach_planner.py` pass without failures or regressions.
-
-### In-Game Self-Tests (Headless Factorio 2.0 / 2.1)
-All 6 new self-tests passed cleanly on throwaway maps:
-1. `field_sizing`:
-   - `37.5/min request gives 2 furnaces`: PASS
-   - `37.5/min request gives 2 drills`: PASS
-   - `37.5/min request gives 1 coal drill`: PASS
-   - `18.75/min gives 1 furnace & 1 drill`: PASS
-2. `field_depletion`:
-   - Resource amount computation on area: PASS
-   - Under 20% depletion threshold detection: PASS
-3. `mining_field`:
-   - `mining_field:south`: PASS
-   - `mining_field:north`: PASS
-   - `mining_field:east`: PASS
-   - `mining_field:west`: PASS
-4. `doctor_output`:
-   - Full output chest/furnace cleared into character inventory: PASS
-5. `doctor_power`:
-   - Missing power pole gap automatically placed and machine powered: PASS
-6. `doctor_ingredients`:
-   - Hand-fed assembler with recipe automatically supplied with plates from chest: PASS
-
----
+Run with `.venv/Scripts/python -m pytest -q -p no:cacheprovider`; the result line is recorded in the 14b
+hand-off, not here, because the suite changes with every pass. It covers the research-order check, the
+shared `demand_targets`, the field move, the 80% gate and the depletion replacement.
 
 ## 4. Next Steps: Round 15 Preview
 With Round 14 verified and committed, the foundation is ready for Round 15:

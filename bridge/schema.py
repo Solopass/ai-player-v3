@@ -58,6 +58,8 @@ OPTIONAL: dict[str, list[str]] = {
 # loot_chests takes items as "iron-plate,coal"; create_todo as a list.
 _PER_ENTRY_TYPES: dict[str, dict[str, dict]] = {
     "loot_chests": {"items": _STR},
+    # field = the electric mining field stamp (planner.py _field_moves)
+    "build_miner": {"output": {"type": "string", "enum": ["chest", "furnace", "belt", "field"]}},
 }
 
 

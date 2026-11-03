@@ -16,32 +16,19 @@ the model when the first move is sure; next_plan() exposes the flag.
 
 from __future__ import annotations
 
+import math
 from typing import Iterator
 
 from . import blueprints, goals
 from .blueprints import _ENTITY_ITEM
+from .goals import demand_targets      # one copy of the plate targets, shared with the ladder
 
 # Electric pair (drill -> stone furnace) yield, plates/min: the furnace is the limit.
 PAIR_PLATES_PER_MIN = 18
-SMELT_TARGET = {"iron-ore": ("iron-plate", 30), "copper-ore": ("copper-plate", 15)}
-
-
-def demand_targets(p: dict) -> dict[str, tuple[str, float]]:
-    """Compute plate targets dynamically from active science goals and base buffer."""
-    iron_need = 30.0
-    copper_need = 15.0
-    if _tech(p, "automation"):
-        iron_need += 10.0
-        copper_need += 5.0
-    if _tech(p, "logistic-science-pack"):
-        iron_need += 27.5
-        copper_need += 7.5
-    if _tech(p, "steel-processing"):
-        iron_need += 25.0
-    return {
-        "iron-ore": ("iron-plate", round(iron_need * 1.5, 1)),
-        "copper-ore": ("copper-plate", round(copper_need * 1.5, 1)),
-    }
+FURNACE_PLATES_PER_MIN = 18.75         # a stone furnace; a field makes this much per furnace
+FIELD_MAX_FURNACES = 6                 # build_miner caps count at 6
+FIELD_GATE = 0.8                       # science blocks start at >= 80% of the plate targets
+FIELD_DEPLETED_PCT = 20                # a field's patch below this -> build a replacement
 
 
 # (resource, drills wanted, output) — the burner bootstrap, coal first so
@@ -61,7 +48,8 @@ GATHER_NEAR = 35  # tiles; gather only searches 40 around the character
 # The mod owns this list now (skills.lua RESEARCH_ORDER, reported as perception.research.order,
 # which its reflexes also use); this copy is the fallback for a mod that doesn't report it.
 RESEARCH_ORDER = [
-    ("automation", False), ("logistics", False), ("electronics", False),
+    ("automation", False), ("electric-mining-drill", False),
+    ("logistics", False), ("electronics", False),
     ("logistic-science-pack", False), ("steel-processing", False),
     ("automation-2", True), ("fast-inserter", True),
     ("gun-turret", False), ("military", False), ("stone-wall", False),
@@ -168,6 +156,67 @@ def _rate(p: dict, item: str) -> int:
     return int((((p.get("production") or {}).get("items") or {}).get(item) or {}).get("per_min", 0))
 
 
+def _plate_estimate(p: dict, factory: dict, ore: str, plate: str) -> float:
+    """Plates/min the base makes of `plate`: the measured rate, or what the electric drills
+    already built will make (the measurement lags new builds)."""
+    built = int((factory.get("electric_miners") or {}).get(ore, 0))
+    return max(_rate(p, plate), built * PAIR_PLATES_PER_MIN)
+
+
+def _plates_ready(p: dict, factory: dict, field_ores: set) -> bool:
+    """True unless a plate is under 80% of its target AND a mining field for it was queued this
+    turn, so a new science block waits for the field instead of starving the smelting. Uses the
+    built-drill estimate, like _field_moves: when no field can be offered (target met by built
+    drills, or the field move is blocked), science never waits on plates it can't get."""
+    for ore, (plate, target) in demand_targets(p).items():
+        if ore in field_ores and _plate_estimate(p, factory, ore, plate) < FIELD_GATE * target:
+            return False
+    return True
+
+
+def _field_moves(p: dict, inv: dict, factory: dict, blocked) -> Iterator[tuple[dict, str, bool]]:
+    """Electric mining fields (build_miner output=field: drills + coal + smelting column), right
+    after power: a replacement when the patch under every field of an ore is nearly gone, else the
+    plate furthest below its target gets the next field."""
+    power = p.get("power") or {}
+    if not (_tech(p, "electric-mining-drill") and power.get("has_grid")):
+        return
+    fields = [f for f in (p.get("fields") or []) if isinstance(f, dict)]
+    pick = None                                # (ore, furnaces, why)
+    for ore in ("iron-ore", "copper-ore"):
+        mine = [f for f in fields if f.get("resource") == ore]
+        if mine and all(int(f.get("remaining_pct", 100)) < FIELD_DEPLETED_PCT for f in mine):
+            furnaces = max(int(f.get("furnaces") or 1) for f in mine)
+            pct = min(int(f.get("remaining_pct", 0)) for f in mine)
+            pick = (ore, furnaces, f"the {ore} field is down to {pct}% of its patch: build a replacement")
+            break
+    if pick is None:
+        worst = None
+        for ore, (plate, target) in demand_targets(p).items():
+            have = _plate_estimate(p, factory, ore, plate)
+            if have >= target:
+                continue
+            ratio = have / target
+            if worst is None or ratio < worst[0]:
+                worst = (ratio, ore, plate, target, have)
+        if worst is None:
+            return
+        _, ore, plate, target, have = worst
+        furnaces = math.ceil((target - have) / FURNACE_PLATES_PER_MIN)
+        pick = (ore, furnaces, f"{plate} at {have:.0f}/min, want {target:.0f}: next mining field")
+    ore, furnaces, why = pick
+    furnaces = max(1, min(FIELD_MAX_FURNACES, furnaces))
+    entry = {"skill": "build_miner", "resource": ore, "output": "field", "count": furnaces}
+    if entry_key(entry) in blocked:
+        return                                 # failed twice: the pair rule below takes over
+    drills = math.ceil(furnaces * FURNACE_PLATES_PER_MIN / 30) + max(1, math.ceil(furnaces / 8))
+    yield from _goto_far(p, _landmark(p, ore), ore)
+    yield from _craft(inv, "electric-mining-drill", drills, f"{drills} electric drills for the {ore} field")
+    yield from _craft(inv, "stone-furnace", furnaces, f"{furnaces} furnace(s) for the {ore} field")
+    yield from _craft(inv, "inserter", 2 * furnaces, f"{2 * furnaces} inserters for the {ore} field")
+    yield entry, why, True
+
+
 def _craft(inv: dict, item: str, want: int, why: str) -> Iterator[tuple[dict, str, bool]]:
     """craft_for until `want` are held (the bootstrap's pattern), if short."""
     if inv.get(item, 0) < want:
@@ -227,7 +276,8 @@ def _expand_electric_mining(p: dict, inv: dict, factory: dict, min_targets: dict
             break
 
 
-def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tuple[dict, str, bool]]:
+def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
+               blocked=frozenset()) -> Iterator[tuple[dict, str, bool]]:
     """Build-order rules past the bootstrap: power, automation, smelting, red cell, green cell."""
     power = p.get("power") or {}
     unlocked_bps = set(p.get("blueprint_library") or [])
@@ -347,6 +397,14 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                 yield ({"skill": "connect_pipe", "from": src_pt, "to": boiler_water_in},
                        "connect boiler to water pipes with an offshore pump", True)
 
+    # Electric mining fields come right after power, before any new production block.
+    field_ores = set()
+    for entry, why, sure in _field_moves(p, inv, factory, blocked):
+        if entry.get("output") == "field":
+            field_ores.add(entry["resource"])
+        yield entry, why, sure
+    plates_ok = _plates_ready(p, factory, field_ores)   # science waits while a needed field is queued
+
     if goal_id == "power":
         pass
     elif goal_id == "automation":
@@ -360,7 +418,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
     elif goal_id == "smelting":
         bp_name = "tileable-smelter-stone"
         if _tech(p, "electric-mining-drill") and power.get("has_grid"):
-            for ore, (plate, target) in SMELT_TARGET.items():
+            for ore, (plate, target) in demand_targets(p).items():
+                if ore in field_ores:
+                    continue                    # a mining field is already queued for this ore
                 # Pairs already built count at their full rate: the measured rate lags new builds.
                 built = int((factory.get("electric_miners") or {}).get(ore, 0))
                 deficit = target - max(_rate(p, plate), built * PAIR_PLATES_PER_MIN)
@@ -404,7 +464,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
 
             if bp_name in unlocked_bps:
                 bp_entry = lib.get(bp_name, {})
-                if bp_name not in placed_names:
+                if not plates_ok:
+                    pass                        # plates under 80% of target: the fields come first
+                elif bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular red science unit", True
                 elif _rate(p, "automation-science-pack") < 5 and _count(p.get("ghosts")) == 0 and _rate(p, "automation-science-pack") > 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
@@ -435,7 +497,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             else:
                 cells = [a for a in (factory.get("assemblers") or [])
                          if isinstance(a, dict) and a.get("recipe") == "automation-science-pack"]
-                if not cells:
+                if not cells and plates_ok:
                     for item, n in (("assembling-machine-1", 3), ("inserter", 7), ("iron-chest", 4),
                                     ("small-electric-pole", 6)):
                         yield from _craft(inv, item, n, f"the red cell needs {n} {item}")
@@ -449,7 +511,9 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
             if bp_name in unlocked_bps:
                 lib = blueprints.load_library()
                 bp_entry = lib.get(bp_name, {})
-                if bp_name not in placed_names:
+                if not plates_ok:
+                    pass                        # plates under 80% of target: the fields come first
+                elif bp_name not in placed_names:
                     yield {"skill": "place_blueprint", "name": bp_name}, "stamp modular green science unit", True
                 elif _rate(p, "logistic-science-pack") < 5 and _count(p.get("ghosts")) == 0:
                     snap = blueprints.get_tile_target(placed_bps, bp_entry)
@@ -485,7 +549,7 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str) -> Iterator[tupl
                         have.remove(recipe)
                     else:
                         missing.append(recipe)
-                if missing:
+                if missing and plates_ok:
                     if inv.get("iron-plate", 0) < 60:
                         yield {"skill": "tend"}, "collect plates for the green-science parts", True
                     n = min(3, len(missing))
@@ -758,7 +822,7 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
                        "drills and furnaces need stone", True)
         yield {"skill": "tend"}, "keep the drills and furnaces fed while iron output builds up", True
     elif goal_id or electric_mining_era:
-        yield from _late_game(p, inv, factory, goal_id or "smelting")
+        yield from _late_game(p, inv, factory, goal_id or "smelting", blocked)
 
     # 3. Techs unlocked by doing something (2.x early game). Guesses.
     for t in research.get("triggers") or []:

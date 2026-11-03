@@ -151,6 +151,9 @@ local function skill_build_miner(character, p)
   -- wire to): electric drills into furnaces, or into chests for coal/stone.
   local is_electric = character.force.recipes["electric-mining-drill"]
     and character.force.recipes["electric-mining-drill"].enabled
+  if out_kind == "field" and not is_electric then
+    return false, "build_miner: output=field needs the electric-mining-drill tech"
+  end
   if out_kind == "furnace" or out_kind == "chest" or is_electric then
     local ok, detail = build_electric_miner(character, resource, want, out_kind)
     if ok ~= nil then return ok, detail end
@@ -618,7 +621,8 @@ local PREFERRED_TECH = {
 -- green-pack techs wait until green science has been made. Economy first; military techs move to
 -- front only when threat is detected (nest within 150 tiles or attack in last 10 min).
 AISkills.RESEARCH_ORDER = {
-  {"automation", false}, {"logistics", false}, {"electronics", false},
+  {"automation", false}, {"electric-mining-drill", false},
+  {"logistics", false}, {"electronics", false},
   {"logistic-science-pack", false}, {"steel-processing", false},
   {"automation-2", true}, {"fast-inserter", true},
   {"gun-turret", false}, {"military", false}, {"stone-wall", false},
@@ -1783,8 +1787,19 @@ function build_electric_miner(character, resource, want, out_kind)
     if not ready then return false, why end
     local ok, res = AILayout.build(character, plan)
     if not ok then return false, "build_miner: " .. tostring(res) end
-    return true, string.format("built electric mining field on %s (%d drills, %d furnaces)",
-      resource, plan.drills or 0, plan.furnaces or 0)
+    -- Remember the field so perception can watch its patch run down (AILayout.fields_report).
+    local surface = character.surface
+    local ap = storage.ai_player
+    local remaining = AILayout.field_resource_remaining(surface, plan.bounds, resource)
+    ap.fields = ap.fields or {}
+    ap.fields[#ap.fields + 1] = {
+      resource = resource, surface = surface.name, bounds = plan.bounds, furnaces = plan.furnaces,
+      position = {x = math.floor(plan.place[1].position.x), y = math.floor(plan.place[1].position.y)},
+      initial = remaining, remaining = remaining, checked = game.tick,
+    }
+    while #ap.fields > 12 do table.remove(ap.fields, 1) end
+    return true, string.format("built electric mining field on %s (%d drills, %d furnaces, %d coal drill(s))",
+      resource, plan.drills or 0, plan.furnaces or 0, plan.coal_drills or 0)
   end
   if out_kind == "belt" then
     local plan = AILayout.find_electric_row(character, resource, character.position, {count = math.max(2, want), chest = chest})

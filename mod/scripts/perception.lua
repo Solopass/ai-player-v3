@@ -243,7 +243,7 @@ local CRAFT_PRIORITY = {
 -- Technologies the goal ladder checks; reported as research.done.
 local KEY_TECHS = {
   -- steam-power, electronics and automation-science-pack unlock by trigger in 2.x
-  "steam-power", "automation-science-pack",
+  "steam-power", "automation-science-pack", "electric-mining-drill",
   "automation", "logistics", "electronics", "logistic-science-pack", "steel-processing",
   "gun-turret", "stone-wall", "physical-projectile-damage-1", "weapon-shooting-speed-1",
   "automation-2", "engine", "electric-energy-distribution-1",
@@ -787,6 +787,8 @@ function AIPerception.gather(character)
     attention = top_stuck,
     recent_fixes = doc and doc.history and #doc.history or 0,
   }
+  -- Mining fields the AI built and how much of their patch is left (planner: replace below 20%).
+  perception.fields = AILayout.fields_report(surface)
 
   local done = {}
   for _, n in ipairs(KEY_TECHS) do
