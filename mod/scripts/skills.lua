@@ -1664,8 +1664,10 @@ local function skill_connect_power(character, p)
     local valid_grid = false
     if net then
       local stats = pole.electric_network_statistics
-      if stats and stats.get_flow_count{category = "input", count = true} > 0 then
-        valid_grid = true
+      if stats and stats.input_counts then
+        for _, cnt in pairs(stats.input_counts) do
+          if cnt > 0 then valid_grid = true; break end
+        end
       end
     end
     if not valid_grid and surface.count_entities_filtered{type = {"generator", "boiler"}, force = force, limit = 1} > 0 then

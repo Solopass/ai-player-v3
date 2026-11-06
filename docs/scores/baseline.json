@@ -1,0 +1,75 @@
+{
+  "424242": {
+    "mean_score": {
+      "milestones": {
+        "power": 2.1,
+        "electric-mining-drill": null,
+        "first_mining_field": null,
+        "bus_head_fed": null,
+        "red_producing": null,
+        "lab_row_consuming": 28.9,
+        "green_producing": null
+      },
+      "rates_last_10m": {
+        "iron_per_min": 29.9,
+        "copper_per_min": 14.9,
+        "red_per_min": 0.0,
+        "green_per_min": 0.0
+      },
+      "techs_researched": 4,
+      "flow_faults_last_30m": 0,
+      "attention_share": 0.5,
+      "hand_hauled_last_30m": 0,
+      "mod_errors": 0,
+      "autopilot_share": 0.025
+    },
+    "spread": {
+      "milestones": {
+        "power": 0.0,
+        "electric-mining-drill": 0.0,
+        "first_mining_field": 0.0,
+        "bus_head_fed": 0.0,
+        "red_producing": 0.0,
+        "lab_row_consuming": 0.0,
+        "green_producing": 0.0
+      },
+      "rates_last_10m": {
+        "iron_per_min": 0.0,
+        "copper_per_min": 0.0,
+        "red_per_min": 0.0,
+        "green_per_min": 0.0
+      },
+      "techs_researched": 0.0,
+      "flow_faults_last_30m": 0.0,
+      "attention_share": 0.0,
+      "hand_hauled_last_30m": 0.0,
+      "mod_errors": 0.0,
+      "autopilot_share": 0.0
+    },
+    "runs": [
+      {
+        "milestones": {
+          "power": 2.1,
+          "electric-mining-drill": null,
+          "first_mining_field": null,
+          "bus_head_fed": null,
+          "red_producing": null,
+          "lab_row_consuming": 28.9,
+          "green_producing": null
+        },
+        "rates_last_10m": {
+          "iron_per_min": 29.9,
+          "copper_per_min": 14.9,
+          "red_per_min": 0.0,
+          "green_per_min": 0.0
+        },
+        "techs_researched": 4,
+        "flow_faults_last_30m": 0,
+        "attention_share": 0.5,
+        "hand_hauled_last_30m": 0,
+        "mod_errors": 0,
+        "autopilot_share": 0.025
+      }
+    ]
+  }
+}
