@@ -495,9 +495,15 @@ def moves(p, blocked=frozenset(), limit=planner.MAX_MOVES):
 
 
 def test_no_grid_builds_power():
-    plan = planner.next_plan(post_bootstrap())
-    assert plan[0][0] == {"skill": "build_power"}
+    p = post_bootstrap()
+    plan = planner.next_plan(p)
+    assert plan[0][0] == {"skill": "build_offshore_pump"}
     assert plan[0][2] is True
+
+    p["factory"]["by_type"] = {"offshore-pump": 1}
+    plan2 = planner.next_plan(p)
+    assert plan2[0][0] == {"skill": "build_power"}
+    assert plan2[0][2] is True
 
 
 def test_far_water_goes_there_first():
@@ -505,7 +511,7 @@ def test_far_water_goes_there_first():
     p["landmarks"]["water"] = {"x": 90, "y": 10, "distance": 80}
     ms = moves(p)
     assert ms[0] == {"skill": "goto", "position": {"x": 90, "y": 10}}
-    assert ms[1] == {"skill": "build_power"}
+    assert ms[1] == {"skill": "build_offshore_pump"}
 
 
 def test_missing_power_parts_are_crafted_before_the_build():
@@ -566,7 +572,7 @@ def test_field_move_picks_the_plate_furthest_below_target():
     assert not [e for e in moves(p, limit=8) if e.get("output") == "field"]
     q = post_bootstrap()
     q["research"]["done"] = ["automation", "electric-mining-drill"]
-    assert planner.next_plan(q)[0][0] == {"skill": "build_power"}
+    assert planner.next_plan(q)[0][0] == {"skill": "build_offshore_pump"}
 
 
 def test_field_move_follows_power_and_counts_built_drills():

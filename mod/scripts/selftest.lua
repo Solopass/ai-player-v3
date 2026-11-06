@@ -170,7 +170,8 @@ CASES.probe = {
 CASES.power = {
   delay = 1500,
   setup = function(c)
-    lake(c.surface, c.facing, 24)           -- the shore is ~10 tiles from the AI, on the `facing` side
+    lake(c.surface, c.facing, 24)
+    give(c.character, {inserter = 2, ["transport-belt"] = 5})
   end,
   run = function(c) return {{skill = "build_power"}} end,
   after = function(c)

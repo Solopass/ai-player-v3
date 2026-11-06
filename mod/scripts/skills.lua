@@ -281,9 +281,10 @@ local function skill_build_power(character, _)
      and surface.count_entities_filtered{name = "steam-engine", force = force, limit = 1} > 0 then
     return false, "build_power: a boiler and steam engine already exist — tend them instead"
   end
+  local existing_pumps = surface.count_entities_filtered{name = "offshore-pump", force = force, limit = 1}
   local lm = (AIPerception.landmarks(surface, character.position) or {}).water
-  if not lm then return false, "build_power: no water found near — explore" end
-  if lm.distance > 40 then
+  if existing_pumps == 0 and not lm then return false, "build_power: no water found near — explore" end
+  if existing_pumps == 0 and lm and lm.distance > 40 then
     return false, string.format("build_power: nearest water is %d tiles away at {%d,%d} — goto it first",
                                 lm.distance, lm.x, lm.y)
   end
@@ -1910,7 +1911,40 @@ local function skill_build_offshore_pump(character, p)
     AIRegistry.own(pump)
   end
 
-  return true, string.format("built offshore pump at {%.1f, %.1f}", found_pos.x, found_pos.y)
+  -- Lay lead pipes extending from the offshore pump inland away from water
+  local ux, uy = 0, 0
+  if found_dir == "north" then uy = -1
+  elseif found_dir == "east" then ux = 1
+  elseif found_dir == "south" then uy = 1
+  elseif found_dir == "west" then ux = -1
+  end
+
+  local pipes_laid = 0
+  for s = 1, 4 do
+    local pip_pos = {x = found_pos.x + ux * s, y = found_pos.y + uy * s}
+    for _, e in ipairs(surface.find_entities_filtered{area = {{pip_pos.x - 0.5, pip_pos.y - 0.5}, {pip_pos.x + 0.5, pip_pos.y + 0.5}},
+                                                      type = {"tree", "simple-entity"}}) do
+      e.destroy()
+    end
+    if surface.can_place_entity{name = "pipe", position = pip_pos, force = force} then
+      if inv.get_item_count("pipe") > 0 then
+        local pok = AIActions.run(character, {action = "place", item = "pipe", position = pip_pos})
+        if pok then
+          pipes_laid = pipes_laid + 1
+          local pe = surface.find_entities_filtered{name = "pipe", position = pip_pos, radius = 0.5, limit = 1}[1]
+          if pe then AIRegistry.own(pe) end
+        end
+      else
+        local g = surface.create_entity{name = "entity-ghost", inner_name = "pipe", position = pip_pos, force = force}
+        if g then
+          AIRegistry.register_ghost(g)
+          pipes_laid = pipes_laid + 1
+        end
+      end
+    end
+  end
+
+  return true, string.format("built offshore pump at {%.1f, %.1f} with %d lead pipe(s)", found_pos.x, found_pos.y, pipes_laid)
 end
 
 -- -------------------------------------------------------------------------

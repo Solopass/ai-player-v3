@@ -343,12 +343,19 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
 
     # If power is missing or destroyed at any point in the game, restore power first
     if not power.get("has_grid") or not _by_type(p, "boiler"):
-        yield from _goto_far(p, (p.get("landmarks") or {}).get("water"), "water",
-                             WATER_NEAR)
-        for item, n in (("offshore-pump", 1), ("boiler", 1), ("steam-engine", 2), ("pipe", 5),
-                        ("small-electric-pole", 6)):
+        water_lm = (p.get("landmarks") or {}).get("water")
+        yield from _goto_far(p, water_lm, "water", WATER_NEAR)
+
+        # Split: Build offshore pump and lead pipes first if no pump exists
+        if _by_type(p, "offshore-pump") == 0:
+            yield from _craft(inv, "offshore-pump", 1, "steam power needs an offshore pump")
+            yield from _craft(inv, "pipe", 4, "lead pipes from shoreline onto land")
+            yield {"skill": "build_offshore_pump"}, "place offshore pump on shoreline and lay water supply pipes", True
+
+        for item, n in (("boiler", 1), ("steam-engine", 2), ("pipe", 8),
+                        ("small-electric-pole", 8)):
             yield from _craft(inv, item, n, f"steam power needs {n} {item}")
-        yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
+        yield {"skill": "build_power"}, "connect boiler and steam engines to water supply pipes", True
 
     # Automated coal feeding to steam power: connect coal source to boiler fuel input
     power_bp = "tileable-steam-power"

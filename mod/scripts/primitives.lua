@@ -286,7 +286,8 @@ local function action_place(character, action)
     return false, "place: no '" .. (item_name or "?") .. "' in your inventory"
   end
 
-  local dir = action.direction and DIRECTION_MAP[action.direction:lower()]
+  local dir = (type(action.direction) == "number" and action.direction)
+    or (action.direction and DIRECTION_MAP[tostring(action.direction):lower()])
     or defines.direction.north
 
   -- Reject placements a real player couldn't make. create_entity below bypasses

@@ -362,10 +362,11 @@ end
 
 -- Pump, boiler and engines for one shoreline pose: the pump on land tile (px, py)
 -- with the water on the side it faces (orientation r). Returns plan pieces or nil.
-local function power_pose(character, px, py, r)
+local function power_pose(character, px, py, r, pump_already_placed)
+  local surface = character.surface
   local pump_out = pipe_conns("offshore-pump", r)[1]
   local ux, uy = unit16(pump_out.dir)
-  for pipe_len = 0, 4 do
+  for pipe_len = 0, 12 do
     local tx, ty = px + ux * (pipe_len + 1), py + uy * (pipe_len + 1)   -- tile boiler's water port sits on
     local want = (pump_out.dir + 8) % 16                                -- ...facing back at pump / pipe
     for rb = 0, 3 do
@@ -381,12 +382,16 @@ local function power_pose(character, px, py, r)
             local pipe_places = {}
             for s = 1, pipe_len do
               local pip_x, pip_y = px + ux * s, py + uy * s
-              if not can_place(character, "pipe", pip_x, pip_y) then
+              local existing_p = surface.find_entities_filtered{name = {"pipe", "entity-ghost"}, position = {pip_x, pip_y}, radius = 0.5, limit = 1}[1]
+              if existing_p or can_place(character, "pipe", pip_x, pip_y) then
+                if not existing_p then
+                  pipe_places[#pipe_places + 1] = {name = "pipe", position = {x = pip_x, y = pip_y}, role = "pipe"}
+                end
+                pipe_boxes[#pipe_boxes + 1] = box(pip_x, pip_y, 1, 1)
+              else
                 pipes_ok = false
                 break
               end
-              pipe_boxes[#pipe_boxes + 1] = box(pip_x, pip_y, 1, 1)
-              pipe_places[#pipe_places + 1] = {name = "pipe", position = {x = pip_x, y = pip_y}, role = "pipe"}
             end
             if pipes_ok then
               -- Steam leaves the boiler; the engines continue in a line from there.
@@ -409,9 +414,10 @@ local function power_pose(character, px, py, r)
                   if all_free(boxes)
                      and can_place(character, "steam-engine", ex, ey, ORIENT[re])
                      and can_place(character, "steam-engine", e2x, e2y, ORIENT[re]) then
-                    local places = {
-                      {name = "offshore-pump", position = {x = px, y = py}, direction = ORIENT[r], role = "pump"},
-                    }
+                    local places = {}
+                    if not pump_already_placed then
+                      places[#places + 1] = {name = "offshore-pump", position = {x = px, y = py}, direction = ORIENT[r], role = "pump"}
+                    end
                     for _, pp in ipairs(pipe_places) do places[#places + 1] = pp end
                     places[#places + 1] = {name = "boiler", position = {x = bx, y = by}, direction = ORIENT[rb], role = "boiler"}
                     places[#places + 1] = {name = "steam-engine", position = {x = ex, y = ey}, direction = ORIENT[re], role = "engine"}
@@ -423,18 +429,20 @@ local function power_pose(character, px, py, r)
                     local ins_y = by + opp_sy * 1.5
                     local belt_x = bx + opp_sx * 2.5
                     local belt_y = by + opp_sy * 2.5
-                    local ins_dir = steam.dir
+                    local ins_dir = (steam.dir + 8) % 16
                     local belt_dir = (steam.dir + 4) % 16
+                    local ins_orient = ORIENT[math.floor((ins_dir / 4) % 4)]
+                    local belt_orient = ORIENT[math.floor((belt_dir / 4) % 4)]
                     local ins_box = box(ins_x, ins_y, 1, 1)
                     local belt_box = box(belt_x, belt_y, 1, 1)
 
                     local fuel_in, fuel_ins = nil, nil
                     if free(boxes, ins_box) and free(boxes, belt_box)
-                       and can_place(character, "inserter", ins_x, ins_y, ins_dir)
-                       and can_place(character, "transport-belt", belt_x, belt_y, belt_dir) then
-                      places[#places + 1] = {name = "inserter", position = {x = ins_x, y = ins_y}, direction = ins_dir,
+                       and can_place(character, "inserter", ins_x, ins_y, ins_orient)
+                       and can_place(character, "transport-belt", belt_x, belt_y, belt_orient) then
+                      places[#places + 1] = {name = "inserter", position = {x = ins_x, y = ins_y}, direction = ins_orient,
                                              role = "boiler_inserter", from = {x = belt_x, y = belt_y}, to = {x = bx, y = by}}
-                      places[#places + 1] = {name = "transport-belt", position = {x = belt_x, y = belt_y}, direction = belt_dir,
+                      places[#places + 1] = {name = "transport-belt", position = {x = belt_x, y = belt_y}, direction = belt_orient,
                                              role = "boiler_fuel_in"}
                       boxes[#boxes + 1] = ins_box
                       boxes[#boxes + 1] = belt_box
@@ -463,6 +471,59 @@ end
 function AILayout.find_power(character, near, home)
   local surface = character.surface
   home = home or near
+
+  local function build_from_pose(px, py, r, pump_already_placed)
+    local plan = power_pose(character, px, py, r, pump_already_placed)
+    if not plan then return nil end
+    local boxes, eb = plan.boxes, plan.engine_box
+    local cx, cy = (eb[1] + eb[3]) / 2, (eb[2] + eb[4]) / 2
+    local first
+    for ox = -4, 4 do
+      for oy = -4, 4 do
+        local x, y = math.floor(cx) + 0.5 + ox, math.floor(cy) + 0.5 + oy
+        if overlaps(box(x, y, 5, 5), eb) and free(boxes, box(x, y, 1, 1))
+           and can_place(character, "small-electric-pole", x, y) then
+          local d = dist2(x, y, home.x, home.y)
+          if not first or d < first.d then first = {x = x, y = y, d = d} end
+        end
+      end
+    end
+    if not first then return nil end
+    local claimed = {table.unpack(boxes)}
+    claimed[#claimed + 1] = box(first.x, first.y, 1, 1)
+    local poles, joined = AILayout.pole_chain(character, first, home, claimed)
+    if not poles then return nil end
+    local out = plan.place
+    out[#out + 1] = {name = "small-electric-pole", position = {x = first.x, y = first.y}, role = "pole"}
+    if plan.fuel_inserter then
+      local fix, fiy = plan.fuel_inserter.x, plan.fuel_inserter.y
+      if dist2(first.x, first.y, fix, fiy) > 6.25 then
+        for _, off in ipairs({{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}}) do
+          local p_x, p_y = fix + off[1], fiy + off[2]
+          if free(boxes, box(p_x, p_y, 1, 1)) and can_place(character, "small-electric-pole", p_x, p_y) then
+            out[#out + 1] = {name = "small-electric-pole", position = {x = p_x, y = p_y}, role = "pole"}
+            boxes[#boxes + 1] = box(p_x, p_y, 1, 1)
+            break
+          end
+        end
+      end
+    end
+    for _, pole in ipairs(poles) do out[#out + 1] = pole end
+    return {place = out, joined = joined, facing = ORIENT[r], fuel_in = plan.fuel_in, fuel_inserter = plan.fuel_inserter}
+  end
+
+  -- Priority 1: If an offshore pump already exists, connect pipes, boiler, engines and poles to it!
+  local existing_pumps = surface.find_entities_filtered{name = "offshore-pump", force = character.force}
+  table.sort(existing_pumps, function(a, b)
+    return dist2(a.position.x, a.position.y, near.x, near.y) < dist2(b.position.x, b.position.y, near.x, near.y)
+  end)
+  for _, p in ipairs(existing_pumps) do
+    local r = math.floor((p.direction or 0) / 4) % 4
+    local plan = build_from_pose(p.position.x, p.position.y, r, true)
+    if plan then return plan end
+  end
+
+  -- Priority 2: Scan shoreline tiles for new pump spot
   local tiles = surface.find_tiles_filtered{collision_mask = "water_tile", position = near, radius = 40}
   table.sort(tiles, function(a, b)
     return dist2(a.position.x, a.position.y, near.x, near.y) < dist2(b.position.x, b.position.y, near.x, near.y)
@@ -470,7 +531,6 @@ function AILayout.find_power(character, near, home)
   local tried = 0
   for _, t in ipairs(tiles) do
     for r = 0, 3 do
-      -- Pump orientation r has the water on its r-facing side.
       local wx, wy = unit16(r * 4)
       local px, py = t.position.x + 0.5 - wx, t.position.y + 0.5 - wy
       local sp = surface.get_tile(px, py)
@@ -478,48 +538,8 @@ function AILayout.find_power(character, near, home)
         tried = tried + 1
         if tried > 300 then return nil end
         if can_place(character, "offshore-pump", px, py, ORIENT[r]) then
-          local plan = power_pose(character, px, py, r)
-          if plan then
-            -- First pole beside the engines (its supply square must touch one),
-            -- then the chain home.
-            local boxes, eb = plan.boxes, plan.engine_box
-            local cx, cy = (eb[1] + eb[3]) / 2, (eb[2] + eb[4]) / 2
-            local first
-            for ox = -4, 4 do
-              for oy = -4, 4 do
-                local x, y = math.floor(cx) + 0.5 + ox, math.floor(cy) + 0.5 + oy
-                if overlaps(box(x, y, 5, 5), eb) and free(boxes, box(x, y, 1, 1))
-                   and can_place(character, "small-electric-pole", x, y) then
-                  local d = dist2(x, y, home.x, home.y)
-                  if not first or d < first.d then first = {x = x, y = y, d = d} end
-                end
-              end
-            end
-            if first then
-              local claimed = {table.unpack(boxes)}
-              claimed[#claimed + 1] = box(first.x, first.y, 1, 1)
-              local poles, joined = AILayout.pole_chain(character, first, home, claimed)
-              if poles then
-                local out = plan.place
-                out[#out + 1] = {name = "small-electric-pole", position = {x = first.x, y = first.y}, role = "pole"}
-                if plan.fuel_inserter then
-                  local fix, fiy = plan.fuel_inserter.x, plan.fuel_inserter.y
-                  if dist2(first.x, first.y, fix, fiy) > 6.25 then
-                    for _, off in ipairs({{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}}) do
-                      local p_x, p_y = fix + off[1], fiy + off[2]
-                      if free(boxes, box(p_x, p_y, 1, 1)) and can_place(character, "small-electric-pole", p_x, p_y) then
-                        out[#out + 1] = {name = "small-electric-pole", position = {x = p_x, y = p_y}, role = "pole"}
-                        boxes[#boxes + 1] = box(p_x, p_y, 1, 1)
-                        break
-                      end
-                    end
-                  end
-                end
-                for _, pole in ipairs(poles) do out[#out + 1] = pole end
-                return {place = out, joined = joined, facing = ORIENT[r], fuel_in = plan.fuel_in, fuel_inserter = plan.fuel_inserter}
-              end
-            end
-          end
+          local plan = build_from_pose(px, py, r, false)
+          if plan then return plan end
         end
       end
     end
@@ -527,7 +547,6 @@ function AILayout.find_power(character, near, home)
   return nil
 end
 
--- ---------------------------------------------------------------------------
 -- Assembler cells. A cell is a fixed pattern of entities in tile offsets from an
 -- anchor tile; find_stamp tries anchors in rings around home until every piece
 -- is placeable and clear of the others, then wires the cell's poles to the
@@ -1475,7 +1494,7 @@ function AILayout.build(character, plan)
         undo(character, placed)
         return false, why
       end
-    elseif p.role == "inserter" then
+    elseif p.role == "inserter" or p.role == "boiler_inserter" then
       -- Which side an inserter picks from is easy to get backwards; check and flip.
       local function right()
         local pt, dt = e.pickup_position, e.drop_position
