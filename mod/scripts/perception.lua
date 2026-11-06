@@ -210,6 +210,34 @@ local function compute_power(surface, force, by_status)
     -- Electric network flow counts are joules per tick: x60 for watts.
     power.production_kw  = math.floor(prod * 60 / 1000)
     power.consumption_kw = math.floor(cons * 60 / 1000)
+
+    local ap = storage.ai_player
+    if ap and ap.power_fuel_in then
+      power.fuel_in_position = {x = ap.power_fuel_in.x, y = ap.power_fuel_in.y}
+    end
+
+    local boiler = surface.find_entities_filtered{name = "boiler", force = force, limit = 1}[1]
+    if boiler then
+      local near_ins = surface.find_entities_filtered{type = "inserter", position = boiler.position, radius = 2.5}
+      local fed = false
+      local fuel_pos = nil
+      for _, ins in ipairs(near_ins) do
+        if ins.drop_target == boiler or (math.abs(ins.drop_position.x - boiler.position.x) <= 1.5 and math.abs(ins.drop_position.y - boiler.position.y) <= 1.5) then
+          fed = true
+          fuel_pos = {x = math.floor(ins.pickup_position.x) + 0.5, y = math.floor(ins.pickup_position.y) + 0.5}
+          break
+        end
+      end
+      power.boiler_has_fuel_inserter = fed
+      if not power.fuel_in_position and fuel_pos then
+        power.fuel_in_position = fuel_pos
+      end
+
+      if fuel_pos then
+        local belts = surface.find_entities_filtered{position = fuel_pos, radius = 0.5, type = {"transport-belt", "underground-belt"}}
+        power.boiler_fuel_connected = #belts > 0
+      end
+    end
   end)
   return power
 end
@@ -317,6 +345,7 @@ local function gather_factory(surface, force, cpos)
   local miners, labs = {}, {count = 0, without_packs = 0}
   local assemblers, electric = {}, {}
   local offshore_pumps = {}
+  local miner_positions = {}
   local needs = {burners_low_fuel = {}, machines_no_recipe = {},
                  machines_no_input = {}, outputs_full = {}}
   local total = 0
@@ -332,7 +361,18 @@ local function gather_factory(surface, force, cpos)
       end
       if e.type == "mining-drill" then
         local res = AISkills.drill_resource(e)
-        if res then miners[res] = (miners[res] or 0) + 1 end
+        if res then
+          miners[res] = (miners[res] or 0) + 1
+          miner_positions[res] = miner_positions[res] or {}
+          if #miner_positions[res] < 8 then
+            miner_positions[res][#miner_positions[res] + 1] = {
+              x = math.floor(e.position.x) + 0.5,
+              y = math.floor(e.position.y) + 0.5,
+              drop_position = {x = math.floor(e.drop_position.x) + 0.5, y = math.floor(e.drop_position.y) + 0.5},
+              name = e.name
+            }
+          end
+        end
         if res and e.name == "electric-mining-drill" then electric[res] = (electric[res] or 0) + 1 end
       elseif e.type == "lab" then
         labs.count = labs.count + 1
@@ -376,7 +416,7 @@ local function gather_factory(surface, force, cpos)
   while #attention > ATTENTION_LIMIT do table.remove(attention) end
 
   local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention,
-                   miners_by_resource = miners, labs = labs, assemblers = assemblers,
+                   miners_by_resource = miners, miner_positions = miner_positions, labs = labs, assemblers = assemblers,
                    electric_miners = electric, offshore_pumps = offshore_pumps}
 
   -- Small base: include the full per-machine roster (lightweight). Second pass

@@ -350,10 +350,61 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
             yield from _craft(inv, item, n, f"steam power needs {n} {item}")
         yield {"skill": "build_power"}, "no electric grid: pump, boiler, engines and poles", True
 
+    # Automated coal feeding to steam power: connect coal source to boiler fuel input
+    power_bp = "tileable-steam-power"
+    if _by_type(p, "boiler") >= 1:
+        fuel_in = power.get("fuel_in_position")
+        if not fuel_in:
+            power_in = _get_bp_port(placed_bps, power_bp, "in1")
+            if power_in:
+                fuel_in = {"x": power_in["x"], "y": power_in["y"]}
+            else:
+                power_pos = _find_placed(p, power_bp)
+                if power_pos:
+                    fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
+
+        conns = p.get("connected_belts") or []
+        boiler_fuel_connected = power.get("boiler_fuel_connected") or (
+            fuel_in and any(
+                (abs(c.get("to", {}).get("x", 0) - fuel_in["x"]) < 1.5 and abs(c.get("to", {}).get("y", 0) - fuel_in["y"]) < 1.5)
+                for c in conns
+            )
+        )
+
+        if fuel_in and not boiler_fuel_connected:
+            miner_positions = factory.get("miner_positions") or {}
+            coal_drills = miner_positions.get("coal") or []
+            coal_src = coal_drills[0].get("drop_position") if coal_drills else None
+            coal_miners_count = int((factory.get("miners_by_resource") or {}).get("coal", 0))
+
+            if not coal_src and coal_miners_count == 0:
+                coal_lm = _landmark(p, "coal")
+                if _tech(p, "electric-mining-drill") and power.get("has_grid"):
+                    yield from _craft(inv, "electric-mining-drill", 1, "drill to feed coal onto steam power fuel belt")
+                    yield from _craft(inv, "small-electric-pole", 2, "poles to wire coal drill")
+                    yield ({"skill": "build_miner", "resource": "coal", "output": "belt", "drill": "electric", "count": 1},
+                           "place electric miner on coal to power boilers", True)
+                elif coal_lm:
+                    yield from _craft(inv, "burner-mining-drill", 1, "drill to feed coal onto steam power fuel belt")
+                    yield ({"skill": "build_miner", "resource": "coal", "output": "chest", "count": 1},
+                           "place drill on coal to feed boilers", True)
+
+            if not coal_src:
+                coal_lm = _landmark(p, "coal")
+                if coal_lm:
+                    coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
+
+            if coal_src and not _is_connected(conns, coal_src, fuel_in):
+                dx = abs(coal_src["x"] - fuel_in["x"])
+                dy = abs(coal_src["y"] - fuel_in["y"])
+                needed = min(int(dx + dy + 10), 60)
+                yield from _craft(inv, "transport-belt", needed, "belts to connect coal to boilers")
+                yield ({"skill": "connect_belt", "from": coal_src, "to": fuel_in},
+                       "feed automated coal belt to boilers", True)
+
     # Scale modular steam power when consumption approaches generation capacity or machines lack power
     prod_kw = power.get("production_kw", 0)
     cons_kw = power.get("consumption_kw", 0)
-    power_bp = "tileable-steam-power"
     if power_bp in unlocked_bps and _by_type(p, "boiler") >= 1:
         if (cons_kw >= prod_kw * 0.75 and cons_kw > 400) or power.get("machines_low_power", 0) > 0:
             if _count(p.get("ghosts")) == 0 and _by_type(p, "boiler") < 10:
@@ -366,23 +417,6 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 elif power_bp not in placed_names:
                     yield ({"skill": "place_blueprint", "name": power_bp},
                            "stamp modular steam power unit along shoreline", True)
-
-        # Connect coal belt to steam power fuel line if power unit is placed and not yet connected
-        conns = p.get("connected_belts") or []
-        power_pos = _find_placed(p, power_bp)
-        coal_lm = _landmark(p, "coal")
-        if power_pos and coal_lm:
-            coal_miners = int((factory.get("miners_by_resource") or {}).get("coal", 0))
-            if _tech(p, "electric-mining-drill") and power.get("has_grid") and coal_miners == 0:
-                yield from _craft(inv, "electric-mining-drill", 1, "drill to feed coal onto steam power fuel belt")
-                yield ({"skill": "build_miner", "resource": "coal", "output": "chest", "drill": "electric", "count": 1},
-                       "place electric miner on coal to power boilers", True)
-            coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
-            power_in = _get_bp_port(placed_bps, power_bp, "in1")
-            power_fuel_in = {"x": power_in["x"], "y": power_in["y"]} if power_in else {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
-            if not _is_connected(conns, coal_src, power_fuel_in):
-                yield ({"skill": "connect_belt", "from": coal_src, "to": power_fuel_in},
-                       "feed automated coal belt to boilers", True)
 
         # Connect steam power to water pipes with an offshore pump
         pipes = p.get("connected_pipes") or []
@@ -505,7 +539,43 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                     if snap:
                         yield ({"skill": "place_blueprint", "name": bp_name, "position": snap},
                                "tile modular stone smelter column for more plates", True)
-                yield {"skill": "tend"}, "keep smelters fed with coal and ore", True
+
+                # Connect ore and coal belts to smelter inputs
+                conns = p.get("connected_belts") or []
+                smelt_in = _get_bp_port(placed_bps, bp_name, "in2") or _get_bp_port(placed_bps, bp_name, "in1")
+                if smelt_in:
+                    target_pt = {"x": smelt_in["x"], "y": smelt_in["y"]}
+                    miner_positions = factory.get("miner_positions") or {}
+
+                    # 1. Connect Iron Ore to Smelter input
+                    iron_miners = miner_positions.get("iron-ore") or []
+                    iron_src = iron_miners[0].get("drop_position") if iron_miners else None
+                    if not iron_src:
+                        iron_lm = _landmark(p, "iron-ore")
+                        if iron_lm:
+                            iron_src = {"x": iron_lm["x"], "y": iron_lm["y"]}
+                    if iron_src and not _is_connected(conns, iron_src, target_pt):
+                        dx = abs(iron_src["x"] - target_pt["x"])
+                        dy = abs(iron_src["y"] - target_pt["y"])
+                        yield from _craft(inv, "transport-belt", min(int(dx + dy + 10), 60), "belts to feed iron ore to smelters")
+                        yield ({"skill": "connect_belt", "from": iron_src, "to": target_pt},
+                               "feed iron ore belt into modular smelter column", True)
+
+                    # 2. Connect Coal to Smelter fuel input
+                    coal_miners = miner_positions.get("coal") or []
+                    coal_src = coal_miners[0].get("drop_position") if coal_miners else None
+                    if not coal_src:
+                        coal_lm = _landmark(p, "coal")
+                        if coal_lm:
+                            coal_src = {"x": coal_lm["x"], "y": coal_lm["y"]}
+                    smelt_fuel = _get_bp_port(placed_bps, bp_name, "in1") or smelt_in
+                    smelt_fuel_pt = {"x": smelt_fuel["x"], "y": smelt_fuel["y"]}
+                    if coal_src and not _is_connected(conns, coal_src, smelt_fuel_pt):
+                        dx = abs(coal_src["x"] - smelt_fuel_pt["x"])
+                        dy = abs(coal_src["y"] - smelt_fuel_pt["y"])
+                        yield from _craft(inv, "transport-belt", min(int(dx + dy + 10), 60), "belts to feed coal to smelters")
+                        yield ({"skill": "connect_belt", "from": coal_src, "to": smelt_fuel_pt},
+                               "feed coal belt into modular smelter column", True)
     elif goal_id == "red":
         if _tech(p, "automation"):
             bp_name = "tileable-science-red"
@@ -549,8 +619,6 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                         yield ({"skill": "connect_ports", "from_bp": bp_name, "from_port": "out2",
                                 "to_bp": lab_bp, "to_port": "in1"},
                                "connect red science output belt to lab input belt", True)
-
-                yield {"skill": "tend"}, "haul plates into the cell and packs into the lab", True
             else:
                 cells = [a for a in (factory.get("assemblers") or [])
                          if isinstance(a, dict) and a.get("recipe") == "automation-science-pack"]
@@ -594,8 +662,6 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                         yield ({"skill": "connect_ports", "from_bp": bp_name, "from_port": "out2",
                                 "to_bp": "tileable-labs", "to_port": "in1"},
                                "side-load green science onto lab dual-science bus", True)
-
-                yield {"skill": "tend"}, "haul plates and intermediates through the green cell, packs to the labs", True
             else:
                 have = [a.get("recipe") for a in (factory.get("assemblers") or []) if isinstance(a, dict)]
                 missing = []
@@ -819,7 +885,7 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
         yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
 
-    if unpowered_machines > 0 or boiler_needs_fuel:
+    if unpowered_machines > 0 or (boiler_needs_fuel and not power.get("boiler_fuel_connected") and not power.get("has_grid")):
         yield {"skill": "tend"}, "power needs attention: boilers need fuel or machines need wiring", True
     elif (needs.get("burners_low_fuel") and not reflexes) or stalled:
         yield {"skill": "tend"}, "burners need fuel or drills/furnaces need emptying", True

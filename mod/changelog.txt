@@ -1,5 +1,13 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.0
+Date: 2026-11-06
+  Features:
+    - Automated boiler fuel logistics: power_pose installs a dedicated fuel inserter and intake belt tile; perception reports fuel connection status.
+    - Automated coal belt supply: planner connects coal drill drop outputs directly to steam power fuel lines.
+    - Automated smelter feeds: planner connects iron ore and coal belts directly into modular stone smelter column input ports (in1/in2).
+    - Tend hauling phaseout: eliminated repetitive manual hauling crutches from planner in favor of continuous belt logistics.
+    - Factory perception: reports per-resource miner drop positions (factory.miner_positions).
+    - Diagnostics: live report of boiler fuel belt connection status in bridge.diag.
 Date: 2026-10-31
   Features:
     - Modular tileable blueprint architecture: starter tileable steam power, smelting, red science, and green science committed in repo.

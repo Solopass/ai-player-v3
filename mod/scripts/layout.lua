@@ -416,9 +416,36 @@ local function power_pose(character, px, py, r)
                     places[#places + 1] = {name = "boiler", position = {x = bx, y = by}, direction = ORIENT[rb], role = "boiler"}
                     places[#places + 1] = {name = "steam-engine", position = {x = ex, y = ey}, direction = ORIENT[re], role = "engine"}
                     places[#places + 1] = {name = "steam-engine", position = {x = e2x, y = e2y}, direction = ORIENT[re], role = "engine"}
+
+                    -- Add boiler fuel inserter and fuel belt tile on the side opposite steam connection
+                    local opp_sx, opp_sy = unit16((steam.dir + 8) % 16)
+                    local ins_x = bx + opp_sx * 1.5
+                    local ins_y = by + opp_sy * 1.5
+                    local belt_x = bx + opp_sx * 2.5
+                    local belt_y = by + opp_sy * 2.5
+                    local ins_dir = steam.dir
+                    local belt_dir = (steam.dir + 4) % 16
+                    local ins_box = box(ins_x, ins_y, 1, 1)
+                    local belt_box = box(belt_x, belt_y, 1, 1)
+
+                    local fuel_in, fuel_ins = nil, nil
+                    if free(boxes, ins_box) and free(boxes, belt_box)
+                       and can_place(character, "inserter", ins_x, ins_y, ins_dir)
+                       and can_place(character, "transport-belt", belt_x, belt_y, belt_dir) then
+                      places[#places + 1] = {name = "inserter", position = {x = ins_x, y = ins_y}, direction = ins_dir,
+                                             role = "boiler_inserter", from = {x = belt_x, y = belt_y}, to = {x = bx, y = by}}
+                      places[#places + 1] = {name = "transport-belt", position = {x = belt_x, y = belt_y}, direction = belt_dir,
+                                             role = "boiler_fuel_in"}
+                      boxes[#boxes + 1] = ins_box
+                      boxes[#boxes + 1] = belt_box
+                      fuel_in = {x = belt_x, y = belt_y, dir = belt_dir}
+                      fuel_ins = {x = ins_x, y = ins_y, dir = ins_dir}
+                    end
+
                     return {
                       place = places,
                       boxes = boxes, engine_box = boxes[3],
+                      fuel_in = fuel_in, fuel_inserter = fuel_ins,
                     }
                   end
                 end
@@ -475,8 +502,21 @@ function AILayout.find_power(character, near, home)
               if poles then
                 local out = plan.place
                 out[#out + 1] = {name = "small-electric-pole", position = {x = first.x, y = first.y}, role = "pole"}
+                if plan.fuel_inserter then
+                  local fix, fiy = plan.fuel_inserter.x, plan.fuel_inserter.y
+                  if dist2(first.x, first.y, fix, fiy) > 6.25 then
+                    for _, off in ipairs({{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}}) do
+                      local p_x, p_y = fix + off[1], fiy + off[2]
+                      if free(boxes, box(p_x, p_y, 1, 1)) and can_place(character, "small-electric-pole", p_x, p_y) then
+                        out[#out + 1] = {name = "small-electric-pole", position = {x = p_x, y = p_y}, role = "pole"}
+                        boxes[#boxes + 1] = box(p_x, p_y, 1, 1)
+                        break
+                      end
+                    end
+                  end
+                end
                 for _, pole in ipairs(poles) do out[#out + 1] = pole end
-                return {place = out, joined = joined, facing = ORIENT[r]}
+                return {place = out, joined = joined, facing = ORIENT[r], fuel_in = plan.fuel_in, fuel_inserter = plan.fuel_inserter}
               end
             end
           end
@@ -1461,6 +1501,10 @@ function AILayout.build(character, plan)
       local ins = fb.insert{name = "coal", count = math.min(fill, inv.get_item_count("coal"))}
       if ins > 0 then inv.remove{name = "coal", count = ins} end
     end
+  end
+
+  if plan.fuel_in and storage.ai_player then
+    storage.ai_player.power_fuel_in = plan.fuel_in
   end
 
   if AIFlow and AIFlow.check then

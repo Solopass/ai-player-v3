@@ -120,6 +120,16 @@ remote.add_interface("ai_player", {
         end
         return {count = #faults, details = details}
       end)(),
+      boiler_logistics = (function()
+        local c = ap.character
+        if not (c and c.valid) then return nil end
+        local p = AIPerception.compute_power(c.surface, c.force)
+        return {
+          fuel_connected = p.boiler_fuel_connected,
+          has_fuel_inserter = p.boiler_has_fuel_inserter,
+          fuel_in_position = p.fuel_in_position,
+        }
+      end)(),
       doctor = (function()
         local doc = ap.doctor
         if not doc then return {total_stuck = 0, attention = {}, recent_fixes = 0} end

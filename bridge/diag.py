@@ -256,6 +256,11 @@ def _print(report: dict) -> None:
             print(f"flow faults: {ff.get('count')} (last 10 min)")
             for det in ff.get("details") or []:
                 print(f"  {det}")
+        bl = d.get("boiler_logistics")
+        if bl:
+            status_str = "CONNECTED" if bl.get("fuel_connected") else ("INSERTER ONLY" if bl.get("has_fuel_inserter") else "MISSING")
+            pos_str = f" at {bl.get('fuel_in_position')}" if bl.get("fuel_in_position") else ""
+            print(f"boiler fuel belt: [{status_str}]{pos_str}")
 
     h(f"Mod events (last {len(report['events'])})")
     for e in report["events"]:
