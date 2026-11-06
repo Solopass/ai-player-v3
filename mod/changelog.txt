@@ -2,6 +2,9 @@
 Version: 0.5.0
 Date: 2026-11-06
   Features:
+    - Closed-loop self-healing: connect_power strings electric pole chains to unpowered machine clusters; fix_flow auto-repairs reversed inserters and dead-end belts.
+    - Continuous factory health audit: reports power.unpowered_positions, factory.depleted_miners, and factory.flow_faults in perception.
+    - Strict 4-tier planner triage: power grid uptime (Tier 0) -> flow repair (Tier 1) -> ghost fulfillment (Tier 2) -> milestone expansion (Tier 3).
     - Automated boiler fuel logistics: power_pose installs a dedicated fuel inserter and intake belt tile; perception reports fuel connection status.
     - Automated coal belt supply: planner connects coal drill drop outputs directly to steam power fuel lines.
     - Automated smelter feeds: planner connects iron ore and coal belts directly into modular stone smelter column input ports (in1/in2).

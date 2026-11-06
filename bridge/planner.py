@@ -402,6 +402,14 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
                 yield ({"skill": "connect_belt", "from": coal_src, "to": fuel_in},
                        "feed automated coal belt to boilers", True)
 
+        # Self-healing: wire unpowered machines back to the power grid
+        unpowered_pos = power.get("unpowered_positions") or factory.get("unpowered_positions") or []
+        if unpowered_pos and power.get("has_grid"):
+            up = unpowered_pos[0]
+            yield from _craft(inv, "small-electric-pole", 4, "craft poles to wire unpowered machines")
+            yield ({"skill": "connect_power", "to": {"x": up["x"], "y": up["y"]}},
+                   f"wire unpowered machine at {{{up['x']},{up['y']}}} to electric grid", True)
+
     # Scale modular steam power when consumption approaches generation capacity or machines lack power
     prod_kw = power.get("production_kw", 0)
     cons_kw = power.get("consumption_kw", 0)
@@ -884,6 +892,25 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
             yield {"skill": "tend"}, "low on coal — collect it from the coal drill's chest", True
         yield from _goto_far(p, _landmark(p, "coal"), "coal", GATHER_NEAR)
         yield {"skill": "gather", "item": "coal", "count": 50}, "low on coal", True
+
+    # Tier 0 self-healing: Wire unpowered machines with connect_power
+    unpowered_positions = power.get("unpowered_positions") or factory.get("unpowered_positions") or []
+    if unpowered_positions and power.get("has_grid"):
+        up = unpowered_positions[0]
+        yield from _craft(inv, "small-electric-pole", 4, "craft poles to wire unpowered machines")
+        yield ({"skill": "connect_power", "to": {"x": up["x"], "y": up["y"]}},
+               f"wire unpowered machine at {{{up['x']},{up['y']}}} to electric grid", True)
+
+    # Tier 1 self-healing: Fix broken flows, dead ends, or reversed inserters
+    flow_faults = factory.get("flow_faults") or []
+    if flow_faults:
+        yield {"skill": "fix_flow"}, "auto-repair detected flow faults, dead ends, or reversed inserters", True
+
+    depleted = factory.get("depleted_miners") or []
+    if depleted:
+        dpos = depleted[0]
+        yield ({"skill": "deconstruct", "position": {"x": dpos["x"], "y": dpos["y"]}, "radius": 2},
+               "remove depleted miner whose ore has run out", True)
 
     if unpowered_machines > 0 or (boiler_needs_fuel and not power.get("boiler_fuel_connected") and not power.get("has_grid")):
         yield {"skill": "tend"}, "power needs attention: boilers need fuel or machines need wiring", True

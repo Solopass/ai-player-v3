@@ -1647,6 +1647,100 @@ local function skill_connect_ports(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- connect_power(to) — chains small electric poles from the active grid
+-- to the target position so unpowered machines are wired into the network.
+-- -------------------------------------------------------------------------
+local function skill_connect_power(character, p)
+  local target = p and (p.to or p.position)
+  if not (target and target.x and target.y) then
+    return false, "connect_power: 'to' must be {x=N, y=N}"
+  end
+  local surface, force = character.surface, character.force
+  local best_pole, best_d = nil, nil
+  local poles = surface.find_entities_filtered{type = "electric-pole", force = force, position = target, radius = 300}
+  for _, pole in ipairs(poles) do
+    local net = pole.electric_network_id
+    local valid_grid = false
+    if net then
+      local stats = pole.electric_network_statistics
+      if stats and stats.get_flow_count{category = "input", count = true} > 0 then
+        valid_grid = true
+      end
+    end
+    if not valid_grid and surface.count_entities_filtered{type = {"generator", "boiler"}, force = force, limit = 1} > 0 then
+      valid_grid = true
+    end
+    if valid_grid then
+      local dx, dy = pole.position.x - target.x, pole.position.y - target.y
+      local d = dx * dx + dy * dy
+      if not best_d or d < best_d then
+        best_pole = pole
+        best_d = d
+      end
+    end
+  end
+
+  if not best_pole then
+    return false, "connect_power: no powered electric pole found within 300 tiles — build_power first"
+  end
+
+  if best_d and best_d <= 49 then
+    return true, string.format("connect_power: target {%.1f,%.1f} is already within reach of pole at {%.1f,%.1f}",
+      target.x, target.y, best_pole.position.x, best_pole.position.y)
+  end
+
+  local plan_poles, joined = AILayout.pole_chain(character, best_pole.position, target, {})
+  if not plan_poles or #plan_poles == 0 then
+    return true, "connect_power: already connected"
+  end
+
+  local plan = {place = plan_poles}
+  local ready, why = stock_up(character, AILayout.items({plan}), "connect_power")
+  if not ready then return false, why end
+
+  local ok, res = AILayout.build(character, plan)
+  if not ok then return false, "connect_power: " .. tostring(res) end
+
+  return true, string.format("connect_power: placed %d electric pole(s) from {%.1f,%.1f} to {%.1f,%.1f}",
+    #plan_poles, best_pole.position.x, best_pole.position.y, target.x, target.y)
+end
+
+-- -------------------------------------------------------------------------
+-- fix_flow(target) — checks and repairs flow faults (reversed inserters,
+-- dead-end belts) around machines.
+-- -------------------------------------------------------------------------
+local function skill_fix_flow(character, p)
+  if not (AIFlow and AIFlow.check and AIFlow.repair) then
+    return false, "fix_flow: AIFlow module not available"
+  end
+  local surface = character.surface
+  local pos = p and (p.target or p.position) or character.position
+  local radius = tonumber(p and p.radius) or 32
+
+  local ents = surface.find_entities_filtered{
+    position = pos,
+    radius = radius,
+    force = character.force,
+    type = {"inserter", "transport-belt", "underground-belt", "assembling-machine", "furnace"}
+  }
+  local ghosts = surface.find_entities_filtered{
+    position = pos,
+    radius = radius,
+    force = character.force,
+    type = "entity-ghost"
+  }
+  for _, g in ipairs(ghosts) do ents[#ents + 1] = g end
+
+  local res = AIFlow.check(ents)
+  if res.ok or #res.faults == 0 then
+    return true, "fix_flow: no flow faults detected in area"
+  end
+
+  local ok, detail = AIFlow.repair(character, res)
+  return ok, string.format("fix_flow: audited %d entities, repaired %d fault(s)", #ents, #res.faults)
+end
+
+-- -------------------------------------------------------------------------
 -- build_pumpjack — places a pumpjack on the nearest unmined crude-oil node.
 -- -------------------------------------------------------------------------
 local function skill_build_pumpjack(character, p)
@@ -2605,6 +2699,8 @@ AISkills.REGISTRY = {
   build_pumpjack   = skill_build_pumpjack,
   build_offshore_pump = skill_build_offshore_pump,
   build_radar      = skill_build_radar,
+  connect_power    = skill_connect_power,
+  fix_flow         = skill_fix_flow,
 }
 
 -- -------------------------------------------------------------------------

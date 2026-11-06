@@ -55,6 +55,8 @@ OPTIONAL: dict[str, list[str]] = {
     "connect_belt": [],
     "connect_pipe": [],
     "connect_ports": [],
+    "connect_power": [],
+    "fix_flow": ["radius"],
     # actions
     "move": ["distance"],
     "mine": ["name", "type", "position"],

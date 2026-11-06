@@ -346,8 +346,11 @@ local function gather_factory(surface, force, cpos)
   local assemblers, electric = {}, {}
   local offshore_pumps = {}
   local miner_positions = {}
+  local unpowered_positions = {}
+  local depleted_miners = {}
   local needs = {burners_low_fuel = {}, machines_no_recipe = {},
-                 machines_no_input = {}, outputs_full = {}}
+                 machines_no_input = {}, outputs_full = {},
+                 machines_no_power = {}}
   local total = 0
 
   for _, e in ipairs(machines) do
@@ -403,6 +406,11 @@ local function gather_factory(surface, force, cpos)
         if     st == "no_fuel"        then table.insert(needs.burners_low_fuel,  {name = e.name, position = epos})
         elseif st == "no_recipe"      then table.insert(needs.machines_no_recipe, {name = e.name, position = epos})
         elseif st == "no_ingredients" then table.insert(needs.machines_no_input,  {name = e.name, position = epos})
+        elseif st == "no_power"       then
+          table.insert(needs.machines_no_power, {name = e.name, position = epos})
+          if #unpowered_positions < 8 then unpowered_positions[#unpowered_positions + 1] = epos end
+        elseif st == "depleted"       then
+          if e.type == "mining-drill" and #depleted_miners < 8 then depleted_miners[#depleted_miners + 1] = epos end
         elseif st == "output_full"    then
           local tgt = e.type == "mining-drill" and e.drop_target
           table.insert(needs.outputs_full, {name = e.name, position = epos,
@@ -417,7 +425,9 @@ local function gather_factory(surface, force, cpos)
 
   local factory = {total = total, by_type = by_type, by_status = by_status, attention = attention,
                    miners_by_resource = miners, miner_positions = miner_positions, labs = labs, assemblers = assemblers,
-                   electric_miners = electric, offshore_pumps = offshore_pumps}
+                   electric_miners = electric, offshore_pumps = offshore_pumps,
+                   unpowered_positions = unpowered_positions, depleted_miners = depleted_miners,
+                   flow_faults = (storage.ai_player and storage.ai_player.flow_faults) or {}}
 
   -- Small base: include the full per-machine roster (lightweight). Second pass
   -- only runs when total is small, so it's cheap.
@@ -803,6 +813,7 @@ function AIPerception.gather(character)
   perception.factory = factory
   perception.needs = needs
   perception.power = compute_power(surface, force, factory.by_status)
+  perception.power.unpowered_positions = factory.unpowered_positions
   perception.production = compute_production(force, surface)
 
   local doc = storage.ai_player and storage.ai_player.doctor

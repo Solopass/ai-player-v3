@@ -40,6 +40,8 @@ def get_system_prompt(llm_layout: bool = False) -> str:
         '- {"skill":"build_pumpjack"[,"position":{"x":N,"y":N}]}   Place an electric pumpjack on the nearest crude-oil node to extract oil and wire it to the power grid.',
         '- {"skill":"build_offshore_pump"[,"position":{"x":N,"y":N}]}   Place an offshore pump on the nearest shoreline tile to supply water for steam power or chemical plants.',
         '- {"skill":"build_radar"}                 Place a radar near base to continuously survey surrounding chunks and reveal distant ore, oil patches and biter nests.',
+        '- {"skill":"connect_power","to":{"x":N,"y":N}}   String an electric pole chain from the powered grid to an unpowered machine or cluster so it has electric power.',
+        '- {"skill":"fix_flow"}                    Audit and auto-repair broken belt lines, dead ends, and reversed inserters around machines.',
     ])
     skills_text = "\n".join(skills)
 
