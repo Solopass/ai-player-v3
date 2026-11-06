@@ -166,17 +166,23 @@ def compare_against_baseline(score: dict, seed_str: str, baseline_data: dict) ->
     return regressions
 
 
-def run_baseline_collection(speed: int = 4):
+def run_baseline_collection(speed: int = 4, runs_per_seed: int = 2, seeds: list[int] | None = None):
+    seeds = seeds or SEEDS
     print("\n=======================================================")
-    print("Collecting Round 20 Baseline: 2 runs per seed on HEAD")
+    print(f"Collecting Round 20 Baseline: {runs_per_seed} run(s) per seed on HEAD (seeds: {seeds})")
     print("=======================================================")
     SCORES_DIR.mkdir(parents=True, exist_ok=True)
     results = {}
+    if BASELINE_FILE.exists():
+        try:
+            results = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            results = {}
 
-    for seed in SEEDS:
+    for seed in seeds:
         seed_key = str(seed)
         runs = []
-        for run_idx in (1, 2):
+        for run_idx in range(1, runs_per_seed + 1):
             label = f"baseline-s{seed}-r{run_idx}"
             rep = run_soak(seed, minutes=90, speed=speed, label=label)
             if not rep:
@@ -185,57 +191,70 @@ def run_baseline_collection(speed: int = 4):
             runs.append(rep["evaluation"]["score"])
             append_score_log(rep, get_git_commit(), flag=False)
 
-        # Compute mean and spread (abs diff between the 2 runs)
-        r1, r2 = runs[0], runs[1]
-        mean_score = {}
-        spread = {}
+        if len(runs) >= 2:
+            r1, r2 = runs[0], runs[1]
+            mean_score = {}
+            spread = {}
 
-        # Milestones
-        mean_ms = {}
-        spread_ms = {}
-        all_ms_keys = set(r1["milestones"].keys()) | set(r2["milestones"].keys())
-        for k in all_ms_keys:
-            v1, v2 = r1["milestones"].get(k), r2["milestones"].get(k)
-            if v1 is not None and v2 is not None:
-                mean_ms[k] = round((v1 + v2) / 2.0, 1)
-                spread_ms[k] = round(abs(v1 - v2), 1)
-            elif v1 is not None:
-                mean_ms[k] = v1
-                spread_ms[k] = 0.0
-            elif v2 is not None:
-                mean_ms[k] = v2
-                spread_ms[k] = 0.0
-            else:
-                mean_ms[k] = None
-                spread_ms[k] = 0.0
-        mean_score["milestones"] = mean_ms
-        spread["milestones"] = spread_ms
+            # Milestones
+            mean_ms = {}
+            spread_ms = {}
+            all_ms_keys = set(r1["milestones"].keys()) | set(r2["milestones"].keys())
+            for k in all_ms_keys:
+                v1, v2 = r1["milestones"].get(k), r2["milestones"].get(k)
+                if v1 is not None and v2 is not None:
+                    mean_ms[k] = round((v1 + v2) / 2.0, 1)
+                    spread_ms[k] = round(abs(v1 - v2), 1)
+                elif v1 is not None:
+                    mean_ms[k] = v1
+                    spread_ms[k] = 0.0
+                elif v2 is not None:
+                    mean_ms[k] = v2
+                    spread_ms[k] = 0.0
+                else:
+                    mean_ms[k] = None
+                    spread_ms[k] = 0.0
+            mean_score["milestones"] = mean_ms
+            spread["milestones"] = spread_ms
 
-        # Rates
-        mean_rates = {}
-        spread_rates = {}
-        for k in r1["rates_last_10m"].keys():
-            v1, v2 = r1["rates_last_10m"].get(k, 0), r2["rates_last_10m"].get(k, 0)
-            mean_rates[k] = round((v1 + v2) / 2.0, 2)
-            spread_rates[k] = round(abs(v1 - v2), 2)
-        mean_score["rates_last_10m"] = mean_rates
-        spread["rates_last_10m"] = spread_rates
+            # Rates
+            mean_rates = {}
+            spread_rates = {}
+            for k in r1["rates_last_10m"].keys():
+                v1, v2 = r1["rates_last_10m"].get(k, 0), r2["rates_last_10m"].get(k, 0)
+                mean_rates[k] = round((v1 + v2) / 2.0, 2)
+                spread_rates[k] = round(abs(v1 - v2), 2)
+            mean_score["rates_last_10m"] = mean_rates
+            spread["rates_last_10m"] = spread_rates
 
-        # Other fields
-        for field in ("techs_researched", "flow_faults_last_30m", "attention_share",
-                      "hand_hauled_last_30m", "mod_errors", "autopilot_share"):
-            v1, v2 = r1.get(field, 0), r2.get(field, 0)
-            mean_score[field] = round((v1 + v2) / 2.0, 3)
-            spread[field] = round(abs(v1 - v2), 3)
+            # Other fields
+            for field in ("techs_researched", "flow_faults_last_30m", "attention_share",
+                          "hand_hauled_last_30m", "mod_errors", "autopilot_share"):
+                v1, v2 = r1.get(field, 0), r2.get(field, 0)
+                mean_score[field] = round((v1 + v2) / 2.0, 3)
+                spread[field] = round(abs(v1 - v2), 3)
 
-        results[seed_key] = {
-            "mean_score": mean_score,
-            "spread": spread,
-            "runs": runs,
-        }
+            results[seed_key] = {
+                "mean_score": mean_score,
+                "spread": spread,
+                "runs": runs,
+            }
+        else:
+            r1 = runs[0]
+            results[seed_key] = {
+                "mean_score": r1,
+                "spread": {
+                    "milestones": {k: 0.0 for k in r1.get("milestones", {})},
+                    "rates_last_10m": {k: 0.0 for k in r1.get("rates_last_10m", {})},
+                    "techs_researched": 0.0, "flow_faults_last_30m": 0.0,
+                    "attention_share": 0.0, "hand_hauled_last_30m": 0.0,
+                    "mod_errors": 0.0, "autopilot_share": 0.0
+                },
+                "runs": runs,
+            }
 
     BASELINE_FILE.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print(f"\n[BASELINE SAVED] Saved baseline with spreads to {BASELINE_FILE}")
+    print(f"\n[BASELINE SAVED] Saved baseline to {BASELINE_FILE}")
 
 
 def main():
@@ -246,7 +265,11 @@ def main():
                         help="Specific self-test cases touched (quick mode)")
     parser.add_argument("--speed", type=int, default=4, help="Soak speed factor (default 4)")
     parser.add_argument("--baseline-only", action="store_true",
-                        help="Run baseline seeds twice and save docs/scores/baseline.json")
+                        help="Run baseline seeds and save docs/scores/baseline.json")
+    parser.add_argument("--runs-per-seed", type=int, default=2,
+                        help="Number of runs per seed for baseline collection (default 2)")
+    parser.add_argument("--seeds", type=int, nargs="*", default=None,
+                        help="Specific seeds to run for baseline (default [424242, 2476103329])")
     parser.add_argument("--accept", action="store_true",
                         help="Accept latest soak results as baseline")
     args = parser.parse_args()
@@ -254,7 +277,7 @@ def main():
     commit = get_git_commit()
 
     if args.baseline_only:
-        run_baseline_collection(speed=args.speed)
+        run_baseline_collection(speed=args.speed, runs_per_seed=args.runs_per_seed, seeds=args.seeds)
         return
 
     # 1. Pytest
