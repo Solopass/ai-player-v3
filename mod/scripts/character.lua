@@ -25,6 +25,7 @@ local STARTING_ITEMS = {
   {name = "pipe",                count = 20},
   {name = "iron-chest",          count = 4},
   {name = "lab",                 count = 1},
+  {name = "ai-monitoring-station",count = 1},
 }
 
 function AICharacter.create_force()

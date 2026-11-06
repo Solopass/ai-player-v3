@@ -1248,6 +1248,30 @@ CASES.prod_mining_field = {
   end,
 }
 
+CASES.monitoring_station = {
+  delay = 30,
+  setup = function(c)
+    give(c.character, {["ai-monitoring-station"] = 1})
+  end,
+  run = function(c)
+    local inv = c.character.get_inventory(defines.inventory.character_main)
+    local has_station = inv and inv.get_item_count("ai-monitoring-station") > 0
+    local station = c.surface.create_entity{
+      name = "ai-monitoring-station",
+      position = {x = c.character.position.x + 3, y = c.character.position.y},
+      force = c.force
+    }
+    c.station = station
+    c.has_station_item = has_station
+    return {}
+  end,
+  check = function(c, add)
+    add("ai character has station item in inventory", c.has_station_item == true, "station starting item verified")
+    add("ai-monitoring-station placed in world", c.station ~= nil and c.station.valid, "entity prototype valid")
+    add("ai-monitoring-station health verified", c.station and c.station.health >= 2500, "station armor verified")
+  end,
+}
+
 -- Cases for later rounds register themselves here (selftest_cases.lua).
 AISelftest.CASES = CASES
 AISelftest.helpers = {paint_ore = paint_ore, paint_water = paint_water, lake = lake, give = give,

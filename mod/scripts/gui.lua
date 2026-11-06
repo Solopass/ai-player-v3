@@ -499,6 +499,10 @@ script.on_event(defines.events.on_gui_click, function(event)
   if not (el and el.valid and storage.ai_player) then return end
   local player = game.get_player(event.player_index)
   if el.name == TOGGLE then return AIGui.toggle(player) end
+  if string.sub(el.name, 1, 12) == "aip_station_" then
+    if StationGui then StationGui.on_gui_click(event) end
+    return
+  end
   local h = HANDLERS[el.name]
   if h then
     h(player)
@@ -517,7 +521,13 @@ script.on_event("ai-player-toggle-panel", function(event)
 end)
 
 script.on_event(defines.events.on_player_created, function(event)
-  AIGui.ensure_button(game.get_player(event.player_index))
+  local player = game.get_player(event.player_index)
+  if player then
+    AIGui.ensure_button(player)
+    if prototypes.item["ai-monitoring-station"] then
+      player.insert{name = "ai-monitoring-station", count = 1}
+    end
+  end
 end)
 
 script.on_event(defines.events.on_gui_location_changed, function(event)
@@ -530,6 +540,14 @@ end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
   local el = event.element
+  if el and el.valid and el.name == "aip_station_frame" then
+    local player = game.get_player(event.player_index)
+    if player then
+      player.driving = false
+      if StationGui then StationGui.close(player) end
+    end
+    return
+  end
   if el and el.valid and el.name == PANEL and storage.ai_player then
     local pinned = storage.ai_player.gui_pinned and storage.ai_player.gui_pinned[event.player_index]
     if pinned ~= false then
@@ -544,10 +562,11 @@ script.on_event(defines.events.on_gui_closed, function(event)
   end
 end)
 
-script.on_nth_tick(60, function()
+script.on_nth_tick(20, function()
   if not storage.ai_player then return end
   for _, player in pairs(game.connected_players) do
-    if player.gui.screen[PANEL] then AIGui.update(player) end
+    if player.gui.screen[PANEL] and (game.tick % 60 == 0) then AIGui.update(player) end
+    if StationGui and StationGui.is_open(player) then StationGui.update(player) end
   end
 end)
 

@@ -18,6 +18,7 @@ require("scripts.reflexes")
 require("scripts.selftest")
 require("scripts.selftest_reflex")
 require("scripts.gui")
+require("scripts.station_gui")
 
 -- -------------------------------------------------------------------------
 -- Remote interface — lets an external MCP/RCON client invoke a skill against
@@ -1141,3 +1142,53 @@ AIGui.set_actions({
 script.on_event(defines.events.on_object_destroyed, function(event)
   if event.type == defines.target_type.entity then AIRegistry.disown(event.useful_id) end
 end)
+
+-- -------------------------------------------------------------------------
+-- AI Monitoring Station: Observation bunker driving lifecycle & commands
+-- -------------------------------------------------------------------------
+script.on_event(defines.events.on_player_driving_changed_state, function(event)
+  local player = game.get_player(event.player_index)
+  if not (player and player.valid) then return end
+  local vehicle = player.vehicle
+  if vehicle and vehicle.valid and vehicle.name == "ai-monitoring-station" then
+    StationGui.open(player, vehicle)
+  else
+    StationGui.close(player)
+  end
+end)
+
+commands.add_command("ai-station",
+  "Deploy an AI Monitoring Station next to you or receive one in inventory",
+  function(cmd)
+    local player = cmd.player_index and game.get_player(cmd.player_index)
+    if not player then
+      game.print("[AI Station] Run this command in-game as a player.")
+      return
+    end
+    if not (player.character and player.character.valid) then
+      game.print("[AI Station] Player character not found.")
+      return
+    end
+
+    local surface = player.character.surface
+    local pos = surface.find_non_colliding_position("ai-monitoring-station", player.character.position, 15, 1)
+    if pos then
+      local station = surface.create_entity{
+        name = "ai-monitoring-station",
+        position = pos,
+        force = player.force
+      }
+      if station then
+        player.print(string.format("[AI Station] Monitoring Station deployed at {%.1f, %.1f}. Press Enter next to it to enter observation deck!", pos.x, pos.y), {r=0.4, g=1, b=0.4})
+        return
+      end
+    end
+
+    local n = player.insert{name = "ai-monitoring-station", count = 1}
+    if n > 0 then
+      player.print("[AI Station] Placed 1 AI Monitoring Station into your inventory.", {r=0.4, g=1, b=0.4})
+    else
+      player.print("[AI Station] Inventory is full and no valid build space nearby.", {r=1, g=0.5, b=0.2})
+    end
+  end
+)
