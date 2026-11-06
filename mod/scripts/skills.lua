@@ -1724,13 +1724,7 @@ local function skill_fix_flow(character, p)
     force = character.force,
     type = {"inserter", "transport-belt", "underground-belt", "assembling-machine", "furnace"}
   }
-  local ghosts = surface.find_entities_filtered{
-    position = pos,
-    radius = radius,
-    force = character.force,
-    type = "entity-ghost"
-  }
-  for _, g in ipairs(ghosts) do ents[#ents + 1] = g end
+  -- the force is shared with the player in co-op: AIFlow.check keeps only the AI's own
 
   local res = AIFlow.check(ents)
   if res.ok or #res.faults == 0 then

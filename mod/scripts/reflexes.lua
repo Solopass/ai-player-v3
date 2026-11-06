@@ -814,7 +814,9 @@ function AIReflexes.doctor_pass(ch, tick)
   doc.cursor = last_uid
 
   if AIFlow and AIFlow.doctor_pass then
-    AIFlow.doctor_pass(ch, 5)
+    -- a flow-check bug must never stop the game (this runs inside on_nth_tick)
+    local ok, err = pcall(AIFlow.doctor_pass, ch, 5)
+    if not ok then AIDebug.event("error", {where = "flow doctor_pass", error = tostring(err)}) end
   end
 end
 

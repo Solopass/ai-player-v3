@@ -306,9 +306,10 @@ function StationGui.update(player)
   local force = (char and char.valid) and char.force or player.force
 
   -- Power & Boiler check
-  local boilers = surf.find_entities_filtered{type = "boiler", force = force}
-  local engines = surf.find_entities_filtered{type = "generator", force = force}
-  local poles = surf.find_entities_filtered{type = "electric-pole", force = force}
+  -- the AI's own power only: a whole-surface scan per viewer every refresh lags big maps
+  local boilers = AIRegistry.owned(surf, {"boiler"})
+  local engines = AIRegistry.owned(surf, {"generator"})
+  local poles = AIRegistry.owned(surf, {"electric-pole"})
 
   local has_boiler = #boilers > 0
   local has_engine = #engines > 0
@@ -353,8 +354,9 @@ function StationGui.update(player)
   r.triage_flow.caption = string.format("Flow Faults: %d detected (inserters / belts)", faults_count)
 
   -- Ghost backlog
-  local ghosts = surf.find_entities_filtered{type = "entity-ghost", force = force}
-  r.triage_ghosts.caption = string.format("Ghost Backlog: %d pending placement", #ghosts)
+  local n_ghosts = 0
+  for _ in pairs(ap.ai_ghosts or {}) do n_ghosts = n_ghosts + 1 end
+  r.triage_ghosts.caption = string.format("Ghost Backlog: %d pending placement", n_ghosts)
 end
 
 function StationGui.on_gui_click(event)

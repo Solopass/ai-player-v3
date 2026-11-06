@@ -566,7 +566,7 @@ script.on_nth_tick(20, function()
   if not storage.ai_player then return end
   for _, player in pairs(game.connected_players) do
     if player.gui.screen[PANEL] and (game.tick % 60 == 0) then AIGui.update(player) end
-    if StationGui and StationGui.is_open(player) then StationGui.update(player) end
+    if StationGui and StationGui.is_open(player) and (game.tick % 60 == 0) then StationGui.update(player) end
   end
 end)
 

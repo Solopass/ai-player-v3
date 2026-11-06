@@ -43,7 +43,7 @@ local function check_inserter(e)
         if proto and proto.products then
           local matches = false
           for _, pr in ipairs(proto.products) do
-            if inv.get_item_count(pr.name) > 0 then matches = true; break end
+            if pr.type == "item" and inv.get_item_count(pr.name) > 0 then matches = true; break end
           end
           if not matches then
             faults[#faults + 1] = {entity = e, kind = "wrong_item", detail = "pickup crafter products do not match drop container contents"}
@@ -63,7 +63,10 @@ local function check_inserter(e)
       local proto = recipe and prototypes.recipe[recipe.name]
       if proto and proto.ingredients then
         local ing_map = {}
-        for _, ing in ipairs(proto.ingredients) do ing_map[ing.name] = true end
+        -- items only: get_item_count errors on fluid names
+        for _, ing in ipairs(proto.ingredients) do
+          if ing.type == "item" then ing_map[ing.name] = true end
+        end
 
         -- If pickup is another crafter, check its output products
         if pickup and (pickup.type == "assembling-machine" or pickup.type == "furnace") then
@@ -129,7 +132,7 @@ local function check_belt_line(start_belt)
     if cur.type == "underground-belt" or (cur.type == "entity-ghost" and cur.ghost_type == "underground-belt") then
       local is_input = (cur.belt_to_ground_type == "input")
       if is_input then
-        local neighbour = cur.neighbours
+        local neighbour = cur.underground_belt_neighbour
         if not neighbour then
           return {entity = cur, kind = "unpaired_underground", detail = "underground belt input has no exit"}
         end
@@ -237,9 +240,11 @@ function AIFlow.check(entities)
   local faults = {}
   if not entities or #entities == 0 then return {ok = true, faults = {}} end
 
+  -- Only the AI's own built entities: ghosts can't be read for belt/inserter targets, and the
+  -- player's builds are never checked or repaired.
   for _, e in ipairs(entities) do
-    if e and e.valid then
-      local t = e.type == "entity-ghost" and e.ghost_type or e.type
+    if e and e.valid and e.type ~= "entity-ghost" and AIRegistry.is_owned(e) then
+      local t = e.type
       if t == "inserter" then
         local ins_faults = check_inserter(e)
         for _, f in ipairs(ins_faults) do faults[#faults + 1] = f end
@@ -293,7 +298,8 @@ function AIFlow.repair(character, result, opts)
   for _, f in ipairs(faults) do
     if repaired_count >= MAX_REPAIR_ENTITIES then break end
     local e = f.entity
-    if e and e.valid and (f.kind == "no_pickup" or f.kind == "no_drop" or f.kind == "wrong_item") then
+    if e and e.valid and AIRegistry.is_owned(e)
+       and (f.kind == "no_pickup" or f.kind == "no_drop" or f.kind == "wrong_item") then
       local t = e.type == "entity-ghost" and e.ghost_type or e.type
       if t == "inserter" then
         local fixed = false
@@ -321,7 +327,8 @@ function AIFlow.repair(character, result, opts)
   for _, f in ipairs(faults) do
     if repaired_count >= MAX_REPAIR_ENTITIES then break end
     local e = f.entity
-    if e and e.valid and f.kind == "dead_end" then
+    -- a belt walk can end on a player's belt: only turn the AI's own
+    if e and e.valid and f.kind == "dead_end" and AIRegistry.is_owned(e) then
       local t = e.type == "entity-ghost" and e.ghost_type or e.type
       if t == "transport-belt" then
         local surface = e.surface
