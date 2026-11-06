@@ -278,9 +278,9 @@ function AIFlow.check(entities)
     end
     local recent = {}
     for _, f in ipairs(storage.ai_player.flow_faults) do
-      if tick - f.tick <= 36000 then recent[#recent + 1] = f end
+      if tick - f.tick <= 108000 then recent[#recent + 1] = f end
     end
-    while #recent > 50 do table.remove(recent, 1) end
+    while #recent > 500 do table.remove(recent, 1) end
     storage.ai_player.flow_faults = recent
   end
 

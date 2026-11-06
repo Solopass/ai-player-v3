@@ -85,6 +85,8 @@ def expand(names: list[str]) -> list[str]:
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     keep = "--keep" in sys.argv
+    if "--all" in sys.argv:
+        args = list(ALL_CASES)
     if not EXE.exists():
         print(f"factorio.exe not found at {EXE}")
         return 2

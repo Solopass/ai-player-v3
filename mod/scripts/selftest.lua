@@ -1478,6 +1478,29 @@ local function soak_snapshot()
       if fb and fb.valid and fb.is_empty() and e.energy < 1 and e.burner then out.furnaces_unfuelled = out.furnaces_unfuelled + 1 end
     end
   end
+
+  local hand_hauls_30m = 0
+  if storage.ai_player and storage.ai_player.hand_hauls then
+    local cur_tick = game.tick
+    for _, h in ipairs(storage.ai_player.hand_hauls) do
+      if cur_tick - h.tick <= 108000 then
+        hand_hauls_30m = hand_hauls_30m + (h.count or 0)
+      end
+    end
+  end
+  out.hand_hauls_last_30m = hand_hauls_30m
+
+  local flow_faults_30m = 0
+  if storage.ai_player and storage.ai_player.flow_faults then
+    local cur_tick = game.tick
+    for _, f in ipairs(storage.ai_player.flow_faults) do
+      if cur_tick - f.tick <= 108000 then
+        flow_faults_30m = flow_faults_30m + 1
+      end
+    end
+  end
+  out.flow_faults_last_30m = flow_faults_30m
+
   helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json(out), false, 0)
 end
 

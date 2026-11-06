@@ -2679,6 +2679,18 @@ local function skill_tend(character, _)
   end
   if wired > 0 then character.teleport(origin) end
 
+  local total_hauled = hauled + packs_fed
+  if total_hauled > 0 and storage.ai_player then
+    storage.ai_player.hand_hauls = storage.ai_player.hand_hauls or {}
+    table.insert(storage.ai_player.hand_hauls, {tick = game.tick, count = total_hauled})
+    local cur_tick = game.tick
+    local recent = {}
+    for _, h in ipairs(storage.ai_player.hand_hauls) do
+      if cur_tick - h.tick <= 126000 then recent[#recent + 1] = h end
+    end
+    storage.ai_player.hand_hauls = recent
+  end
+
   local parts = {}
   for name, n in pairs(got) do parts[#parts + 1] = n .. "x " .. name end
   table.sort(parts)

@@ -142,6 +142,9 @@ def sample_from(snap: dict) -> dict | None:
         "spawners_home": snap.get("spawners_home"), "reflex": snap.get("reflex") or {},
         "kills": snap.get("kills_in"), "kills_out": snap.get("kills_out"), "magazines": snap.get("magazines"),
         "unfuelled": snap.get("furnaces_unfuelled"), "combat_mode": snap.get("combat_mode"),
+        "hand_hauls_last_30m": snap.get("hand_hauls_last_30m", 0),
+        "flow_faults_last_30m": snap.get("flow_faults_last_30m", 0),
+        "bus_head_fed": bool((p.get("base") or {}).get("head_fed")),
         "inventory": {i["name"]: i["count"] for i in (p.get("inventory") or [])[:40]
                       if isinstance(i, dict) and i.get("name")},
     }
@@ -151,6 +154,12 @@ def milestone_times(samples: list[dict]) -> dict[str, float | None]:
     """Game minute each ladder step (and a few extras) was first seen done."""
     out: dict[str, float | None] = {m.id: None for m in goals.LADDER[:8]}
     out["automation-researched"] = None
+    out["electric-mining-drill-researched"] = None
+    out["first-mining-field"] = None
+    out["bus-head-fed"] = None
+    out["red-producing"] = None
+    out["lab-row-consuming"] = None
+    out["green-producing"] = None
     out["red-cell-built"] = None
     out["red-cell-produced"] = None
     for s in samples:
@@ -159,6 +168,18 @@ def milestone_times(samples: list[dict]) -> dict[str, float | None]:
                 out[mid] = s["minute"]
         if out["automation-researched"] is None and "automation" in s["researched"]:
             out["automation-researched"] = s["minute"]
+        if out["electric-mining-drill-researched"] is None and "electric-mining-drill" in s["researched"]:
+            out["electric-mining-drill-researched"] = s["minute"]
+        if out["first-mining-field"] is None and (s.get("by_type", {}).get("mining-drill", 0) > 0 and (s.get("iron_per_min", 0) > 0 or s.get("copper_per_min", 0) > 0)):
+            out["first-mining-field"] = s["minute"]
+        if out["bus-head-fed"] is None and s.get("bus_head_fed"):
+            out["bus-head-fed"] = s["minute"]
+        if out["red-producing"] is None and (s.get("red_per_min", 0) > 0 or s.get("assembler_products", {}).get("automation-science-pack", 0) > 0):
+            out["red-producing"] = s["minute"]
+        if out["lab-row-consuming"] is None and any(st == "working" for st in s.get("labs", [])):
+            out["lab-row-consuming"] = s["minute"]
+        if out["green-producing"] is None and (s.get("green_per_min", 0) > 0 or s.get("assembler_products", {}).get("logistic-science-pack", 0) > 0):
+            out["green-producing"] = s["minute"]
         if out["red-cell-built"] is None and "automation-science-pack" in s["assembler_recipes"]:
             out["red-cell-built"] = s["minute"]
         working = "automation-science-pack:working" in s["assemblers"]     # fallback when the mod has no product counts
@@ -282,7 +303,7 @@ def combat_summary(samples: list[dict]) -> dict:
 
 # --- report -------------------------------------------------------------------
 
-def evaluate(samples: list[dict], times: dict) -> dict:
+def evaluate(samples: list[dict], times: dict, bstats: dict | None = None, errors: list[str] | None = None) -> dict:
     last = samples[-1] if samples else {}
     built = times.get("red-cell-built")
     red_rate = max((s["red_per_min"] for s in samples if built is not None and s["minute"] >= built), default=0)
@@ -292,8 +313,52 @@ def evaluate(samples: list[dict], times: dict) -> dict:
         "automation researched": times.get("automation-researched") is not None,
         "red cell working": times.get("red-cell-produced") is not None and red_rate > 0,
     }
-    return {"bar": bar, "passed": all(bar.values()), "final": {k: last.get(k) for k in
-            ("minute", "goal", "iron_per_min", "copper_per_min", "red_per_min", "techs", "factory_total")}}
+
+    last_min = last.get("minute", 0)
+    last_10 = [s for s in samples if s["minute"] >= last_min - 10] or ([last] if last else [])
+
+    def mean_rate(key):
+        vals = [s.get(key, 0) for s in last_10]
+        return round(sum(vals) / max(1, len(vals)), 2)
+
+    turns_total = (bstats or {}).get("turns", 0)
+    turns_auto = ((bstats or {}).get("source") or {}).get("autopilot", 0)
+    auto_share = round(turns_auto / max(1, turns_total), 3) if turns_total > 0 else 0.0
+
+    att_count = len(last.get("attention") or [])
+    fac_total = last.get("factory_total") or 1
+    att_share = round(att_count / max(1, fac_total), 3)
+
+    score = {
+        "milestones": {
+            "power": times.get("power"),
+            "electric-mining-drill": times.get("electric-mining-drill-researched"),
+            "first_mining_field": times.get("first-mining-field"),
+            "bus_head_fed": times.get("bus-head-fed"),
+            "red_producing": times.get("red-producing"),
+            "lab_row_consuming": times.get("lab-row-consuming"),
+            "green_producing": times.get("green-producing"),
+        },
+        "rates_last_10m": {
+            "iron_per_min": mean_rate("iron_per_min"),
+            "copper_per_min": mean_rate("copper_per_min"),
+            "red_per_min": mean_rate("red_per_min"),
+            "green_per_min": mean_rate("green_per_min"),
+        },
+        "techs_researched": last.get("techs", 0),
+        "flow_faults_last_30m": last.get("flow_faults_last_30m", 0),
+        "attention_share": att_share,
+        "hand_hauled_last_30m": last.get("hand_hauls_last_30m", 0),
+        "mod_errors": len(errors or []),
+        "autopilot_share": auto_share,
+    }
+
+    return {
+        "bar": bar,
+        "passed": all(bar.values()),
+        "final": {k: last.get(k) for k in ("minute", "goal", "iron_per_min", "copper_per_min", "red_per_min", "techs", "factory_total")},
+        "score": score,
+    }
 
 
 def write_report(out_dir: Path, out: Path, args, samples, bstats, times, ev, errors, stall, notes,
@@ -547,9 +612,9 @@ def main() -> int:
     # Report (the server's script-output is still there until tmp is deleted).
     bstats = bridge_stats(out_dir, args.llm)
     times = milestone_times(samples)
-    ev = evaluate(samples, times)
-    stall = longest_stall(samples)
     errors = mod_errors(out_dir)
+    ev = evaluate(samples, times, bstats=bstats, errors=errors)
+    stall = longest_stall(samples)
     path = write_report(out_dir, out, args, samples, bstats, times, ev, errors, stall, notes, killed_at)
     for name in ("bridge.log", "debug.jsonl", "metrics.jsonl", "errors.log"):
         if (out_dir / name).exists():
