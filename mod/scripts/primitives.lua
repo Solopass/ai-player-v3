@@ -361,9 +361,13 @@ local function action_place(character, action)
     direction = dir,
     force     = character.force,
     player    = nil,
+    type      = action.type,
   }
 
   if entity then
+    if action.type and entity.type == "underground-belt" then
+      pcall(function() entity.belt_to_ground_type = action.type end)
+    end
     inv.remove{name=item_name, count=1}
     -- create_entity does not raise on_built_entity, so register AI placements
     -- with the machine registry directly (no-ops for non-machine items).

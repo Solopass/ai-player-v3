@@ -78,7 +78,14 @@ local function check_inserter(e)
               if ing_map[pr.name] then matches = true; break end
             end
             if not matches then
-              faults[#faults + 1] = {entity = e, kind = "wrong_item", detail = "pickup crafter does not produce any recipe ingredient"}
+              local pnames = {}
+              for _, pr in ipairs(p_proto.products or {}) do pnames[#pnames+1] = tostring(pr.name or pr[1]) end
+              local inames = {}
+              for k, _ in pairs(ing_map) do inames[#inames+1] = tostring(k) end
+              local d = string.format("pickup %s (%s) produces [%s], drop %s (%s) needs [%s]",
+                pickup.name, tostring(p_recipe and p_recipe.name), table.concat(pnames, ", "),
+                crafter.name, tostring(recipe and recipe.name), table.concat(inames, ", "))
+              faults[#faults + 1] = {entity = e, kind = "wrong_item", detail = d}
             end
           end
         elseif pickup and pickup.type == "container" then

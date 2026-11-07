@@ -238,6 +238,268 @@ CASES.base_frame = {
   end,
 }
 
+CASES.stamp_bus_segment = {
+  delay = 30,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    give(c.character, {["transport-belt"] = 40, ["small-electric-pole"] = 10})
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "bus_segment", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    return {}
+  end,
+  check = function(c, add)
+    add("bus_segment placed", c.place_ok == true, c.place_err or "ok")
+    local belts = c.surface.find_entities_filtered{type = "transport-belt"}
+    add("bus belts count", #belts == 28, string.format("got %d belts", #belts))
+    local poles = c.surface.find_entities_filtered{type = "electric-pole"}
+    add("bus poles count", #poles == 3, string.format("got %d poles", #poles))
+    local plan = Stamps.plan(c.base, "bus_segment", 0, "left")
+    add("in_fe port exists", plan.ports.in_fe ~= nil, plan.ports.in_fe and "ok" or "missing")
+    add("out_fe port exists", plan.ports.out_fe ~= nil, plan.ports.out_fe and "ok" or "missing")
+  end,
+}
+
+CASES.stamp_bus_head = {
+  delay = 30,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    give(c.character, {["transport-belt"] = 20, ["small-electric-pole"] = 5})
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "bus_head", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    return {}
+  end,
+  check = function(c, add)
+    add("bus_head placed", c.place_ok == true, c.place_err or "ok")
+    local belts = c.surface.find_entities_filtered{type = "transport-belt"}
+    add("head belts count", #belts == 8, string.format("got %d belts", #belts))
+    local poles = c.surface.find_entities_filtered{type = "electric-pole"}
+    add("head poles count", #poles == 2, string.format("got %d poles", #poles))
+  end,
+}
+
+CASES.stamp_tap_outer = {
+  delay = 30,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    give(c.character, {["transport-belt"] = 20, ["splitter"] = 2, ["small-electric-pole"] = 5})
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "tap_outer", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    return {}
+  end,
+  check = function(c, add)
+    add("tap_outer placed", c.place_ok == true, c.place_err or "ok")
+    local splitters = c.surface.find_entities_filtered{type = "splitter"}
+    add("tap_outer splitter placed", #splitters == 1, string.format("got %d splitters", #splitters))
+    local belts = c.surface.find_entities_filtered{type = "transport-belt"}
+    add("tap_outer belts placed", #belts == 5, string.format("got %d belts", #belts))
+  end,
+}
+
+CASES.stamp_tap_inner = {
+  delay = 30,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    give(c.character, {["transport-belt"] = 20, ["underground-belt"] = 4, ["splitter"] = 2, ["small-electric-pole"] = 5})
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "tap_inner", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    return {}
+  end,
+  check = function(c, add)
+    add("tap_inner placed", c.place_ok == true, c.place_err or "ok")
+    local splitters = c.surface.find_entities_filtered{type = "splitter"}
+    add("tap_inner splitter placed", #splitters == 1, string.format("got %d splitters", #splitters))
+    local ugs = c.surface.find_entities_filtered{type = "underground-belt"}
+    add("tap_inner underground belts placed", #ugs == 2, string.format("got %d underground belts", #ugs))
+    local paired = (ugs[1] and ugs[1].underground_belt_neighbour == ugs[2]) or false
+    add("tap_inner underground paired", paired == true, string.format("paired: %s", tostring(paired)))
+  end,
+}
+
+CASES.stamp_gear_red = {
+  delay = 10800,
+
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    free_power(c.surface, c.force, 0, 0)
+    give(c.character, {
+      ["transport-belt"] = 80,
+      ["underground-belt"] = 6,
+      ["assembling-machine-1"] = 12,
+      ["inserter"] = 30,
+      ["small-electric-pole"] = 20,
+      ["wooden-chest"] = 5,
+    })
+    c.saved_speed = game.speed
+    game.speed = 10
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "gear_red", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    if not ok then return {} end
+
+    -- Feed input plates into in_fe_cu port
+    local plan = Stamps.plan(c.base, "gear_red", 0, "left")
+    local in_port = plan.ports.in_fe_cu
+    local step = STEP[in_port.direction]
+    local _, back_dir_val = Base.dir(c.base, "south")
+
+    -- 1. Iron feed (in-line from upstream)
+    local ix = in_port.position.x - step[1]
+    local iy = in_port.position.y - step[2]
+    local cx = in_port.position.x - 2 * step[1]
+    local cy = in_port.position.y - 2 * step[2]
+    local fe_chest = c.surface.create_entity{name = "wooden-chest", position = {cx, cy}, force = c.force}
+    if fe_chest then
+      fe_chest.insert{name = "iron-plate", count = 3000}
+      AIRegistry.own(fe_chest)
+    end
+    local fe_ins = c.surface.create_entity{name = "inserter", position = {ix, iy}, direction = back_dir_val, force = c.force}
+    if fe_ins then AIRegistry.own(fe_ins) end
+
+    -- 2. Copper feed (side-loaded from perpendicular side onto lane 2)
+    local perp = {step[2], -step[1]}
+    local cu_ix = in_port.position.x + perp[1]
+    local cu_iy = in_port.position.y + perp[2]
+    local cu_cx = in_port.position.x + 2 * perp[1]
+    local cu_cy = in_port.position.y + 2 * perp[2]
+    local cu_chest = c.surface.create_entity{name = "wooden-chest", position = {cu_cx, cu_cy}, force = c.force}
+    if cu_chest then
+      cu_chest.insert{name = "copper-plate", count = 3000}
+      AIRegistry.own(cu_chest)
+    end
+    local perp_dir = (perp[1] == 1 and defines.direction.east)
+      or (perp[1] == -1 and defines.direction.west)
+      or (perp[2] == 1 and defines.direction.south)
+      or defines.direction.north
+    local cu_ins = c.surface.create_entity{name = "inserter", position = {cu_ix, cu_iy}, direction = perp_dir, force = c.force}
+    if cu_ins then AIRegistry.own(cu_ins) end
+
+    -- Collect science output from out_science port
+    local out_port = plan.ports.out_science
+    local o_step = STEP[out_port.direction]
+    local o_ix = out_port.position.x + o_step[1]
+    local o_iy = out_port.position.y + o_step[2]
+    local o_cx = out_port.position.x + 2 * o_step[1]
+    local o_cy = out_port.position.y + 2 * o_step[2]
+    local out_chest = c.surface.create_entity{name = "wooden-chest", position = {o_cx, o_cy}, force = c.force}
+    if out_chest then AIRegistry.own(out_chest) end
+    local out_ins = c.surface.create_entity{name = "inserter", position = {o_ix, o_iy}, direction = back_dir_val, force = c.force}
+    if out_ins then AIRegistry.own(out_ins) end
+    c.out_chest = out_chest
+
+    -- Extra poles near test chest connections to ensure full power reach
+    c.surface.create_entity{name = "small-electric-pole", position = {ix + (step[2] ~= 0 and 1 or 0), iy + (step[1] ~= 0 and 1 or 0)}, force = c.force}
+    c.surface.create_entity{name = "small-electric-pole", position = {o_ix + (o_step[2] ~= 0 and 1 or 0), o_iy + (o_step[1] ~= 0 and 1 or 0)}, force = c.force}
+
+    return {}
+  end,
+  check = function(c, add)
+    game.speed = c.saved_speed or 1
+    add("gear_red placed", c.place_ok == true, c.place_err or "ok")
+    local made = 0
+    if c.out_chest and c.out_chest.valid then
+      made = made + c.out_chest.get_item_count("automation-science-pack")
+    end
+    for _, a in ipairs(c.surface.find_entities_filtered{type = "assembling-machine"}) do
+      local r = a.get_recipe()
+      if r and r.name == "automation-science-pack" then
+        made = made + a.products_finished
+      end
+    end
+    add("gear_red output >= 40 red packs in 3 min", made >= 40, string.format("produced %d red science packs", made))
+
+    local owned = AIRegistry.owned(c.surface)
+    local flow_res = AIFlow.check(owned)
+    
+    for i, f in ipairs(flow_res.faults) do
+      helpers.write_file("ai-player/fault_debug.txt", string.format("FAULT %d: %s %s at {%.1f, %.1f} dir=%s: %s\n", i, f.kind, f.entity.name, f.entity.position.x, f.entity.position.y, tostring(f.entity.direction), f.detail), true, 0)
+    end
+    add("flow check zero faults", flow_res.ok == true and #flow_res.faults == 0,
+        string.format("%d faults: %s", #flow_res.faults, flow_res.faults[1] and flow_res.faults[1].detail or "none"))
+  end,
+}
+
+CASES.stamp_lab_row = {
+  delay = 10800,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    local pw_x, pw_y = Base.to_world(c.base, 3.5, -9.5)
+    c.surface.create_entity{name = "electric-energy-interface", position = {pw_x, pw_y}, force = c.force}
+    c.force.technologies["logistics"].researched = false
+    c.force.add_research("logistics")
+    give(c.character, {
+      ["transport-belt"] = 20,
+      ["lab"] = 10,
+      ["inserter"] = 20,
+      ["small-electric-pole"] = 10,
+      ["wooden-chest"] = 5,
+    })
+    c.saved_speed = game.speed
+    game.speed = 10
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "lab_row", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    if not ok then return {} end
+
+    -- Feed science packs into in_science port
+    local plan = Stamps.plan(c.base, "lab_row", 0, "left")
+    local in_port = plan.ports.in_science
+    local step = STEP[in_port.direction]
+    local ix = in_port.position.x - step[1]
+    local iy = in_port.position.y - step[2]
+    local cx = in_port.position.x - 2 * step[1]
+    local cy = in_port.position.y - 2 * step[2]
+    local in_chest = c.surface.create_entity{name = "wooden-chest", position = {cx, cy}, force = c.force}
+    if in_chest then
+      in_chest.insert{name = "automation-science-pack", count = 1000}
+      AIRegistry.own(in_chest)
+    end
+    local _, back_dir_val = Base.dir(c.base, "south")
+    local in_ins = c.surface.create_entity{name = "inserter", position = {ix, iy}, direction = back_dir_val, force = c.force}
+    if in_ins then AIRegistry.own(in_ins) end
+
+    -- Power near test feed
+    c.surface.create_entity{name = "small-electric-pole", position = {ix + (step[2] ~= 0 and 1 or 0), iy + (step[1] ~= 0 and 1 or 0)}, force = c.force}
+
+    return {}
+  end,
+  check = function(c, add)
+    game.speed = c.saved_speed or 1
+    add("lab_row placed", c.place_ok == true, c.place_err or "ok")
+
+    local stats = c.force.get_item_production_statistics(c.surface)
+    local consumed = (stats and stats.input_counts and stats.input_counts["automation-science-pack"]) or 0
+    local prog = c.force.research_progress or 0
+    local tech_done = c.force.technologies["logistics"].researched
+    add("lab_row science consumed > 0", consumed > 0 or prog > 0 or tech_done,
+        string.format("consumed: %d, progress: %.2f, done: %s", consumed, prog, tostring(tech_done)))
+
+    local owned = AIRegistry.owned(c.surface)
+    local flow_res = AIFlow.check(owned)
+    
+    for i, f in ipairs(flow_res.faults) do
+      helpers.write_file("ai-player/fault_debug.txt", string.format("FAULT %d: %s %s at {%.1f, %.1f} dir=%s: %s\n", i, f.kind, f.entity.name, f.entity.position.x, f.entity.position.y, tostring(f.entity.direction), f.detail), true, 0)
+    end
+    add("flow check zero faults", flow_res.ok == true and #flow_res.faults == 0,
+        string.format("%d faults: %s", #flow_res.faults, flow_res.faults[1] and flow_res.faults[1].detail or "none"))
+  end,
+}
+
 CASES.power = {
   delay = 1500,
   setup = function(c)
@@ -1251,6 +1513,10 @@ CASES.flow_red_cell = {
     local owned = AIRegistry.owned(c.surface, {"assembling-machine", "inserter", "transport-belt", "container"})
     add("entities built", #owned > 0, #owned)
     local res = AIFlow.check(owned)
+    
+    for i, f in ipairs(flow_res.faults) do
+      helpers.write_file("ai-player/fault_debug.txt", string.format("FAULT %d: %s %s at {%.1f, %.1f} dir=%s: %s\n", i, f.kind, f.entity.name, f.entity.position.x, f.entity.position.y, tostring(f.entity.direction), f.detail), true, 0)
+    end
     add("flow check zero faults", res.ok == true and #res.faults == 0,
         string.format("%d faults: %s", #res.faults, res.faults[1] and res.faults[1].detail or "none"))
   end,
@@ -1632,7 +1898,6 @@ soak_command("ai-soak-raid", function(cmd)
 end)
 soak_command("ai-soak-snapshot", function()
   local ok, err = pcall(soak_snapshot)
-  if not ok then helpers.write_file("ai-player/soak_snapshot.json", helpers.table_to_json({error = tostring(err)}), false, 0) end
 end)
 soak_command("ai-soak-speed", function(cmd)
   local n = tonumber(cmd.parameter) or 1

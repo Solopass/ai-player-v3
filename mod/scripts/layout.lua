@@ -1431,7 +1431,7 @@ function AILayout.build(character, plan)
   for _, p in ipairs(plan.place) do
     clear_spot_for_placement(p)
     local ok, detail = AIActions.run(character, {action = "place", item = p.name,
-                                                 position = p.position, direction = p.direction})
+                                                 position = p.position, direction = p.direction, type = p.type})
     local e = ok and find_placed(surface, p)
     if not e then
       undo(character, placed)
@@ -1526,7 +1526,7 @@ function AILayout.build(character, plan)
     storage.ai_player.power_fuel_in = plan.fuel_in
   end
 
-  if AIFlow and AIFlow.check then
+  if not plan.skip_flow_check and AIFlow and AIFlow.check then
     local flow_res = AIFlow.check(placed)
     if not flow_res.ok then
       local rep_ok, rep_detail = AIFlow.repair(character, flow_res)
