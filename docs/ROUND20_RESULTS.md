@@ -152,3 +152,42 @@ return {
 - **Hand-hauled Items (last 30m)**: 0
 - **Mod Errors**: **0**
 - **Regressions**: **0** (All gate criteria satisfied)
+
+---
+
+## Round 20b Step 6: First Run with Build Book ON
+
+### 1. Score Line
+| Date | Commit | Seed | Buildbook | Min | Iron/m | Cu/m | Red/m | FlowFaults | ModErrors | Autopilot% |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-07 12:15 | `a44ec03` | 424242 | ON | 26.6 | 0.0 | 14.6 | 0.0 | 0 | 0 | 35.7% |
+
+### 2. Build-Book Step Reached
+- Reached **Step 1 (`bootstrap`)** at **minute 0.0 / tick 0**.
+- **No subsequent steps reached**: `bootstrap` requires 1 iron miner (`miners.get("iron-ore", 0) >= 1`), but `build_miner` repeatedly failed to place an iron miner because the character was standing at `{-46, 14}` and the nearest iron-ore patch was at `{20, 19}` (distance ~70 tiles, exceeding the 64-tile reach radius of `build_miner`).
+
+### 3. Steps Repeated More Than 5 Times
+- **`bootstrap`**: Repeated continuously across all 114 autopilot turns (over 25 game minutes) due to the iron miner placement distance failure.
+
+### 4. Last 20 Build-Book Moves with Results (`debug.jsonl`)
+- Tick 84096: `tend` (ok=True): tend: collected 1x copper-plate; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 84392: `tend` (ok=True): tend: collected 1x copper-plate, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 86490: `tend` (ok=False): tend: collected nothing; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 86803: `tend` (ok=True): tend: collected 1x copper-plate, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 87100: `tend` (ok=True): tend: collected 1x coal, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 89203: `tend` (ok=True): tend: collected 1x copper-plate, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 89496: `tend` (ok=True): tend: collected 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 89789: `tend` (ok=True): tend: collected 1x coal; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 91891: `tend` (ok=True): tend: collected 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 92178: `build_miner` (ok=False): build_miner: no iron-ore within 64 tiles — nearest patch is at {37,13}, goto it first
+- Tick 92178: `tend` (ok=True): tend: collected 1x coal; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 92502: `build_miner` (ok=False): build_miner: no iron-ore within 64 tiles — nearest patch is at {37,13}, goto it first
+- Tick 92502: `tend` (ok=True): tend: collected 1x copper-plate; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 92791: `tend` (ok=True): tend: collected 1x copper-plate, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 93088: `tend` (ok=True): tend: collected 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 93404: `tend` (ok=True): tend: collected 1x coal; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+- Tick 94598: `build_miner` (ok=False): build_miner: no copper-ore within 64 tiles — nearest patch is at {-30,22}, goto it first
+- Tick 94893: `build_miner` (ok=False): build_miner: no copper-ore within 64 tiles — nearest patch is at {-30,22}, goto it first
+- Tick 95499: `tend` (ok=True): tend: collected 1x coal, 1x stone; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s); picked up 1 drill(s) whose ore ran out
+- Tick 95792: `tend` (ok=True): tend: collected 1x coal; refueled 0, fed 0 furnace(s), fixed 0 spilling drill(s)
+
