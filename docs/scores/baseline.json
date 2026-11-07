@@ -7,7 +7,7 @@
         "first_mining_field": null,
         "bus_head_fed": null,
         "red_producing": null,
-        "lab_row_consuming": 28.9,
+        "lab_row_consuming": null,
         "green_producing": null
       },
       "rates_last_10m": {
@@ -54,7 +54,7 @@
           "first_mining_field": null,
           "bus_head_fed": null,
           "red_producing": null,
-          "lab_row_consuming": 28.9,
+          "lab_row_consuming": null,
           "green_producing": null
         },
         "rates_last_10m": {

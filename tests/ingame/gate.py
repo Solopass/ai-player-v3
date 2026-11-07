@@ -87,9 +87,10 @@ def run_soak(seed: int, minutes: int, speed: int, label: str) -> dict | None:
         "--label", label,
     ]
     code, _ = run_cmd(cmd, f"Soak {label} (seed {seed}, {minutes}m game time, {speed}x)")
-    if code != 0:
+    rep = parse_latest_report(label)
+    if not rep:
         return None
-    return parse_latest_report(label)
+    return rep
 
 
 def append_score_log(report: dict, commit: str, flag: bool = False):

@@ -30,3 +30,56 @@
 
 ### Baseline File
 Locked in `docs/scores/baseline.json`.
+
+---
+
+## Part 1a: Base Frame Coordinate Engine (`baseplan.lua`)
+
+### 1. Pytest Unit Tests
+```
+============================= 146 passed in 4.18s ==============================
+```
+
+### 2. Lua Syntax Check (luaparser)
+```
+=== [GATE] Lua Syntax Check (luaparser) ===
+  PASS: 20 Lua files parsed cleanly with no syntax errors.
+```
+
+### 3. In-Game Self-Test (`base_frame` all 4 facings)
+```
+creating map ...
+PASS base_frame:north
+   ok round-trip u, v -> world -> u, v: all points exact
+   ok dir forward rotates to bus facing: got north, expected north
+   ok assembler placed from frame: pos={3.5, 11.5} dir=0
+   ok splitter placed from frame: pos={8.0, 15.5} dir=0
+PASS base_frame:east
+   ok round-trip u, v -> world -> u, v: all points exact
+   ok dir forward rotates to bus facing: got east, expected east
+   ok assembler placed from frame: pos={18.5, 13.5} dir=0
+   ok splitter placed from frame: pos={14.5, 18.0} dir=4
+PASS base_frame:south
+   ok round-trip u, v -> world -> u, v: all points exact
+   ok dir forward rotates to bus facing: got south, expected south
+   ok assembler placed from frame: pos={16.5, 28.5} dir=0
+   ok splitter placed from frame: pos={12.0, 24.5} dir=8
+PASS base_frame:west
+   ok round-trip u, v -> world -> u, v: all points exact
+   ok dir forward rotates to bus facing: got west, expected west
+   ok assembler placed from frame: pos={1.5, 26.5} dir=0
+   ok splitter placed from frame: pos={5.5, 22.0} dir=12
+4/4 passed
+```
+
+### 4. Quick Gate Soak Run (Seed 424242, 45m game time)
+- **Label**: `gate-quick-b1bfd11`
+- **Game Time**: 45.7 game minutes
+- **Power Milestone**: reached at **minute 2.1** (matches baseline 2.1m)
+- **Iron Rate (last 10m mean)**: 30.0 / min (baseline: 29.9 / min)
+- **Copper Rate (last 10m mean)**: 15.1 / min (baseline: 14.9 / min)
+- **Flow Faults (last 30m)**: **0**
+- **Hand-hauled Items (last 30m)**: 0
+- **Mod Errors**: **0**
+- **Regressions**: **0** (All gate criteria satisfied)
+

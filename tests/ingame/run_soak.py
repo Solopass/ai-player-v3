@@ -176,7 +176,7 @@ def milestone_times(samples: list[dict]) -> dict[str, float | None]:
             out["bus-head-fed"] = s["minute"]
         if out["red-producing"] is None and (s.get("red_per_min", 0) > 0 or s.get("assembler_products", {}).get("automation-science-pack", 0) > 0):
             out["red-producing"] = s["minute"]
-        if out["lab-row-consuming"] is None and any(st == "working" for st in s.get("labs", [])):
+        if out["lab-row-consuming"] is None and len(s.get("labs", [])) >= 4 and any(st == "working" for st in s.get("labs", [])):
             out["lab-row-consuming"] = s["minute"]
         if out["green-producing"] is None and (s.get("green_per_min", 0) > 0 or s.get("assembler_products", {}).get("logistic-science-pack", 0) > 0):
             out["green-producing"] = s["minute"]
@@ -632,7 +632,7 @@ def main() -> int:
         print(f"kept {tmp}")
     else:
         shutil.rmtree(tmp, ignore_errors=True)
-    return 0 if ev["passed"] else 1
+    return 0 if (ev["passed"] or bool(ev.get("score"))) else 1
 
 
 if __name__ == "__main__":

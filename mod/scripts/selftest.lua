@@ -167,6 +167,77 @@ CASES.probe = {
   end,
 }
 
+CASES.base_frame = {
+  delay = 5,
+  setup = function(c)
+    for _, e in ipairs(c.surface.find_entities_filtered{area = {{-40, -40}, {40, 40}}, type = {"tree", "simple-entity"}}) do
+      e.destroy()
+    end
+  end,
+  run = function(c) return {} end,
+  check = function(c, add)
+    local facing = c.facing or "east"
+    local base = {origin = {x = 10, y = 20}, dir = facing}
+
+    -- 1. Round-trip test: u, v -> world -> u, v
+    local test_points = {
+      {u = 0, v = 0},
+      {u = 10, v = 5},
+      {u = 25.5, v = -14.5},
+      {u = 100, v = -30},
+      {u = 5.0, v = -2.0},
+    }
+    local rt_ok = true
+    local rt_err = ""
+    for _, pt in ipairs(test_points) do
+      local wx, wy = Base.to_world(base, pt.u, pt.v)
+      local u2, v2 = Base.to_base(base, wx, wy)
+      if math.abs(pt.u - u2) > 0.001 or math.abs(pt.v - v2) > 0.001 then
+        rt_ok = false
+        rt_err = string.format("roundtrip mismatch for {%s, %s}: got {%s, %s}", pt.u, pt.v, u2, v2)
+        break
+      end
+    end
+    add("round-trip u, v -> world -> u, v", rt_ok, rt_err ~= "" and rt_err or "all points exact")
+
+    -- 2. Direction rotation test
+    local d_fwd_name, d_fwd_val = Base.dir(base, "north")
+    add("dir forward rotates to bus facing", d_fwd_name == facing,
+        string.format("got %s, expected %s", d_fwd_name, facing))
+
+    -- 3. Place an assembler (3x3 odd) and a splitter (2x1 even) from the frame
+    local asm_u, asm_v = 8.5, -6.5
+    local asm_wx, asm_wy = Base.to_world(base, asm_u, asm_v)
+    local asm_dir_name, asm_dir_val = Base.dir(base, "north")
+
+    local asm = c.surface.create_entity{
+      name = "assembling-machine-1",
+      position = {asm_wx, asm_wy},
+      direction = asm_dir_val,
+      force = c.force
+    }
+    local asm_pos_ok = asm and math.abs(asm.position.x - asm_wx) < 0.01 and math.abs(asm.position.y - asm_wy) < 0.01
+    local asm_dir_ok = asm and ((not asm.supports_direction) or asm.direction == asm_dir_val)
+    add("assembler placed from frame", asm ~= nil and asm_pos_ok and asm_dir_ok,
+        asm and string.format("pos={%.1f, %.1f} dir=%s", asm.position.x, asm.position.y, asm.direction) or "failed to place")
+
+    local spl_u, spl_v = 4.5, -2.0
+    local spl_wx, spl_wy = Base.to_world(base, spl_u, spl_v)
+    local spl_dir_name, spl_dir_val = Base.dir(base, "north")
+
+    local spl = c.surface.create_entity{
+      name = "splitter",
+      position = {spl_wx, spl_wy},
+      direction = spl_dir_val,
+      force = c.force
+    }
+    local spl_pos_ok = spl and math.abs(spl.position.x - spl_wx) < 0.01 and math.abs(spl.position.y - spl_wy) < 0.01
+    local spl_dir_ok = spl and spl.direction == spl_dir_val
+    add("splitter placed from frame", spl ~= nil and spl_pos_ok and spl_dir_ok,
+        spl and string.format("pos={%.1f, %.1f} dir=%s", spl.position.x, spl.position.y, spl.direction) or "failed to place")
+  end,
+}
+
 CASES.power = {
   delay = 1500,
   setup = function(c)
