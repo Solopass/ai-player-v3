@@ -129,59 +129,105 @@ function Base.is_forbidden(base, x, y)
   return false
 end
 
---- Scan the 4 cardinal directions from home to find the clearest base corridor
+--- Scan candidate origins at rings from home to find a clear base corridor
 function Base.find_site(surface, home, opts)
   home = home or {x = 0, y = 0}
   opts = opts or {}
-  local facings = {"east", "south", "west", "north"}
-  local best_dir, best_len, best_score = nil, 0, -1
-
+  local character = opts.character
+  local force = opts.force or (character and character.force) or "player"
   local slot_depth = 18
   local total_width = slot_depth + 4 -- 22 tiles across v
-  local max_len = 120
 
-  for _, facing in ipairs(facings) do
-    local base = {origin = home, dir = facing, slot_depth = slot_depth}
-    local valid_len = 0
-    local free_chunks = 0
+  local rings = {24, 40, 56, 72}
+  local facings = {"east", "south", "west", "north"}
+  local angles = {0, 45, 90, 135, 180, 225, 270, 315}
 
-    -- Scan in 10-tile chunks along u from 0 to 120
-    for chunk_u = 0, max_len - 10, 10 do
-      local w1x, w1y = Base.to_world(base, chunk_u, -total_width)
-      local w2x, w2y = Base.to_world(base, chunk_u + 10, 2)
-      local min_x, max_x = math.min(w1x, w2x), math.max(w1x, w2x)
-      local min_y, max_y = math.min(w1y, w2y), math.max(w1y, w2y)
-      local area = {{min_x, min_y}, {max_x, max_y}}
+  local candidate_origins = {}
+  for _, r in ipairs(rings) do
+    for _, deg in ipairs(angles) do
+      local rad = math.rad(deg)
+      local cx = math.floor(home.x + r * math.cos(rad) + 0.5)
+      local cy = math.floor(home.y + r * math.sin(rad) + 0.5)
+      candidate_origins[#candidate_origins + 1] = {x = cx, y = cy, dist2 = r * r}
+    end
+  end
 
-      local water = surface.count_tiles_filtered{area = area, collision_mask = "water_tile"}
-      local cliffs = surface.count_entities_filtered{area = area, name = "cliff"}
-      local player_ents = surface.count_entities_filtered{area = area, force = "player"}
+  local max_origins = math.min(#candidate_origins, 32)
+  local clear_candidates = {}
 
-      -- Block chunk if water or cliffs present, or more than character in the area
-      if water > 0 or cliffs > 0 or player_ents > 2 then
-        break
-      else
-        valid_len = chunk_u + 10
-        free_chunks = free_chunks + 1
+  local function is_corridor_clear(base)
+    -- Corridor area: u from 0 to 60, v from -total_width (-22) to +2
+    local c1x, c1y = Base.to_world(base, 0, -total_width)
+    local c2x, c2y = Base.to_world(base, 60, 2)
+    local area = {
+      {math.min(c1x, c2x), math.min(c1y, c2y)},
+      {math.max(c1x, c2x), math.max(c1y, c2y)}
+    }
+
+    if surface.count_tiles_filtered{area = area, collision_mask = "water_tile"} > 0 then return false end
+    if surface.count_entities_filtered{area = area, name = "cliff"} > 0 then return false end
+    if surface.count_entities_filtered{area = area, type = "resource"} > 0 then return false end
+
+    local ents = surface.find_entities_filtered{area = area, force = force}
+    for _, e in ipairs(ents) do
+      if e.valid and e.type ~= "character" and e ~= character then
+        return false
       end
     end
 
-    if valid_len >= 60 and free_chunks > best_score then
-      best_score = free_chunks
-      best_dir = facing
-      best_len = valid_len
+    -- 6x6 approach area in front of bus head: u from -6 to 0, v from -4 to +2
+    local a1x, a1y = Base.to_world(base, -6, -4)
+    local a2x, a2y = Base.to_world(base, 0, 2)
+    local aarea = {
+      {math.min(a1x, a2x), math.min(a1y, a2y)},
+      {math.max(a1x, a2x), math.max(a1y, a2y)}
+    }
+
+    if surface.count_tiles_filtered{area = aarea, collision_mask = "water_tile"} > 0 then return false end
+    if surface.count_entities_filtered{area = aarea, name = "cliff"} > 0 then return false end
+    if surface.count_entities_filtered{area = aarea, type = "resource"} > 0 then return false end
+
+    local aents = surface.find_entities_filtered{area = aarea, force = force}
+    for _, e in ipairs(aents) do
+      if e.valid and e.type ~= "character" and e ~= character then
+        return false
+      end
+    end
+
+    return true
+  end
+
+  for i = 1, max_origins do
+    local pt = candidate_origins[i]
+    for _, facing in ipairs(facings) do
+      local cand_base = {origin = {x = pt.x, y = pt.y}, dir = facing, slot_depth = slot_depth}
+      if is_corridor_clear(cand_base) then
+        clear_candidates[#clear_candidates + 1] = {
+          origin = {x = pt.x, y = pt.y},
+          dir = facing,
+          dist2 = pt.dist2,
+        }
+        if #clear_candidates >= 12 then
+          break
+        end
+      end
+    end
+    if #clear_candidates >= 12 then
+      break
     end
   end
 
-  if not best_dir then
-    best_dir = "east"
-    best_len = 60
+  if #clear_candidates == 0 then
+    return nil, "no clear base corridor found"
   end
 
+  table.sort(clear_candidates, function(a, b) return a.dist2 < b.dist2 end)
+  local best = clear_candidates[1]
+
   local site_base = {
-    origin = home,
-    dir = best_dir,
-    length = best_len,
+    origin = best.origin,
+    dir = best.dir,
+    length = 60,
     slot_depth = slot_depth,
     slots = {},
     state = "planned"

@@ -2362,9 +2362,10 @@ local function skill_build_base(character, p)
   p = p or {}
   local surface = character.surface
   local home = (storage.ai_player and storage.ai_player.home) or character.position
-  local base = Base.find_site(surface, home, p)
+  local opts = {character = character, force = character.force}
+  local base, err = Base.find_site(surface, home, opts)
   if not base then
-    return false, "build_base: unable to find suitable base corridor"
+    return false, "build_base: unable to find suitable base corridor (" .. tostring(err) .. ")"
   end
   storage.ai_player = storage.ai_player or {}
   storage.ai_player.base = base

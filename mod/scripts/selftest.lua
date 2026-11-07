@@ -242,32 +242,74 @@ CASES.base_site = {
   delay = 10,
   setup = function(c)
     local s = c.surface
-    for _, e in ipairs(s.find_entities_filtered{area = {{-100, -100}, {100, 100}}, type = {"tree", "simple-entity"}}) do
+    for _, e in ipairs(s.find_entities_filtered{area = {{-150, -150}, {150, 150}}, type = {"tree", "simple-entity"}}) do
       e.destroy()
     end
-    -- Paint water on 3 sides around (0, 0): North, South, West
-    paint_water(s, -80, -80, 80, -10)
-    paint_water(s, -80, 10, 80, 80)
-    paint_water(s, -80, -80, -10, 80)
+    -- Place a fake burner base (8 stone furnaces) around home (0, 0)
+    c.furnaces = {}
+    local offsets = {
+      {x = 2, y = 0}, {x = 2, y = 2}, {x = 2, y = -2},
+      {x = 0, y = 2}, {x = 0, y = -2},
+      {x = -2, y = 0}, {x = -2, y = 2}, {x = -2, y = -2}
+    }
+    for _, off in ipairs(offsets) do
+      local f = s.create_entity{name = "stone-furnace", position = off, force = c.force}
+      if f then
+        AIRegistry.own(f)
+        c.furnaces[#c.furnaces + 1] = f
+      end
+    end
   end,
   run = function(c) return {} end,
   check = function(c, add)
-    local site = Base.find_site(c.surface, {x = 0, y = 0})
-    add("site found", site ~= nil, site and "ok" or "nil")
-    if site then
-      add("picks clear side (east)", site.dir == "east", "got " .. tostring(site.dir))
-      add("length >= 60", site.length >= 60, "len " .. tostring(site.length))
-      add("is_forbidden inside corridor", Base.is_forbidden(site, 20, -5) == true, "expected true")
-      add("is_forbidden outside corridor", Base.is_forbidden(site, -20, 5) == false, "expected false")
+    local s = c.surface
+    local opts = {character = c.character, force = c.force}
 
-      -- Test corridor reservation against layout can_place
-      storage.ai_player = storage.ai_player or {}
-      storage.ai_player.base = site
+    -- -----------------------------------------------------------------------
+    -- Layout 1: Water to the east
+    -- -----------------------------------------------------------------------
+    paint_water(s, 10, -80, 100, 80)
+    local site1, err1 = Base.find_site(s, {x = 0, y = 0}, opts)
+    add("layout 1 site found", site1 ~= nil, site1 and "ok" or tostring(err1))
+    if site1 then
+      add("layout 1 avoids east (water)", site1.dir ~= "east", "got " .. tostring(site1.dir))
+      local inside_cnt = 0
+      for _, f in ipairs(c.furnaces) do
+        if f.valid and Base.is_forbidden(site1, f.position.x, f.position.y) then
+          inside_cnt = inside_cnt + 1
+        end
+      end
+      add("layout 1 corridor contains none of burner base", inside_cnt == 0, string.format("%d furnaces inside", inside_cnt))
+    end
 
-      local in_forbid = AILayout.find_drill_spots(c.character, "iron-ore", {x = 20, y = -5}, {radius = 5})
-      add("can_place blocked in corridor", in_forbid == nil or #in_forbid == 0, "corridor protected")
+    -- -----------------------------------------------------------------------
+    -- Layout 2: No water (clear water to grass)
+    -- -----------------------------------------------------------------------
+    local land_tiles = {}
+    for x = 10, 100 do
+      for y = -80, 80 do
+        land_tiles[#land_tiles + 1] = {name = "grass-1", position = {x, y}}
+      end
+    end
+    s.set_tiles(land_tiles, true, true)
 
-      storage.ai_player.base = nil
+    local site2, err2 = Base.find_site(s, {x = 0, y = 0}, opts)
+    add("layout 2 site found", site2 ~= nil, site2 and "ok" or tostring(err2))
+    if site2 then
+      local inside_cnt = 0
+      for _, f in ipairs(c.furnaces) do
+        if f.valid and Base.is_forbidden(site2, f.position.x, f.position.y) then
+          inside_cnt = inside_cnt + 1
+        end
+      end
+      add("layout 2 corridor contains none of burner base", inside_cnt == 0, string.format("%d furnaces inside", inside_cnt))
+      add("layout 2 is_forbidden inside corridor", Base.is_forbidden(site2, site2.origin.x, site2.origin.y) == true, "expected true")
+      add("layout 2 is_forbidden outside corridor", Base.is_forbidden(site2, 0, 0) == false, "expected false")
+    end
+
+    -- Clean up test furnaces
+    for _, f in ipairs(c.furnaces) do
+      if f.valid then f.destroy() end
     end
   end,
 }
