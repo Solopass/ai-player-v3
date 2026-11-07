@@ -11,6 +11,7 @@
 
 local Base = require("scripts.baseplan")
 local Stamps = require("scripts.stamps")
+local StampsVerified = require("scripts.stamps_verified")
 
 AISkills = {}
 
@@ -501,18 +502,11 @@ local function skill_build_ghosts(character, _)
       local item = proto and proto.items_to_place_this and proto.items_to_place_this[1]
         and proto.items_to_place_this[1].name
       if item and inv.get_item_count(item) > 0 then
-        -- NB: do NOT teleport the character to the ghost first. Ghosts have no
-        -- collision box, so find_non_colliding_position returns the ghost's own
-        -- tile; teleporting there makes the CHARACTER block the spot and revive()
-        -- fails. revive() is a force-level op and needs no character reach.
-        -- Only the AI's own ghosts (placed by script, so no last_user) become AI-owned.
-        -- A player's ghost stays the player's even when the AI builds it, so tend
-        -- never empties or refuels the player's blueprint builds.
         local ai_ghost = g.last_user == nil
         local function claim(e)
           if ai_ghost and e and e.valid then e.last_user = nil; AIRegistry.own(e) end
         end
-        local _, ent = g.revive{raise_revive = false}
+        local cols, ent = g.revive{raise_revive = false}
         claim(ent)
         if not (ent and ent.valid) then
           -- The character may be standing ON this ghost (e.g. its home tile).
@@ -1590,7 +1584,7 @@ local function skill_connect_ports(character, p)
       local f = nil
 
       -- Check for field:<resource> (e.g. field:iron-ore)
-      local res_match = (type(spec) == "string" and spec:match("^field:([%a%-]+)$"))
+      local res_match = (type(spec) == "string" and spec:match("^field:(.+)$"))
       if res_match and not tonumber(res_match) then
         for i = #fields, 1, -1 do
           if fields[i].resource == res_match and fields[i].ports and (fields[i].ports[port_name] or fields[i].ports.plate_output) then
@@ -2459,8 +2453,7 @@ local function skill_place_stamp(character, p)
   local stamp_name = p.stamp or p.name
   if not stamp_name then return false, "place_stamp: 'stamp' or 'name' is required" end
 
-  local ok_v, verified = pcall(require, "scripts.stamps_verified")
-  if not (ok_v and verified and verified[stamp_name] == true) then
+  if not (StampsVerified and StampsVerified[stamp_name] == true) then
     return false, string.format("place_stamp: stamp %s not verified", stamp_name)
   end
 

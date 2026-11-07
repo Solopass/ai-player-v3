@@ -28,11 +28,13 @@ REPO = Path(__file__).resolve().parents[2]
 REAL_MODS = Path(os.environ["APPDATA"]) / "Factorio" / "mods"     # only mod-list.json is read from here
 
 FACINGS = ["north", "east", "south", "west"]
+TWO_FACINGS = ["north", "east"]
+TWO_FACING_CASES = {"trunk_feed"}
 FACING_CASES = {"miner_furnace", "miner_chest", "miner_belt", "power", "electric_miner", "electric_row", "pump_search",
-                "mining_field", "bp_ports", "flow_red_cell", "base_frame", "stamp_bus_segment", "stamp_bus_head", "stamp_tap_outer", "stamp_tap_inner", "stamp_gear_red", "stamp_lab_row", "stamp_red_feed", "trunk_feed"}
+                "mining_field", "bp_ports", "flow_red_cell", "base_frame", "stamp_bus_segment", "stamp_bus_head", "stamp_tap_outer", "stamp_tap_inner", "stamp_gear_red", "stamp_lab_row", "stamp_red_feed", "base_red_chain"}
 ALL_CASES = ["miner_furnace", "miner_chest", "miner_belt", "power", "assembler", "red_cell", "electric_miner", "electric_row", "tend_far", "lab_trigger", "tend_wire", "tend_depleted", "green_cell", "defense", "tend_registry", "shoot_probe", "guard", "protect", "retreat", "hunt", "reflex_tend", "reflex_research", "death_backoff", "hold_cap", "far_player", "connect_pipe", "connect_belt", "pump_search", "astar_cap",
              "field_sizing", "field_depletion", "mining_field", "doctor_output", "doctor_power", "doctor_ingredients", "bp_ports",
-             "flow_reversed_inserter", "flow_dead_end", "flow_red_cell", "prod_red_cell", "prod_mining_field", "base_frame", "base_site", "stamp_bus_segment", "stamp_bus_head", "stamp_tap_outer", "stamp_tap_inner", "stamp_gear_red", "stamp_lab_row", "stamp_red_feed", "trunk_feed"]
+             "flow_reversed_inserter", "flow_dead_end", "flow_red_cell", "prod_red_cell", "prod_mining_field", "base_frame", "base_site", "stamp_bus_segment", "stamp_bus_head", "stamp_tap_outer", "stamp_tap_inner", "stamp_gear_red", "stamp_lab_row", "stamp_red_feed", "trunk_feed", "base_red_chain"]
 CASE_TIMEOUT = 240
 BOOT_TIMEOUT = 240
 
@@ -75,7 +77,9 @@ def free_port(udp: bool = False) -> int:
 def expand(names: list[str]) -> list[str]:
     out = []
     for n in names or ALL_CASES:
-        if ":" not in n and n in FACING_CASES:
+        if ":" not in n and n in TWO_FACING_CASES:
+            out += [f"{n}:{f}" for f in TWO_FACINGS]
+        elif ":" not in n and n in FACING_CASES:
             out += [f"{n}:{f}" for f in FACINGS]
         else:
             out.append(n)

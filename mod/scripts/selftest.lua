@@ -315,144 +315,318 @@ CASES.base_site = {
 }
 
 CASES.trunk_feed = {
-  delay = 1200,
+  delay = 10800, -- 3 game minutes
   setup = function(c)
     c.saved_speed = game.speed
-    game.speed = 5
-    local facing = c.facing or "east"
+    game.speed = 15
+    local facing = c.facing or "north"
     c.base = {origin = {x = 0, y = 0}, dir = facing, length = 60}
     c.base.forbidden = Base.get_forbidden(c.base)
     storage.ai_player = storage.ai_player or {}
     storage.ai_player.base = c.base
+    storage.ai_player.placed_stamps = {}
+    storage.ai_player.base_links = {}
+    storage.ai_player.fields = {}
 
-    for _, e in ipairs(c.surface.find_entities_filtered{area = {{-80, -80}, {80, 80}}, type = {"tree", "simple-entity"}}) do
+    for _, e in ipairs(c.surface.find_entities_filtered{area = {{-100, -100}, {100, 100}}, type = {"tree", "simple-entity"}}) do
       e.destroy()
     end
 
+    -- Teleport character away from building spots
+    c.character.teleport({-50, -50})
+
     give(c.character, {
-      ["transport-belt"] = 150,
-      ["small-electric-pole"] = 30,
-      ["inserter"] = 10,
-      ["iron-chest"] = 5,
-      ["iron-plate"] = 200,
+      ["electric-mining-drill"] = 10,
+      ["stone-furnace"] = 10,
+      ["transport-belt"] = 300,
+      ["underground-belt"] = 50,
+      ["splitter"] = 20,
+      ["inserter"] = 50,
+      ["small-electric-pole"] = 50,
+      ["iron-chest"] = 10,
+      coal = 100,
     })
 
-    -- Place bus_head at u = 0
-    local ok, err = Stamps.place(c.character, c.base, "bus_head", 0, "left")
-    c.head_ok, c.head_err = ok, err
-
-    -- Feed plate source outside corridor at u = -16.5, v = -1.5
-    local src_wx, src_wy = Base.to_world(c.base, -16.5, -1.5)
-    local src_chest = c.surface.create_entity{
-      name = "iron-chest",
-      position = {src_wx, src_wy},
-      force = c.force
-    }
-    src_chest.insert{name = "iron-plate", count = 100}
-
-    -- Output belt tile of the source at u = -14.5, v = -1.5
-    local b_wx, b_wy = Base.to_world(c.base, -14.5, -1.5)
-    local _, fwd_val = Base.dir(c.base, "north")
-    c.surface.create_entity{
-      name = "transport-belt",
-      position = {b_wx, b_wy},
-      direction = fwd_val,
-      force = c.force
-    }
-
-    -- Inserter picks up from chest at -16.5 (south in base frame) and drops to -14.5 (north in base frame)
-    local _, ins_pickup_dir = Base.dir(c.base, "south")
-    local ins_wx, ins_wy = Base.to_world(c.base, -15.5, -1.5)
-    local ins = c.surface.create_entity{
-      name = "inserter",
-      position = {ins_wx, ins_wy},
-      direction = ins_pickup_dir,
-      force = c.force
-    }
-
-    -- Power pole directly beside the inserter (at v = 0.5, 2 tiles from v = -1.5)
-    local pw_wx, pw_wy = Base.to_world(c.base, -15.5, 0.5)
-    local pole = c.surface.create_entity{
-      name = "small-electric-pole",
-      position = {pw_wx, pw_wy},
-      force = c.force
-    }
-    local eei_wx, eei_wy = Base.to_world(c.base, -15.5, 2.5)
+    -- Power EEI next to bus head pole
+    local eei_wx, eei_wy = Base.to_world(c.base, 0.5, 3.5)
     c.surface.create_entity{
       name = "electric-energy-interface",
       position = {eei_wx, eei_wy},
       force = c.force
     }
-
-    -- Register field in storage.ai_player.fields
-    storage.ai_player.fields = {
-      {
-        id = 1,
-        resource = "iron-ore",
-        position = {x = src_wx, y = src_wy},
-        plate_output = {x = b_wx, y = b_wy},
-        direction = fwd_val,
-        ports = {
-          plate_output = {x = b_wx, y = b_wy, dir = fwd_val, kind = "belt", item = "iron-plate"},
-          plate_out = {x = b_wx, y = b_wy, dir = fwd_val, kind = "belt", item = "iron-plate"}
-        }
-      }
+    local p_wx, p_wy = Base.to_world(c.base, 0.5, 1.5)
+    c.surface.create_entity{
+      name = "small-electric-pole",
+      position = {p_wx, p_wy},
+      force = c.force
     }
+
+    -- Place bus stamps to form bus belt up to u = 10.5
+    local ok1, err1 = Stamps.place(c.character, c.base, "bus_head", 0, "left")
+    local ok2, err2 = Stamps.place(c.character, c.base, "tap_inner", 4, "left")
+    local ok3, err3 = Stamps.place(c.character, c.base, "tap_outer", 8, "left")
+    local ok4, err4 = Stamps.place(c.character, c.base, "bus_segment", 10, "left")
+    c.stamps_ok = ok1 and ok2 and ok3 and ok4
+    c.stamps_err = err1 or err2 or err3 or err4
+
+    -- Paint iron-ore and coal patches in front of bus head
+    local ore_wx, ore_wy = Base.to_world(c.base, -16, -1.5)
+    paint_ore(c.surface, "iron-ore", ore_wx, ore_wy, 4, 2000)
+
+    -- Coal patch positioned behind iron patch (along -u, away from bus head)
+    local coal_wx, coal_wy = Base.to_world(c.base, -28, -1.5)
+    paint_ore(c.surface, "coal", coal_wx, coal_wy, 6, 1000)
+
+    -- Connect power pole line from bus head pole (0.5, 0.5) to patch
+    for _, u_p in ipairs({-0.5, -5.5, -11.5, -16.5, -21.5, -26.5}) do
+      local pwx, pwy = Base.to_world(c.base, u_p, 0.5)
+      c.surface.create_entity{name = "small-electric-pole", position = {pwx, pwy}, force = c.force}
+    end
+
+    -- Position character near the patch so build_miner centers there
+    c.character.teleport({ore_wx, ore_wy})
+
+    AILayout.only_facing = facing
   end,
   run = function(c)
     return {
       {
-        skill = "connect_ports",
-        from_bp = {kind = "field", id = 1},
-        from_port = "plate_out",
-        to_bp = "base",
-        to_port = "in_fe",
-        underground = true
+        skill = "build_miner",
+        resource = "iron-ore",
+        output = "field",
+        plate_belt = true,
+        count = 2,
       },
       {
-        skill = "build_ghosts"
-      }
+        skill = "connect_ports",
+        from_bp = "field:iron-ore",
+        from_port = "plate_output",
+        to_bp = "base",
+        to_port = "in_fe",
+        underground = true,
+      },
     }
   end,
   check = function(c, add)
-    add("bus_head placed", c.head_ok == true, c.head_err or "ok")
-    add("connect_ports ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
-
-    -- Check if plates reached the bus_head out_fe port (at u = 3.5, v = -1.5)
-    local out_wx, out_wy = Base.to_world(c.base, 3.5, -1.5)
-    local out_belt = c.surface.find_entities_filtered{
-      position = {out_wx, out_wy},
-      name = "transport-belt",
-      limit = 1
-    }[1]
-
-    local chest_plates, ins_plates, belt_plates = 0, 0, 0
-    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
-      chest_plates = chest_plates + ch.get_item_count("iron-plate")
-    end
-    for _, i in ipairs(c.surface.find_entities_filtered{type = "inserter"}) do
-      if i.held_stack and i.held_stack.valid_for_read then
-        ins_plates = ins_plates + i.held_stack.count
-      end
-    end
-    for _, b in ipairs(c.surface.find_entities_filtered{type = "transport-belt"}) do
-      for line = 1, b.get_max_transport_line_index() do
-        belt_plates = belt_plates + b.get_transport_line(line).get_item_count("iron-plate")
-      end
-    end
-    add("diagnostic plates", true, string.format("chest=%d, ins=%d, belts=%d", chest_plates, ins_plates, belt_plates))
-
-    local plates_on_out = 0
-    if out_belt then
-      for i = 1, out_belt.get_max_transport_line_index() do
-        plates_on_out = plates_on_out + out_belt.get_transport_line(i).get_item_count("iron-plate")
-      end
-    end
-    add("plates reached out_fe bus belt", plates_on_out > 0, string.format("plates: %d", plates_on_out))
-
     game.speed = c.saved_speed or 1
+    AILayout.only_facing = nil
+    add("bus stamps placed", c.stamps_ok == true, c.stamps_err or "ok")
+    add("build_miner ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+    add("connect_ports ok", c.results[2] and c.results[2].ok, c.results[2] and c.results[2].detail)
+
+    for _, ins in ipairs(c.surface.find_entities_filtered{type = "inserter"}) do
+      log(string.format("TRUNK_FEED INSERTER at {%.1f, %.1f}: energy=%f, status=%s, held=%s, pickup=%s, drop=%s",
+        ins.position.x, ins.position.y, ins.energy, tostring(ins.status),
+        ins.held_stack and ins.held_stack.valid_for_read and ins.held_stack.name or "none",
+        ins.pickup_target and ins.pickup_target.name or "nil",
+        ins.drop_target and ins.drop_target.name or "nil"))
+    end
+    local ghosts = c.surface.find_entities_filtered{type = "entity-ghost"}
+    log(string.format("TRUNK_FEED remaining ghosts: %d", #ghosts))
+
+    -- Assert iron plates reach the bus belt at u = 10.5 within 3 game minutes
+    local bus_wx, bus_wy = Base.to_world(c.base, 10.5, -1.5)
+    local bus_belts = c.surface.find_entities_filtered{position = {bus_wx, bus_wy}, name = "transport-belt"}
+    local bus_belt = bus_belts[1]
+    add("bus belt at u=10.5 exists", bus_belt ~= nil and bus_belt.valid, bus_belt and "valid" or "missing")
+    local plates = 0
+    if bus_belt and bus_belt.valid then
+      plates = bus_belt.get_transport_line(1).get_item_count("iron-plate")
+             + bus_belt.get_transport_line(2).get_item_count("iron-plate")
+    end
+    add("iron plates reached bus at u=10.5", plates > 0, string.format("%d plates", plates))
+
     storage.ai_player.base = nil
     storage.ai_player.fields = nil
+  end,
+}
+
+CASES.base_red_chain = {
+  delay = 14400, -- 4 game minutes
+  setup = function(c)
+    local facing = c.facing or "north"
+    c.saved_speed = game.speed
+    game.speed = 15
+
+    c.base = {origin = {x = 0, y = 0}, dir = facing, length = 60}
+    c.base.forbidden = Base.get_forbidden(c.base)
+    storage.ai_player = storage.ai_player or {}
+    storage.ai_player.base = c.base
+    storage.ai_player.placed_stamps = {}
+    storage.ai_player.base_links = {}
+
+    for _, e in ipairs(c.surface.find_entities_filtered{area = {{-100, -100}, {100, 100}}, type = {"tree", "simple-entity"}}) do
+      e.destroy()
+    end
+
+    -- Teleport character away from base corridor so it never blocks placement
+    c.character.teleport({-50, -50})
+
+    give(c.character, {
+      ["transport-belt"] = 400,
+      ["underground-belt"] = 50,
+      ["splitter"] = 20,
+      ["small-electric-pole"] = 50,
+      ["inserter"] = 50,
+      ["assembling-machine-1"] = 20,
+      ["lab"] = 20,
+    })
+
+    -- Power whole base and bus head via free_power well clear of corridor
+    local fp_wx, fp_wy = Base.to_world(c.base, 0.5, 6.5)
+    free_power(c.surface, c.force, fp_wx, fp_wy)
+    local pwx, pwy = Base.to_world(c.base, 0.5, 3.5)
+    c.surface.create_entity{name = "small-electric-pole", position = {pwx, pwy}, force = c.force}
+
+    -- Wire into feeder inserters south of bus head
+    local p_cu_wx, p_cu_wy = Base.to_world(c.base, -0.5, 0.5)
+    c.surface.create_entity{name = "small-electric-pole", position = {p_cu_wx, p_cu_wy}, force = c.force}
+    local p_fe_wx, p_fe_wy = Base.to_world(c.base, -0.5, -2.5)
+    c.surface.create_entity{name = "small-electric-pole", position = {p_fe_wx, p_fe_wy}, force = c.force}
+
+    -- Red-only tech research
+    local tech = c.force.technologies["logistics"]
+    if tech then
+      tech.researched = false
+      c.force.add_research(tech)
+    end
+
+    -- Direction values
+    local _, fwd_dir = Base.dir(c.base, "north")
+    local _, to_fe_dir = Base.dir(c.base, "west") -- drops towards +v (v=-1.5) from chest at v=-3.5
+    local _, to_cu_dir = Base.dir(c.base, "east") -- drops towards -v (v=-0.5) from chest at v=1.5
+
+    -- Fe belts at u = -0.5, -1.5, -2.5, v = -1.5
+    for _, u_val in ipairs({-0.5, -1.5, -2.5}) do
+      local wx, wy = Base.to_world(c.base, u_val, -1.5)
+      c.surface.create_entity{name = "transport-belt", position = {wx, wy}, direction = fwd_dir, force = c.force}
+    end
+
+    -- Fe feed inserters and chests
+    for _, u_val in ipairs({-1.5, -2.5}) do
+      local i_wx, i_wy = Base.to_world(c.base, u_val, -2.5)
+      c.surface.create_entity{name = "fast-inserter", position = {i_wx, i_wy}, direction = to_fe_dir, force = c.force}
+      local ch_wx, ch_wy = Base.to_world(c.base, u_val, -3.5)
+      local ch = c.surface.create_entity{name = "iron-chest", position = {ch_wx, ch_wy}, force = c.force}
+      if ch then ch.insert{name = "iron-plate", count = 5000} end
+    end
+
+    -- Cu belts at u = -0.5, -1.5, -2.5, v = -0.5
+    for _, u_val in ipairs({-0.5, -1.5, -2.5}) do
+      local wx, wy = Base.to_world(c.base, u_val, -0.5)
+      c.surface.create_entity{name = "transport-belt", position = {wx, wy}, direction = fwd_dir, force = c.force}
+    end
+
+    -- Cu feed inserters and chests
+    for _, u_val in ipairs({-1.5, -2.5}) do
+      local i_wx, i_wy = Base.to_world(c.base, u_val, 0.5)
+      c.surface.create_entity{name = "fast-inserter", position = {i_wx, i_wy}, direction = to_cu_dir, force = c.force}
+      local ch_wx, ch_wy = Base.to_world(c.base, u_val, 1.5)
+      local ch = c.surface.create_entity{name = "iron-chest", position = {ch_wx, ch_wy}, force = c.force}
+      if ch then ch.insert{name = "copper-plate", count = 5000} end
+    end
+  end,
+  run = function(c)
+    return {
+      {skill = "place_stamp", stamp = "bus_head", at_u = 0, side = "left"},
+      {skill = "place_stamp", stamp = "tap_inner", at_u = 4, side = "left"},
+      {skill = "place_stamp", stamp = "tap_outer", at_u = 8, side = "left"},
+      {skill = "place_stamp", stamp = "bus_segment", at_u = 10, side = "left"},
+      {skill = "place_stamp", stamp = "bus_segment", at_u = 24, side = "left"},
+      {skill = "place_stamp", stamp = "red_feed", at_u = 6, side = "left"},
+      {skill = "place_stamp", stamp = "gear_red", at_u = 9, side = "left"},
+      {skill = "place_stamp", stamp = "lab_row", at_u = 23, side = "left"},
+      {skill = "connect_ports", from_bp = "gear_red", from_port = "out_science", to_bp = "lab_row", to_port = "in_science", underground = true},
+    }
+  end,
+  check = function(c, add)
+    game.speed = c.saved_speed or 1
+
+    for _, ins in ipairs(c.surface.find_entities_filtered{type = "inserter"}) do
+      log(string.format("BASE_RED INSERTER at {%.1f, %.1f}: energy=%f, status=%s, held=%s, pickup=%s, drop=%s",
+        ins.position.x, ins.position.y, ins.energy, tostring(ins.status),
+        ins.held_stack and ins.held_stack.valid_for_read and ins.held_stack.name or "none",
+        ins.pickup_target and ins.pickup_target.name or "nil",
+        ins.drop_target and ins.drop_target.name or "nil"))
+    end
+    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
+      local cnt = ch.get_inventory(defines.inventory.chest) and ch.get_inventory(defines.inventory.chest).get_item_count() or 0
+      log(string.format("BASE_RED CHEST at {%.1f, %.1f}: items=%d", ch.position.x, ch.position.y, cnt))
+    end
+    local fe_pos = {Base.to_world(c.base, -0.5, -1.5)}
+    for _, b in ipairs(c.surface.find_entities_filtered{position = fe_pos, name = "transport-belt"}) do
+      log(string.format("FE FEED BELT (-0.5, -1.5) L1=%d, L2=%d",
+        b.get_transport_line(1).get_item_count("iron-plate"), b.get_transport_line(2).get_item_count("iron-plate")))
+    end
+    local cu_pos = {Base.to_world(c.base, -0.5, -0.5)}
+    for _, b in ipairs(c.surface.find_entities_filtered{position = cu_pos, name = "transport-belt"}) do
+      log(string.format("CU FEED BELT (-0.5, -0.5) L1=%d, L2=%d",
+        b.get_transport_line(1).get_item_count("copper-plate"), b.get_transport_line(2).get_item_count("copper-plate")))
+    end
+
+    -- 1. All moves ok
+    local all_skills_ok = true
+    local fail_detail = nil
+    for idx, r in ipairs(c.results or {}) do
+      if not r.ok then
+        all_skills_ok = false
+        fail_detail = string.format("move %d failed: %s", idx, tostring(r.detail))
+        break
+      end
+    end
+    add("all skills succeeded", all_skills_ok, fail_detail or (#c.results .. " moves ok"))
+
+    -- 2. Lanes at S (9.5, -4.5)
+    local s_wx, s_wy = Base.to_world(c.base, 9.5, -4.5)
+    local s_belts = c.surface.find_entities_filtered{position = {s_wx, s_wy}, name = "transport-belt"}
+    local s_belt = s_belts[1]
+    add("belt at S exists", s_belt ~= nil and s_belt.valid, s_belt and "valid" or "missing")
+    if s_belt and s_belt.valid then
+      local l1_fe = s_belt.get_transport_line(1).get_item_count("iron-plate")
+      local l1_cu = s_belt.get_transport_line(1).get_item_count("copper-plate")
+      local l2_fe = s_belt.get_transport_line(2).get_item_count("iron-plate")
+      local l2_cu = s_belt.get_transport_line(2).get_item_count("copper-plate")
+      local separated = ((l1_cu == 0 and l2_fe == 0) or (l1_fe == 0 and l2_cu == 0))
+      local has_items = (l1_fe + l2_fe > 0) and (l1_cu + l2_cu > 0)
+      add("lanes at S separated", separated and has_items,
+          string.format("L1: Fe=%d Cu=%d, L2: Fe=%d Cu=%d", l1_fe, l1_cu, l2_fe, l2_cu))
+    end
+
+    -- 3. gear_red produced >= 40 automation science packs
+    local red_packs = 0
+    for _, a in ipairs(c.surface.find_entities_filtered{name = "assembling-machine-1", force = c.force}) do
+      local r = a.get_recipe()
+      if r and r.name == "automation-science-pack" then
+        red_packs = red_packs + a.products_finished
+      end
+    end
+    add("gear_red produced >= 40 science", red_packs >= 40, tostring(red_packs) .. " packs")
+
+    -- 4. Labs consumed or hold science
+    local lab_science = 0
+    for _, lab in ipairs(c.surface.find_entities_filtered{name = "lab", force = c.force}) do
+      local inv = lab.get_inventory(defines.inventory.lab_input)
+      if inv then lab_science = lab_science + inv.get_item_count("automation-science-pack") end
+    end
+    local prog = (c.force.current_research and c.force.research_progress) or 0
+    local researched = c.force.technologies["logistics"] and c.force.technologies["logistics"].researched
+    local res_ok = prog > 0 or lab_science > 0 or (researched == true)
+    add("labs consumed or hold science", res_ok == true,
+        string.format("progress=%.2f, in_labs=%d, researched=%s",
+          prog, lab_science, tostring(researched)))
+
+    -- 5. AIFlow.check on owned entities: 0 faults
+    local owned = AIRegistry.owned(c.surface)
+    local flow_res = AIFlow.check(owned)
+    for _, f in ipairs(flow_res.faults or {}) do
+      log(string.format("BASE_RED FLOW FAULT: kind=%s, ent=%s at {%.1f, %.1f}", f.kind, f.entity and f.entity.name or "nil", f.pos and f.pos.x or 0, f.pos and f.pos.y or 0))
+    end
+    add("AIFlow zero faults on owned entities", flow_res.ok and #flow_res.faults == 0,
+        string.format("%d faults", #flow_res.faults))
+
+    storage.ai_player.base = nil
+    storage.ai_player.placed_stamps = nil
+    storage.ai_player.base_links = nil
   end,
 }
 

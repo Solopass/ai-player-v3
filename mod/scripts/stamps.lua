@@ -311,7 +311,9 @@ local lab_row_ents = {
   -- Lab 6
   {name = "lab", u = 21.5, v = -13.5, dir = "north", role = "lab_6"},
 
-  -- Electric poles powering labs and inserters
+  -- Electric poles powering labs and inserters, plus feeder poles to bus
+  {name = "small-electric-pole", u = 0.5,  v = -2.5,  role = "slot_feeder_pole"},
+  {name = "small-electric-pole", u = 0.5,  v = -7.0,  role = "slot_mid_pole"},
   {name = "small-electric-pole", u = 3.5,  v = -11.5, role = "lab_pole"},
   {name = "small-electric-pole", u = 9.5,  v = -11.5, role = "lab_pole"},
   {name = "small-electric-pole", u = 15.5, v = -11.5, role = "lab_pole"},

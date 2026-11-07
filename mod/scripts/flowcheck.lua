@@ -183,6 +183,16 @@ local function check_belt_line(start_belt)
     local forward_consumer = surface.find_entities_filtered{position = forward_pos, radius = 0.5, type = {"container", "assembling-machine", "furnace"}}
     if #forward_consumer > 0 then return nil end
 
+    -- Open-ended bus belts along the base corridor are not dead ends
+    local base = storage.ai_player and storage.ai_player.base
+    if base and Base and Base.to_base then
+      local u, v = Base.to_base(base, cur.position.x, cur.position.y)
+      if (math.abs(v - (-1.5)) < 0.2 or math.abs(v - (-0.5)) < 0.2) and u >= 0 then
+        local _, fwd_dir = Base.dir(base, "north")
+        if cur.direction == fwd_dir then return nil end
+      end
+    end
+
     return {entity = cur, kind = "dead_end", detail = "belt ends with no consumer or downstream connection"}
   end
 

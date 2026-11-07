@@ -1082,6 +1082,7 @@ function AILayout.find_mining_field(character, resource, center, opts)
       local ok, place, boxes = true, {}, {}
       local poles = {}                    -- {x, y} of every planned pole
       local powered = {}                  -- {x, y, w, h} of everything that needs power
+      local plate_out = nil
 
       local min_x, max_x, min_y, max_y = math.huge, -math.huge, math.huge, -math.huge
       for i = 0, n_drills - 1 do
@@ -1206,7 +1207,7 @@ function AILayout.find_mining_field(character, resource, center, opts)
           end
         end
 
-        local plate_out = nil
+        plate_out = nil
         if ok and (opts and opts.plate_belt) then
           local plate_span = col_start + n_furnaces * 2
           for step = col_start, plate_span do
