@@ -1684,8 +1684,30 @@ local function skill_connect_ports(character, p)
 
   local is_pipe = (fp.kind == "pipe" or tp.kind == "pipe")
 
+  local function is_buildbook_bp(bp)
+    if not bp then return false end
+    if bp == "base" or (type(bp) == "table" and bp.kind == "base") then return true end
+    if (type(bp) == "string" and bp:match("^field")) or (type(bp) == "table" and bp.kind == "field") then return true end
+    local sname = type(bp) == "string" and bp:match("^([^:]+)") or (type(bp) == "table" and (bp.name or bp.stamp))
+    if sname and Stamps.DEFINITIONS and Stamps.DEFINITIONS[sname] then return true end
+    return false
+  end
+
+  local function record_base_link()
+    if is_buildbook_bp(from_bp) or is_buildbook_bp(to_bp) then
+      storage.ai_player.base_links = storage.ai_player.base_links or {}
+      local link_key = string.format("%s:%s->%s:%s", tostring(f_label), tostring(from_port), tostring(t_label), tostring(to_port))
+      storage.ai_player.base_links[link_key] = {
+        from = f_label, from_port = from_port,
+        to = t_label, to_port = to_port,
+        tick = game.tick,
+      }
+    end
+  end
+
   -- Direct connection check: out port faces straight into in port
   if fp.x + fdx == tp.x and fp.y + fdy == tp.y then
+    record_base_link()
     if is_pipe then
       storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
       table.insert(storage.ai_player.connected_pipes, {
@@ -1710,6 +1732,7 @@ local function skill_connect_ports(character, p)
   if is_pipe then
     local ok, detail = skill_connect_pipe(character, {from = start_pt, to = end_pt})
     if ok then
+      record_base_link()
       storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
       table.insert(storage.ai_player.connected_pipes, {
         from_bp = f_label, from_port = from_port,
@@ -1727,6 +1750,7 @@ local function skill_connect_ports(character, p)
       underground = p.underground
     })
     if ok then
+      record_base_link()
       storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
       table.insert(storage.ai_player.connected_belts, {
         from_bp = f_label, from_port = from_port,
@@ -2434,6 +2458,12 @@ local function skill_place_stamp(character, p)
   p = p or {}
   local stamp_name = p.stamp or p.name
   if not stamp_name then return false, "place_stamp: 'stamp' or 'name' is required" end
+
+  local ok_v, verified = pcall(require, "scripts.stamps_verified")
+  if not (ok_v and verified and verified[stamp_name] == true) then
+    return false, string.format("place_stamp: stamp %s not verified", stamp_name)
+  end
+
   local base = storage.ai_player and storage.ai_player.base
   if not base then
     local ok, berr = skill_build_base(character, {})
@@ -2444,6 +2474,21 @@ local function skill_place_stamp(character, p)
   local at_u = tonumber(p.at_u or p.u) or 0
   local side = p.side or "left"
 
+  storage.ai_player.placed_stamps = storage.ai_player.placed_stamps or {}
+  for _, s in ipairs(storage.ai_player.placed_stamps) do
+    if s.name == stamp_name and s.at_u == at_u and (s.side or "left") == side then
+      local all_valid = true
+      if s.entities and #s.entities > 0 then
+        for _, e in ipairs(s.entities) do
+          if not (e and e.valid) then all_valid = false; break end
+        end
+      end
+      if all_valid then
+        return true, string.format("place_stamp: %s at u=%d already placed", stamp_name, at_u)
+      end
+    end
+  end
+
   local plan, err = Stamps.plan(base, stamp_name, at_u, side)
   if not plan then return false, "place_stamp: " .. tostring(err) end
 
@@ -2453,13 +2498,14 @@ local function skill_place_stamp(character, p)
   local ok, res = AILayout.build(character, plan)
   if not ok then return false, "place_stamp: " .. tostring(res) end
 
+  local placed_entities = {}
   for _, item in ipairs(plan.place) do
     if item.entity and item.entity.valid then
       AIRegistry.own(item.entity)
+      table.insert(placed_entities, item.entity)
     end
   end
 
-  storage.ai_player.placed_stamps = storage.ai_player.placed_stamps or {}
   local stamp_record = {
     id = p.id or (#storage.ai_player.placed_stamps + 1),
     name = stamp_name,
@@ -2468,11 +2514,13 @@ local function skill_place_stamp(character, p)
     ports = plan.ports,
     length = plan.length,
     depth = plan.depth,
+    entities = placed_entities,
     tick = game.tick,
   }
   table.insert(storage.ai_player.placed_stamps, stamp_record)
   if base.slots then
-    base.slots[at_u] = {name = stamp_name, side = side, id = stamp_record.id}
+    local slot_key = stamp_name .. "@" .. at_u
+    base.slots[slot_key] = {name = stamp_name, at_u = at_u, side = side, id = stamp_record.id}
   end
 
   return true, string.format("place_stamp: placed %s at u=%d (%s)", stamp_name, at_u, side)

@@ -75,33 +75,31 @@ def _has_stamp(p: dict, name: str, at_u: int | None = None) -> bool:
         if s.get("name") == name:
             if at_u is None or s.get("at_u") == at_u:
                 return True
-    # Also check base.slots
-    base = p.get("base") or {}
-    slots = base.get("slots") or {}
-    if at_u is not None:
-        slot = slots.get(at_u) or slots.get(str(at_u))
-        if slot and slot.get("name") == name:
-            return True
     return False
 
 
-def _connected_belts(p: dict) -> list[dict]:
-    return p.get("connected_belts") or []
+def _base_links(p: dict) -> list[str]:
+    return p.get("base_links") or []
 
 
 def _has_trunk(p: dict, to_port: str) -> bool:
-    for c in _connected_belts(p):
-        if c.get("to_port") == to_port:
-            return True
-        if c.get("to_bp") == "base" and c.get("to_port") == to_port:
-            return True
+    for link in _base_links(p):
+        if "->" in link:
+            _, right = link.split("->", 1)
+            parts = right.rsplit(":", 1)
+            if len(parts) == 2 and parts[1] == to_port:
+                return True
     return False
 
 
 def _has_feed(p: dict, from_bp: str, to_bp: str) -> bool:
-    for c in _connected_belts(p):
-        if c.get("from_bp") == from_bp and c.get("to_bp") == to_bp:
-            return True
+    for link in _base_links(p):
+        if "->" in link:
+            left, right = link.split("->", 1)
+            f_bp = left.rsplit(":", 1)[0]
+            t_bp = right.rsplit(":", 1)[0]
+            if f_bp == from_bp and t_bp == to_bp:
+                return True
     return False
 
 

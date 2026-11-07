@@ -157,7 +157,7 @@ def test_buildbook_trunks_step():
             {"name": "bus_segment", "at_u": 10},
             {"name": "bus_segment", "at_u": 24},
         ],
-        "connected_belts": [],
+        "base_links": [],
     }
     moves = list(buildbook.candidates(p))
     assert moves[0][0]["skill"] == "connect_ports"
@@ -165,7 +165,7 @@ def test_buildbook_trunks_step():
     assert moves[0][0]["from_port"] == "plate_output"
     assert moves[0][0]["to_port"] == "in_fe"
 
-    p["connected_belts"].append({"to_bp": "base", "to_port": "in_fe"})
+    p["base_links"].append("field:iron-ore:plate_output->base:in_fe")
     moves = list(buildbook.candidates(p))
     assert moves[0][0]["skill"] == "connect_ports"
     assert moves[0][0]["from_bp"] == "field:copper-ore"
@@ -191,9 +191,9 @@ def test_buildbook_red_and_lab_step():
             {"name": "bus_segment", "at_u": 10},
             {"name": "bus_segment", "at_u": 24},
         ],
-        "connected_belts": [
-            {"to_bp": "base", "to_port": "in_fe"},
-            {"to_bp": "base", "to_port": "in_cu"},
+        "base_links": [
+            "field:iron-ore:plate_output->base:in_fe",
+            "field:copper-ore:plate_output->base:in_cu",
         ],
     }
     # 1. gear_red at u=9
@@ -222,6 +222,10 @@ def test_buildbook_red_and_lab_step():
     assert moves[0][0]["skill"] == "connect_ports"
     assert moves[0][0]["from_bp"] == "gear_red"
     assert moves[0][0]["to_bp"] == "lab_row"
+
+    # 5. done once science feed is recorded
+    p["base_links"].append("gear_red:out_science->lab_row:in_science")
+    assert buildbook._step_red_and_lab_done(p) is True
 
 
 def test_planner_candidates_delegates_to_buildbook():

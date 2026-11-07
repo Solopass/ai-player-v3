@@ -130,7 +130,7 @@ def build_messages(payload: dict, system_prefix: str = "", goal_text: str = "",
     if perception:
         # The goal section already names the blueprints that matter; the full
         # library / locked lists and unbounded rosters would only cost tokens.
-        drop = {"blueprint_locked", "connected_belts", "connected_pipes"} | ({"blueprint_library"} if goal_text else set())
+        drop = {"blueprint_locked", "connected_belts", "connected_pipes", "base_links"} | ({"blueprint_library"} if goal_text else set())
         shown = {k: v for k, v in perception.items() if k not in drop}
         if isinstance(shown.get("factory"), dict) and "machines" in shown["factory"]:
             shown["factory"] = {k: v for k, v in shown["factory"].items() if k != "machines"}

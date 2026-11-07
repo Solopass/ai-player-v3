@@ -898,6 +898,13 @@ function AIPerception.gather(character)
   storage.ai_player.connected_belts = conns
   perception.connected_belts = conns
 
+  local base_link_keys = {}
+  for k, _ in pairs(storage.ai_player and storage.ai_player.base_links or {}) do
+    base_link_keys[#base_link_keys + 1] = k
+  end
+  table.sort(base_link_keys)
+  perception.base_links = base_link_keys
+
   local seen_pipes, pipes = {}, {}
   for _, c in ipairs(storage.ai_player.connected_pipes or {}) do
     if c.from_bp and c.to_bp and c.from_port and c.to_port then
