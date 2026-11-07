@@ -17,6 +17,7 @@ def test_buildbook_toggle():
 
 
 def test_buildbook_bootstrap_moves():
+    # Support dict format
     p = {
         "buildbook_enabled": True,
         "factory": {"miners_by_resource": {}},
@@ -27,6 +28,17 @@ def test_buildbook_bootstrap_moves():
     # First missing is coal burner drill
     assert moves[0][0]["skill"] == "craft_for"
     assert moves[0][0]["item"] == "burner-mining-drill"
+
+    # Support live perception list format
+    p_list = {
+        "buildbook_enabled": True,
+        "factory": {"miners_by_resource": {}},
+        "inventory": [{"name": "iron-plate", "count": 20}, {"name": "stone", "count": 10}],
+    }
+    moves_list = list(buildbook.candidates(p_list))
+    assert len(moves_list) > 0
+    assert moves_list[0][0]["skill"] == "craft_for"
+    assert moves_list[0][0]["item"] == "burner-mining-drill"
 
 
 def test_buildbook_power_step():

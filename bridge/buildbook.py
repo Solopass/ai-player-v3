@@ -52,7 +52,18 @@ def _lab_count(p: dict) -> int:
 
 
 def _inv(p: dict) -> dict[str, int]:
-    return (p.get("inventory") or {}).get("main") or {}
+    inv = p.get("inventory") or {}
+    if isinstance(inv, list):
+        out = {}
+        for item in inv:
+            if isinstance(item, dict) and "name" in item:
+                out[item["name"]] = out.get(item["name"], 0) + (item.get("count") or 0)
+        return out
+    if isinstance(inv, dict):
+        if "main" in inv and isinstance(inv["main"], dict):
+            return inv["main"]
+        return inv
+    return {}
 
 
 def _fields(p: dict) -> list[dict]:
