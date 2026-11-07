@@ -10,7 +10,7 @@ def test_station_prototypes_defined():
     assert 'name = "ai-monitoring-station"' in data_lua
     assert 'type = "car"' in data_lua
     assert 'energy_source = {' in data_lua
-    assert 'type = "void"' in data_lua
+    assert 'type = "burner"' in data_lua
     assert 'recipe' in data_lua
 
 

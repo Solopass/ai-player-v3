@@ -1153,6 +1153,21 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
   if not (player and player.valid) then return end
   local vehicle = player.vehicle
   if vehicle and vehicle.valid and vehicle.name == "ai-monitoring-station" then
+    -- Refuel vehicle burner with solid fuel for unlimited driving
+    local burner = vehicle.burner
+    if burner and burner.inventory then
+      if burner.inventory.get_item_count("solid-fuel") < 20 then
+        burner.inventory.insert{name = "solid-fuel", count = 50}
+      end
+    end
+    -- Keep regular AI HUD open on the left
+    if storage.ai_player then
+      storage.ai_player.gui_pinned = storage.ai_player.gui_pinned or {}
+      storage.ai_player.gui_pinned[player.index] = true
+    end
+    if AIGui and not (player.gui.screen["aip_panel"] and player.gui.screen["aip_panel"].valid) then
+      AIGui.open(player)
+    end
     StationGui.open(player, vehicle)
   else
     StationGui.close(player)

@@ -16,12 +16,17 @@ if data.raw["car"] and data.raw["car"]["car"] then
   station.icon = "__base__/graphics/icons/car.png"
   station.minable = {mining_time = 0.5, result = "ai-monitoring-station"}
   station.max_health = 3000
-  station.weight = 50000
-  station.friction_force = 1.0
-  station.braking_power = "2000kW"
-  station.consumption = "0kW"
+  station.weight = 700
+  station.friction_force = 0.002
+  station.braking_power = "1000kW"
+  station.consumption = "250kW"
+  station.rotation_speed = 0.015
   station.energy_source = {
-    type = "void"
+    type = "burner",
+    fuel_categories = {"chemical"},
+    effectivity = 1,
+    fuel_inventory_size = 2,
+    smoke = nil
   }
   station.inventory_size = 20
   station.guns = nil

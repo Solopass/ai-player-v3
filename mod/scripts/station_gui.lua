@@ -66,13 +66,34 @@ function StationGui.open(player, vehicle)
   local surface_index = (char and char.valid) and char.surface.index or (vehicle and vehicle.valid and vehicle.surface.index or 1)
   local zoom = get_zoom(player)
 
+  -- Ensure regular AI HUD on the left is pinned and visible
+  if storage.ai_player then
+    storage.ai_player.gui_pinned = storage.ai_player.gui_pinned or {}
+    storage.ai_player.gui_pinned[player.index] = true
+  end
+  if AIGui and not (player.gui.screen["aip_panel"] and player.gui.screen["aip_panel"].valid) then
+    AIGui.open(player)
+  end
+
   local frame = player.gui.screen.add{
     type = "frame",
     name = FRAME_NAME,
     direction = "vertical"
   }
-  frame.auto_center = true
+  frame.auto_center = false
+  frame.location = {x = 485, y = 80}
+  frame.style.minimal_width = 1150
+  frame.style.maximal_width = 1200
+  frame.style.minimal_height = 700
   player.opened = frame
+
+  -- Refuel vehicle with solid-fuel for unlimited driving
+  if vehicle and vehicle.valid and vehicle.burner and vehicle.burner.inventory then
+    local finv = vehicle.burner.inventory
+    if finv.get_item_count("solid-fuel") < 20 then
+      finv.insert{name = "solid-fuel", count = 50}
+    end
+  end
 
   local r = get_refs(player)
   r.frame = frame
@@ -133,9 +154,9 @@ function StationGui.open(player, vehicle)
   local main_body = frame.add{type = "flow", direction = "horizontal"}
   main_body.style.top_margin = 6
 
-  -- Left Column: CCTV Spectator Feed (width 400px)
+  -- Left Column: CCTV Spectator Feed (expanded width)
   local left_col = main_body.add{type = "frame", style = "inside_deep_frame", direction = "vertical"}
-  left_col.style.width = 410
+  left_col.style.width = 650
   left_col.style.padding = 6
 
   local cctv_header = left_col.add{type = "flow", direction = "horizontal"}
@@ -145,7 +166,7 @@ function StationGui.open(player, vehicle)
   r.cam_badge = cctv_header.add{type = "label", caption = "ONLINE", style = "bold_label"}
   r.cam_badge.style.font_color = {r = 0.2, g = 1, b = 0.2}
 
-  -- Camera widget
+  -- Camera widget (expanded 636x460)
   r.cam = left_col.add{
     type = "camera",
     name = "aip_station_camera",
@@ -153,8 +174,8 @@ function StationGui.open(player, vehicle)
     surface_index = surface_index,
     zoom = zoom
   }
-  r.cam.style.width = 396
-  r.cam.style.height = 300
+  r.cam.style.width = 636
+  r.cam.style.height = 460
 
   -- Target details beneath camera
   local target_flow = left_col.add{type = "flow", direction = "vertical"}
@@ -172,7 +193,7 @@ function StationGui.open(player, vehicle)
 
   -- Right Column: Brain Telemetry & Factory Triage (width 450px)
   local right_col = main_body.add{type = "flow", direction = "vertical"}
-  right_col.style.width = 460
+  right_col.style.width = 480
   right_col.style.left_margin = 8
 
   -- Box 1: AI Brain Telemetry
@@ -184,7 +205,7 @@ function StationGui.open(player, vehicle)
   r.tel_status = b1.add{type = "label", caption = "Status: Initializing..."}
   r.tel_goal = b1.add{type = "label", caption = "Directive / Goal: None"}
   r.tel_goal.style.single_line = false
-  r.tel_goal.style.maximal_width = 430
+  r.tel_goal.style.maximal_width = 460
   r.tel_skill = b1.add{type = "label", caption = "Active Skill: None"}
   r.tel_step = b1.add{type = "label", caption = "Step: Idle"}
 
@@ -239,6 +260,14 @@ function StationGui.update(player)
   local ap = storage.ai_player or {}
   local char = ap.character
   local vehicle = player.vehicle
+
+  -- Unlimited fuel top-up for the drivable station vehicle
+  if vehicle and vehicle.valid and vehicle.burner and vehicle.burner.inventory then
+    local finv = vehicle.burner.inventory
+    if finv.get_item_count("solid-fuel") < 20 then
+      finv.insert{name = "solid-fuel", count = 50}
+    end
+  end
 
   -- 1. Camera & Tracking Position
   if char and char.valid then
