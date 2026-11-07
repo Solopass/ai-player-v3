@@ -436,6 +436,7 @@ def main() -> int:
     ap.add_argument("--stall-min", type=int, default=25,
                     help="stop early after this many game minutes with no progress (0 = never)")
     ap.add_argument("--max-real-min", type=int, default=150, help="give up after this many real minutes")
+    ap.add_argument("--buildbook", action="store_true", help="enable Round 20 Build Book state machine")
     args = ap.parse_args()
     if args.seed not in SEEDS:
         print(f"seed must be one of {SEEDS} (the mod only arms these)")
@@ -511,12 +512,16 @@ def main() -> int:
         env_file = tmp / "bridge.env"
         write_env(env_file, out_dir, rport, password, args.llm, args.speed)
         env = {**os.environ, "BRIDGE_ENV_FILE": str(env_file), "PYTHONIOENCODING": "utf-8"}
+        if args.buildbook:
+            env["AI_BUILDBOOK"] = "1"
         bridge_log = open(tmp / "bridge-stdout.log", "w")
         bridge = subprocess.Popen([PYTHON, "-m", "bridge.main"], cwd=str(rs.REPO), env=env,
                                   stdout=bridge_log, stderr=subprocess.STDOUT)
         time.sleep(6)
         client.send_command("/ai-soak-start")
         client.send_command("/spawn-ai-player")
+        if args.buildbook:
+            client.send_command("/sc settings.global['ai-player-buildbook'] = {value = true}")
         client.send_command(f"/ai-soak-speed {args.speed}")
         if args.combat == "hunt":
             client.send_command("/sc rcon.print(remote.call('ai_player','set_combat_mode','hunt'))")

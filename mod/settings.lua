@@ -148,5 +148,12 @@ data:extend({
     default_value = true,
     order = "r"
   },
+  {
+    type = "bool-setting",
+    name = "ai-player-buildbook",
+    setting_type = "runtime-global",
+    default_value = false,
+    order = "s"
+  },
 
 })

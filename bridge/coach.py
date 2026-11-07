@@ -232,7 +232,7 @@ class Coach:
                 continue
             skill = e.get("skill") or e.get("action")
             if not layout_allowed and e.get("source") != "autopilot":
-                if skill in ("place_blueprint", "connect_belt", "connect_pipe", "connect_ports") or e.get("action") == "place":
+                if skill in ("place_blueprint", "connect_belt", "connect_pipe", "connect_ports", "build_base", "place_stamp") or e.get("action") == "place":
                     self.rewrites["drop_llm_layout"] += 1
                     continue
             if skill == "fuel_all":

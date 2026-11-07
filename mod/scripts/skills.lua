@@ -10,6 +10,7 @@
 -- detail feeds the E1 result loop, so make it specific and actionable.
 
 local Base = require("scripts.baseplan")
+local Stamps = require("scripts.stamps")
 
 AISkills = {}
 
@@ -1592,6 +1593,22 @@ local function skill_connect_ports(character, p)
       return {name = "field", x = pos.x, y = pos.y, dir = f.direction or defines.direction.north, kind = "belt", item = f.resource}
     end
 
+    local placed_stamps = storage.ai_player and storage.ai_player.placed_stamps or {}
+    for i = #placed_stamps, 1, -1 do
+      local s = placed_stamps[i]
+      local matches = (s.name == spec)
+        or (s.id == spec)
+        or (tostring(s.id) == tostring(spec))
+        or (type(spec) == "string" and spec:match("^(.-):%d+$") == s.name)
+        or (type(spec) == "table" and (spec.name == s.name or spec.id == s.id))
+      if matches then
+        if s.ports and s.ports[port_name] then
+          local pt = s.ports[port_name]
+          return {name = s.name, x = pt.position.x, y = pt.position.y, dir = pt.direction_val, kind = "belt"}
+        end
+      end
+    end
+
     local placed = storage.ai_player and storage.ai_player.placed_blueprints or {}
     local entry = nil
     if type(spec) == "number" then
@@ -2339,6 +2356,75 @@ local function skill_build_defense(character, p)
 end
 
 -- -------------------------------------------------------------------------
+-- build_base(origin, dir) — establish a base frame site with bus corridor
+-- -------------------------------------------------------------------------
+local function skill_build_base(character, p)
+  p = p or {}
+  local surface = character.surface
+  local home = (storage.ai_player and storage.ai_player.home) or character.position
+  local base = Base.find_site(surface, home, p)
+  if not base then
+    return false, "build_base: unable to find suitable base corridor"
+  end
+  storage.ai_player = storage.ai_player or {}
+  storage.ai_player.base = base
+  storage.ai_player.placed_stamps = storage.ai_player.placed_stamps or {}
+  return true, string.format("build_base: site established at {%d,%d} facing %s length %d",
+    math.floor(base.origin.x), math.floor(base.origin.y), base.dir, base.length)
+end
+
+-- -------------------------------------------------------------------------
+-- place_stamp(stamp, at_u, side) — stamp library module aligned to base frame
+-- -------------------------------------------------------------------------
+local function skill_place_stamp(character, p)
+  p = p or {}
+  local stamp_name = p.stamp or p.name
+  if not stamp_name then return false, "place_stamp: 'stamp' or 'name' is required" end
+  local base = storage.ai_player and storage.ai_player.base
+  if not base then
+    local ok, berr = skill_build_base(character, {})
+    if not ok then return false, "place_stamp: base not established: " .. tostring(berr) end
+    base = storage.ai_player.base
+  end
+
+  local at_u = tonumber(p.at_u or p.u) or 0
+  local side = p.side or "left"
+
+  local plan, err = Stamps.plan(base, stamp_name, at_u, side)
+  if not plan then return false, "place_stamp: " .. tostring(err) end
+
+  local ready, why = stock_up(character, AILayout.items({plan}), "place_stamp")
+  if not ready then return false, why end
+
+  local ok, res = AILayout.build(character, plan)
+  if not ok then return false, "place_stamp: " .. tostring(res) end
+
+  for _, item in ipairs(plan.place) do
+    if item.entity and item.entity.valid then
+      AIRegistry.own(item.entity)
+    end
+  end
+
+  storage.ai_player.placed_stamps = storage.ai_player.placed_stamps or {}
+  local stamp_record = {
+    id = p.id or (#storage.ai_player.placed_stamps + 1),
+    name = stamp_name,
+    at_u = at_u,
+    side = side,
+    ports = plan.ports,
+    length = plan.length,
+    depth = plan.depth,
+    tick = game.tick,
+  }
+  table.insert(storage.ai_player.placed_stamps, stamp_record)
+  if base.slots then
+    base.slots[at_u] = {name = stamp_name, side = side, id = stamp_record.id}
+  end
+
+  return true, string.format("place_stamp: placed %s at u=%d (%s)", stamp_name, at_u, side)
+end
+
+-- -------------------------------------------------------------------------
 -- tend() — look after the AI's own burner base near home in one call:
 -- collect plates/ore from its furnaces and chests, refuel its burners, feed
 -- ore into idle furnaces, and give drills that spill onto the ground a
@@ -2783,6 +2869,8 @@ AISkills.REGISTRY = {
   build_radar      = skill_build_radar,
   connect_power    = skill_connect_power,
   fix_flow         = skill_fix_flow,
+  build_base       = skill_build_base,
+  place_stamp      = skill_place_stamp,
 }
 
 -- -------------------------------------------------------------------------
@@ -2822,7 +2910,7 @@ end
 
 -- Params copied into each result so the bridge can tell "the same move failed
 -- again" (craft_for lab vs craft_for gear) without guessing.
-local RESULT_KEYS = {"item", "tech", "resource", "recipe", "name", "ore", "output", "count"}
+local RESULT_KEYS = {"item", "tech", "resource", "recipe", "name", "ore", "output", "count", "stamp", "at_u", "side"}
 
 local function result_of(entry, ok, detail, label)
   local r = {action = label, ok = ok, detail = detail}

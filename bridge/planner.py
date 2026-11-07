@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 from typing import Iterator
 
-from . import blueprints, goals
+from . import blueprints, goals, buildbook
 from .blueprints import _ENTITY_ITEM
 from .goals import demand_targets      # one copy of the plate targets, shared with the ladder
 
@@ -876,6 +876,10 @@ def _candidates(p: dict, blocked=frozenset()) -> Iterator[tuple[dict, str, bool]
             yield {"skill": "build_ghosts"}, "build the ghosts once items are crafted", True
     if _count(p.get("deconstruction")) > 0:
         yield {"skill": "deconstruct"}, "the player marked things for removal", True
+
+    if buildbook.is_enabled(p):
+        yield from buildbook.candidates(p, blocked)
+        return
 
     # 1. Keep the burner base running. With the mod's reflexes on, refuelling and emptying
     # furnaces/chests happen on their own; tend stays for what they don't do (a drill spilling

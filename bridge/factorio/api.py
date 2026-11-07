@@ -65,6 +65,8 @@ SKILLS: dict[str, list[str]] = {
     "connect_ports": ["from_bp", "from_port", "to_bp", "to_port"],
     "connect_power": ["to"],
     "fix_flow":      [],
+    "build_base":    [],
+    "place_stamp":   ["stamp"],
 }
 
 # Directions the move action accepts
@@ -79,7 +81,7 @@ _NUMERIC_DIRECTIONS = {
 }
 
 
-LAYOUT_SKILLS = {"place_blueprint", "connect_belt", "connect_pipe", "connect_ports", "connect_power"}
+LAYOUT_SKILLS = {"place_blueprint", "connect_belt", "connect_pipe", "connect_ports", "connect_power", "build_base", "place_stamp"}
 LAYOUT_ACTIONS = {"place"}
 
 

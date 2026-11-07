@@ -34,6 +34,9 @@ FIELD_TYPES: dict[str, dict] = {
     "count": _INT, "radius": _INT, "distance": _INT, "index": _INT, "keep": _INT,
     "direction": {"type": "string", "enum": sorted(VALID_DIRECTIONS)},
     "items": {"type": "array", "items": _STR, "maxItems": 20},
+    "stamp": _STR,
+    "at_u": _INT,
+    "side": {"type": "string", "enum": ["left", "right"]},
 }
 
 # Optional params each entry may carry, on top of its required ones — every
@@ -57,6 +60,8 @@ OPTIONAL: dict[str, list[str]] = {
     "connect_ports": [],
     "connect_power": [],
     "fix_flow": ["radius"],
+    "build_base": [],
+    "place_stamp": ["at_u", "side", "name", "u"],
     # actions
     "move": ["distance"],
     "mine": ["name", "type", "position"],

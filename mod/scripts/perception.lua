@@ -894,7 +894,7 @@ function AIPerception.gather(character)
       end
     end
   end
-  while #conns > 10 do table.remove(conns, 1) end
+  while #conns > 50 do table.remove(conns, 1) end
   storage.ai_player.connected_belts = conns
   perception.connected_belts = conns
 
@@ -978,6 +978,10 @@ function AIPerception.gather(character)
   end
   perception.deconstruction = {count = #decon_entities, list = decon_list}
   perception.flow_faults = #(storage.ai_player and storage.ai_player.flow_faults or {})
+  perception.base = storage.ai_player and storage.ai_player.base
+  perception.placed_stamps = storage.ai_player and storage.ai_player.placed_stamps or {}
+  local bb_setting = settings.global["ai-player-buildbook"]
+  perception.buildbook_enabled = (bb_setting and bb_setting.value) or false
 
   return perception
 end

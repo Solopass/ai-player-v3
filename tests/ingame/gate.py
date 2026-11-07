@@ -77,7 +77,7 @@ def parse_latest_report(label_prefix: str) -> dict | None:
         return None
 
 
-def run_soak(seed: int, minutes: int, speed: int, label: str) -> dict | None:
+def run_soak(seed: int, minutes: int, speed: int, label: str, buildbook: bool = False) -> dict | None:
     cmd = [
         sys.executable, "tests/ingame/run_soak.py",
         "--no-llm",
@@ -86,6 +86,8 @@ def run_soak(seed: int, minutes: int, speed: int, label: str) -> dict | None:
         "--speed", str(speed),
         "--label", label,
     ]
+    if buildbook:
+        cmd.append("--buildbook")
     code, _ = run_cmd(cmd, f"Soak {label} (seed {seed}, {minutes}m game time, {speed}x)")
     rep = parse_latest_report(label)
     if not rep:
@@ -273,6 +275,8 @@ def main():
                         help="Specific seeds to run for baseline (default [424242, 2476103329])")
     parser.add_argument("--accept", action="store_true",
                         help="Accept latest soak results as baseline")
+    parser.add_argument("--buildbook", action="store_true",
+                        help="Enable Build Book state machine during soak")
     args = parser.parse_args()
 
     commit = get_git_commit()
@@ -316,16 +320,16 @@ def main():
 
     if args.mode == "quick":
         # One soak: 45m on Seed A (424242)
-        label = f"gate-quick-{commit}"
-        rep = run_soak(SEEDS[0], minutes=45, speed=args.speed, label=label)
+        label = f"gate-quick-{commit}{'-bb' if args.buildbook else ''}"
+        rep = run_soak(SEEDS[0], minutes=45, speed=args.speed, label=label, buildbook=args.buildbook)
         if not rep:
             print("\nGATE HARD FAIL: Quick soak failed!")
             sys.exit(1)
-        append_score_log(rep, commit, flag=False)
+        append_score_log(rep, commit, flag=args.buildbook)
 
         # Regressions check if baseline available
         score = rep.get("evaluation", {}).get("score", {})
-        if baseline_data:
+        if baseline_data and not args.buildbook:
             regs = compare_against_baseline(score, str(SEEDS[0]), baseline_data)
             if regs:
                 print("\nGATE REGRESSION DETECTED:")
@@ -336,18 +340,18 @@ def main():
     elif args.mode == "full":
         # Two soaks: 90m on Seed A (424242) and Seed B (2476103329), 1 retry if fail
         for seed in SEEDS:
-            label = f"gate-full-s{seed}-{commit}"
-            rep = run_soak(seed, minutes=90, speed=args.speed, label=label)
+            label = f"gate-full-s{seed}-{commit}{'-bb' if args.buildbook else ''}"
+            rep = run_soak(seed, minutes=90, speed=args.speed, label=label, buildbook=args.buildbook)
             if not rep:
                 print(f"Seed {seed} failed on first attempt — retrying once per plan rules...")
-                rep = run_soak(seed, minutes=90, speed=args.speed, label=f"{label}-retry")
+                rep = run_soak(seed, minutes=90, speed=args.speed, label=f"{label}-retry", buildbook=args.buildbook)
                 if not rep:
                     print(f"\nGATE HARD FAIL: Seed {seed} failed twice!")
                     sys.exit(1)
 
-            append_score_log(rep, commit, flag=False)
+            append_score_log(rep, commit, flag=args.buildbook)
             score = rep.get("evaluation", {}).get("score", {})
-            if baseline_data:
+            if baseline_data and not args.buildbook:
                 regs = compare_against_baseline(score, str(seed), baseline_data)
                 if regs:
                     print(f"\nGATE REGRESSION DETECTED on seed {seed}:")
