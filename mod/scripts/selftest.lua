@@ -238,6 +238,180 @@ CASES.base_frame = {
   end,
 }
 
+CASES.base_site = {
+  delay = 10,
+  setup = function(c)
+    local s = c.surface
+    for _, e in ipairs(s.find_entities_filtered{area = {{-100, -100}, {100, 100}}, type = {"tree", "simple-entity"}}) do
+      e.destroy()
+    end
+    -- Paint water on 3 sides around (0, 0): North, South, West
+    paint_water(s, -80, -80, 80, -10)
+    paint_water(s, -80, 10, 80, 80)
+    paint_water(s, -80, -80, -10, 80)
+  end,
+  run = function(c) return {} end,
+  check = function(c, add)
+    local site = Base.find_site(c.surface, {x = 0, y = 0})
+    add("site found", site ~= nil, site and "ok" or "nil")
+    if site then
+      add("picks clear side (east)", site.dir == "east", "got " .. tostring(site.dir))
+      add("length >= 60", site.length >= 60, "len " .. tostring(site.length))
+      add("is_forbidden inside corridor", Base.is_forbidden(site, 20, -5) == true, "expected true")
+      add("is_forbidden outside corridor", Base.is_forbidden(site, -20, 5) == false, "expected false")
+
+      -- Test corridor reservation against layout can_place
+      storage.ai_player = storage.ai_player or {}
+      storage.ai_player.base = site
+
+      local in_forbid = AILayout.find_drill_spots(c.character, "iron-ore", {x = 20, y = -5}, {radius = 5})
+      add("can_place blocked in corridor", in_forbid == nil or #in_forbid == 0, "corridor protected")
+
+      storage.ai_player.base = nil
+    end
+  end,
+}
+
+CASES.trunk_feed = {
+  delay = 1200,
+  setup = function(c)
+    c.saved_speed = game.speed
+    game.speed = 5
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing, length = 60}
+    c.base.forbidden = Base.get_forbidden(c.base)
+    storage.ai_player = storage.ai_player or {}
+    storage.ai_player.base = c.base
+
+    for _, e in ipairs(c.surface.find_entities_filtered{area = {{-80, -80}, {80, 80}}, type = {"tree", "simple-entity"}}) do
+      e.destroy()
+    end
+
+    give(c.character, {
+      ["transport-belt"] = 150,
+      ["small-electric-pole"] = 30,
+      ["inserter"] = 10,
+      ["iron-chest"] = 5,
+      ["iron-plate"] = 200,
+    })
+
+    -- Place bus_head at u = 0
+    local ok, err = Stamps.place(c.character, c.base, "bus_head", 0, "left")
+    c.head_ok, c.head_err = ok, err
+
+    -- Feed plate source outside corridor at u = -16.5, v = -1.5
+    local src_wx, src_wy = Base.to_world(c.base, -16.5, -1.5)
+    local src_chest = c.surface.create_entity{
+      name = "iron-chest",
+      position = {src_wx, src_wy},
+      force = c.force
+    }
+    src_chest.insert{name = "iron-plate", count = 100}
+
+    -- Output belt tile of the source at u = -14.5, v = -1.5
+    local b_wx, b_wy = Base.to_world(c.base, -14.5, -1.5)
+    local _, fwd_val = Base.dir(c.base, "north")
+    c.surface.create_entity{
+      name = "transport-belt",
+      position = {b_wx, b_wy},
+      direction = fwd_val,
+      force = c.force
+    }
+
+    -- Inserter picks up from chest at -16.5 (south in base frame) and drops to -14.5 (north in base frame)
+    local _, ins_pickup_dir = Base.dir(c.base, "south")
+    local ins_wx, ins_wy = Base.to_world(c.base, -15.5, -1.5)
+    local ins = c.surface.create_entity{
+      name = "inserter",
+      position = {ins_wx, ins_wy},
+      direction = ins_pickup_dir,
+      force = c.force
+    }
+
+    -- Power pole directly beside the inserter (at v = 0.5, 2 tiles from v = -1.5)
+    local pw_wx, pw_wy = Base.to_world(c.base, -15.5, 0.5)
+    local pole = c.surface.create_entity{
+      name = "small-electric-pole",
+      position = {pw_wx, pw_wy},
+      force = c.force
+    }
+    local eei_wx, eei_wy = Base.to_world(c.base, -15.5, 2.5)
+    c.surface.create_entity{
+      name = "electric-energy-interface",
+      position = {eei_wx, eei_wy},
+      force = c.force
+    }
+
+    -- Register field in storage.ai_player.fields
+    storage.ai_player.fields = {
+      {
+        resource = "iron-ore",
+        position = {x = src_wx, y = src_wy},
+        plate_output = {x = b_wx, y = b_wy},
+        direction = fwd_val,
+        ports = {
+          plate_out = {x = b_wx, y = b_wy, dir = fwd_val, kind = "belt", item = "iron-plate"}
+        }
+      }
+    }
+  end,
+  run = function(c)
+    return {
+      {
+        skill = "connect_ports",
+        from_bp = {kind = "field", id = 1},
+        from_port = "plate_out",
+        to_bp = "base",
+        to_port = "in_fe",
+        underground = true
+      },
+      {
+        skill = "build_ghosts"
+      }
+    }
+  end,
+  check = function(c, add)
+    add("bus_head placed", c.head_ok == true, c.head_err or "ok")
+    add("connect_ports ok", c.results[1] and c.results[1].ok, c.results[1] and c.results[1].detail)
+
+    -- Check if plates reached the bus_head out_fe port (at u = 3.5, v = -1.5)
+    local out_wx, out_wy = Base.to_world(c.base, 3.5, -1.5)
+    local out_belt = c.surface.find_entities_filtered{
+      position = {out_wx, out_wy},
+      name = "transport-belt",
+      limit = 1
+    }[1]
+
+    local chest_plates, ins_plates, belt_plates = 0, 0, 0
+    for _, ch in ipairs(c.surface.find_entities_filtered{type = "container"}) do
+      chest_plates = chest_plates + ch.get_item_count("iron-plate")
+    end
+    for _, i in ipairs(c.surface.find_entities_filtered{type = "inserter"}) do
+      if i.held_stack and i.held_stack.valid_for_read then
+        ins_plates = ins_plates + i.held_stack.count
+      end
+    end
+    for _, b in ipairs(c.surface.find_entities_filtered{type = "transport-belt"}) do
+      for line = 1, b.get_max_transport_line_index() do
+        belt_plates = belt_plates + b.get_transport_line(line).get_item_count("iron-plate")
+      end
+    end
+    add("diagnostic plates", true, string.format("chest=%d, ins=%d, belts=%d", chest_plates, ins_plates, belt_plates))
+
+    local plates_on_out = 0
+    if out_belt then
+      for i = 1, out_belt.get_max_transport_line_index() do
+        plates_on_out = plates_on_out + out_belt.get_transport_line(i).get_item_count("iron-plate")
+      end
+    end
+    add("plates reached out_fe bus belt", plates_on_out > 0, string.format("plates: %d", plates_on_out))
+
+    game.speed = c.saved_speed or 1
+    storage.ai_player.base = nil
+    storage.ai_player.fields = nil
+  end,
+}
+
 CASES.stamp_bus_segment = {
   delay = 30,
   setup = function(c)
@@ -1607,6 +1781,7 @@ CASES.monitoring_station = {
     add("ai character has station item in inventory", c.has_station_item == true, "station starting item verified")
     add("ai-monitoring-station placed in world", c.station ~= nil and c.station.valid, "entity prototype valid")
     add("ai-monitoring-station health verified", c.station and c.station.health >= 2500, "station armor verified")
+    add("ai-monitoring-station drivable car burner", c.station and c.station.burner ~= nil, "burner engine verified")
   end,
 }
 

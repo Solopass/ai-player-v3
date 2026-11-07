@@ -359,16 +359,15 @@ def _late_game(p: dict, inv: dict, factory: dict, goal_id: str,
 
     # Automated coal feeding to steam power: connect coal source to boiler fuel input
     power_bp = "tileable-steam-power"
+    power_pos = _find_placed(p, power_bp)
     if _by_type(p, "boiler") >= 1:
         fuel_in = power.get("fuel_in_position")
         if not fuel_in:
             power_in = _get_bp_port(placed_bps, power_bp, "in1")
             if power_in:
                 fuel_in = {"x": power_in["x"], "y": power_in["y"]}
-            else:
-                power_pos = _find_placed(p, power_bp)
-                if power_pos:
-                    fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
+            elif power_pos:
+                fuel_in = {"x": power_pos["x"] + 0.5, "y": power_pos["y"] + 0.5}
 
         conns = p.get("connected_belts") or []
         boiler_fuel_connected = power.get("boiler_fuel_connected") or (

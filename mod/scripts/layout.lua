@@ -15,6 +15,8 @@
 -- run after building. Placement goes through the place primitive, so the
 -- usual legality rules and AI ownership (last_user nil) still apply.
 
+local Base = require("scripts.baseplan")
+
 AILayout = {}
 
 local DIRS = {north = defines.direction.north, east = defines.direction.east,
@@ -65,7 +67,11 @@ local function free(boxes, b)
   return true
 end
 
-local function can_place(character, name, x, y, facing)
+local function can_place(character, name, x, y, facing, opts)
+  if not (opts and opts.ignore_forbidden) then
+    local base = storage.ai_player and storage.ai_player.base
+    if base and Base and Base.is_forbidden(base, x, y) then return false end
+  end
   local surface, force = character.surface, character.force
   local dir = DIRS[facing or "north"]
   if surface.can_place_entity{name = name, position = {x, y}, direction = dir,

@@ -9,6 +9,8 @@
 -- Each skill: function(character, params) -> (ok:boolean, detail:string)
 -- detail feeds the E1 result loop, so make it specific and actionable.
 
+local Base = require("scripts.baseplan")
+
 AISkills = {}
 
 local function inv_of(character)
@@ -1030,6 +1032,8 @@ local function tile_traversable(surface, force, name, pt, dir, ends)
   if tile and tile.collides_with("water_tile") then return false end
   local endpoint = ends ~= nil and ends[tile_key(pt.x, pt.y)] == true
   if not endpoint then
+    local base = storage.ai_player and storage.ai_player.base
+    if base and Base and Base.is_forbidden(base, pt.x, pt.y) then return false end
     local ex = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}, name = name, limit = 1}[1]
     if ex then return false end
     local g = surface.find_entities_filtered{area = {{pt.x - 0.4, pt.y - 0.4}, {pt.x + 0.4, pt.y + 0.4}}, type = 'entity-ghost', limit = 1}[1]
@@ -1552,31 +1556,67 @@ local function skill_connect_ports(character, p)
     return false, "connect_ports: 'from_bp', 'from_port', 'to_bp', 'to_port' are required"
   end
 
-  local function find_placed(name_or_idx)
+  local function resolve_port(spec, port_name)
+    if type(spec) == "table" and spec.x and spec.y then
+      return {name = spec.name or "point", x = spec.x, y = spec.y, dir = spec.dir or defines.direction.north, kind = spec.kind or "belt"}
+    end
+
+    if spec == "base" or (type(spec) == "table" and spec.kind == "base") then
+      local base = storage.ai_player and storage.ai_player.base
+      if not base then return nil, "connect_ports: base not found in storage.ai_player" end
+      local bports = {
+        in_fe  = {u = 0.5, v = -1.5, dir = "north", kind = "belt", item = "iron-plate"},
+        in_cu  = {u = 0.5, v = -0.5, dir = "north", kind = "belt", item = "copper-plate"},
+        out_fe = {u = 3.5, v = -1.5, dir = "north", kind = "belt", item = "iron-plate"},
+        out_cu = {u = 3.5, v = -0.5, dir = "north", kind = "belt", item = "copper-plate"},
+      }
+      local bp = bports[port_name]
+      if not bp then return nil, string.format("connect_ports: port '%s' not found on base", tostring(port_name)) end
+      local wx, wy = Base.to_world(base, bp.u, bp.v)
+      local _, wdir = Base.dir(base, bp.dir)
+      return {name = "base", x = wx, y = wy, dir = wdir, kind = bp.kind, item = bp.item}
+    end
+
+    if (type(spec) == "string" and spec:match("^field")) or (type(spec) == "table" and spec.kind == "field") then
+      local idx = 1
+      if type(spec) == "table" and spec.id then idx = spec.id
+      elseif type(spec) == "string" and spec:match("^field:(%d+)$") then idx = tonumber(spec:match("^field:(%d+)$")) end
+      local fields = storage.ai_player and storage.ai_player.fields or {}
+      local f = fields[idx] or fields[#fields]
+      if not f then return nil, string.format("connect_ports: field '%s' not found in storage.ai_player.fields", tostring(spec)) end
+      if f.ports and f.ports[port_name] then
+        local fp = f.ports[port_name]
+        return {name = "field", x = fp.x, y = fp.y, dir = fp.dir, kind = fp.kind or "belt", item = fp.item or f.resource}
+      end
+      local pos = f.plate_output or f.position
+      return {name = "field", x = pos.x, y = pos.y, dir = f.direction or defines.direction.north, kind = "belt", item = f.resource}
+    end
+
     local placed = storage.ai_player and storage.ai_player.placed_blueprints or {}
-    if type(name_or_idx) == "number" then return placed[name_or_idx] end
-    for i = #placed, 1, -1 do
-      if placed[i].name == name_or_idx then return placed[i] end
+    local entry = nil
+    if type(spec) == "number" then
+      entry = placed[spec]
+    elseif type(spec) == "string" then
+      for i = #placed, 1, -1 do
+        if placed[i].name == spec then entry = placed[i]; break end
+      end
     end
-    return nil
+    if not entry then return nil, string.format("connect_ports: blueprint '%s' not placed", tostring(spec)) end
+    for _, pt in ipairs(entry.ports or {}) do
+      if pt.name == port_name then
+        return {name = entry.name, x = pt.x, y = pt.y, dir = pt.dir, kind = pt.kind, item = pt.item}
+      end
+    end
+    return nil, string.format("connect_ports: port '%s' not found on '%s'", tostring(port_name), tostring(spec))
   end
 
-  local f_entry = find_placed(from_bp)
-  if not f_entry then return false, string.format("connect_ports: blueprint '%s' not placed", tostring(from_bp)) end
-  local t_entry = find_placed(to_bp)
-  if not t_entry then return false, string.format("connect_ports: blueprint '%s' not placed", tostring(to_bp)) end
+  local fp, f_err = resolve_port(from_bp, from_port)
+  if not fp then return false, f_err end
+  local tp, t_err = resolve_port(to_bp, to_port)
+  if not tp then return false, t_err end
 
-  local function find_port(bp, port_name)
-    for _, pt in ipairs(bp.ports or {}) do
-      if pt.name == port_name then return pt end
-    end
-    return nil
-  end
-
-  local fp = find_port(f_entry, from_port)
-  if not fp then return false, string.format("connect_ports: port '%s' not found on '%s'", tostring(from_port), tostring(from_bp)) end
-  local tp = find_port(t_entry, to_port)
-  if not tp then return false, string.format("connect_ports: port '%s' not found on '%s'", tostring(to_port), tostring(to_bp)) end
+  local f_label = type(from_bp) == "table" and (from_bp.name or from_bp.kind or "from") or tostring(from_bp)
+  local t_label = type(to_bp) == "table" and (to_bp.name or to_bp.kind or "to") or tostring(to_bp)
 
   local function dir_step(d)
     if d == defines.direction.north then return 0, -1
@@ -1597,19 +1637,19 @@ local function skill_connect_ports(character, p)
     if is_pipe then
       storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
       table.insert(storage.ai_player.connected_pipes, {
-        from_bp = from_bp, from_port = from_port,
-        to_bp = to_bp, to_port = to_port,
+        from_bp = f_label, from_port = from_port,
+        to_bp = t_label, to_port = to_port,
         from = {x = fp.x, y = fp.y}, to = {x = tp.x, y = tp.y}
       })
     else
       storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
       table.insert(storage.ai_player.connected_belts, {
-        from_bp = from_bp, from_port = from_port,
-        to_bp = to_bp, to_port = to_port,
+        from_bp = f_label, from_port = from_port,
+        to_bp = t_label, to_port = to_port,
         from = {x = fp.x, y = fp.y}, to = {x = tp.x, y = tp.y}
       })
     end
-    return true, string.format("connect_ports: %s:%s and %s:%s are directly adjacent", from_bp, from_port, to_bp, to_port)
+    return true, string.format("connect_ports: %s:%s and %s:%s are directly adjacent", f_label, from_port, t_label, to_port)
   end
 
   local start_pt = {x = fp.x + fdx, y = fp.y + fdy}
@@ -1620,11 +1660,11 @@ local function skill_connect_ports(character, p)
     if ok then
       storage.ai_player.connected_pipes = storage.ai_player.connected_pipes or {}
       table.insert(storage.ai_player.connected_pipes, {
-        from_bp = from_bp, from_port = from_port,
-        to_bp = to_bp, to_port = to_port,
+        from_bp = f_label, from_port = from_port,
+        to_bp = t_label, to_port = to_port,
         from = start_pt, to = end_pt
       })
-      return true, string.format("connect_ports: connected pipe %s:%s -> %s:%s (%s)", from_bp, from_port, to_bp, to_port, detail)
+      return true, string.format("connect_ports: connected pipe %s:%s -> %s:%s (%s)", f_label, from_port, t_label, to_port, detail)
     end
     return false, detail
   else
@@ -1637,11 +1677,11 @@ local function skill_connect_ports(character, p)
     if ok then
       storage.ai_player.connected_belts = storage.ai_player.connected_belts or {}
       table.insert(storage.ai_player.connected_belts, {
-        from_bp = from_bp, from_port = from_port,
-        to_bp = to_bp, to_port = to_port,
+        from_bp = f_label, from_port = from_port,
+        to_bp = t_label, to_port = to_port,
         from = start_pt, to = end_pt
       })
-      return true, string.format("connect_ports: connected belt %s:%s -> %s:%s (%s)", from_bp, from_port, to_bp, to_port, detail)
+      return true, string.format("connect_ports: connected belt %s:%s -> %s:%s (%s)", f_label, from_port, t_label, to_port, detail)
     end
     return false, detail
   end
