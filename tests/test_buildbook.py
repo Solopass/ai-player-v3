@@ -75,6 +75,15 @@ def test_buildbook_fields_step():
     assert moves[0][0]["skill"] == "build_miner"
     assert moves[0][0]["resource"] == "iron-ore"
     assert moves[0][0]["output"] == "field"
+    assert moves[0][0]["plate_belt"] is True
+
+    p["fields"].append({"resource": "iron-ore", "has_output": True})
+    moves = list(buildbook.candidates(p))
+    assert len(moves) == 1
+    assert moves[0][0]["skill"] == "build_miner"
+    assert moves[0][0]["resource"] == "copper-ore"
+    assert moves[0][0]["output"] == "field"
+    assert moves[0][0]["plate_belt"] is True
 
 
 def test_buildbook_base_frame_steps():
@@ -87,7 +96,7 @@ def test_buildbook_base_frame_steps():
         },
         "power": {"has_grid": True},
         "research": {"done": {"automation": True, "electric-mining-drill": True}},
-        "fields": [{"resource": "iron-ore"}, {"resource": "copper-ore"}],
+        "fields": [{"resource": "iron-ore", "has_output": True}, {"resource": "copper-ore", "has_output": True}],
         "base": None,
         "placed_stamps": [],
     }
@@ -139,7 +148,7 @@ def test_buildbook_trunks_step():
         },
         "power": {"has_grid": True},
         "research": {"done": {"automation": True, "electric-mining-drill": True}},
-        "fields": [{"resource": "iron-ore"}, {"resource": "copper-ore"}],
+        "fields": [{"resource": "iron-ore", "has_output": True}, {"resource": "copper-ore", "has_output": True}],
         "base": {"origin": {"x": 0, "y": 0}, "dir": "east", "length": 60, "slots": {}},
         "placed_stamps": [
             {"name": "bus_head", "at_u": 0},
@@ -152,11 +161,15 @@ def test_buildbook_trunks_step():
     }
     moves = list(buildbook.candidates(p))
     assert moves[0][0]["skill"] == "connect_ports"
+    assert moves[0][0]["from_bp"] == "field:iron-ore"
+    assert moves[0][0]["from_port"] == "plate_output"
     assert moves[0][0]["to_port"] == "in_fe"
 
     p["connected_belts"].append({"to_bp": "base", "to_port": "in_fe"})
     moves = list(buildbook.candidates(p))
     assert moves[0][0]["skill"] == "connect_ports"
+    assert moves[0][0]["from_bp"] == "field:copper-ore"
+    assert moves[0][0]["from_port"] == "plate_output"
     assert moves[0][0]["to_port"] == "in_cu"
 
 
@@ -169,7 +182,7 @@ def test_buildbook_red_and_lab_step():
         },
         "power": {"has_grid": True},
         "research": {"done": {"automation": True, "electric-mining-drill": True}},
-        "fields": [{"resource": "iron-ore"}, {"resource": "copper-ore"}],
+        "fields": [{"resource": "iron-ore", "has_output": True}, {"resource": "copper-ore", "has_output": True}],
         "base": {"origin": {"x": 0, "y": 0}, "dir": "east", "length": 60, "slots": {}},
         "placed_stamps": [
             {"name": "bus_head", "at_u": 0},

@@ -28,6 +28,7 @@ _POSITION = {
 }
 _STR = {"type": "string"}
 _INT = {"type": "integer"}
+_BOOL = {"type": "boolean"}
 
 FIELD_TYPES: dict[str, dict] = {
     "position": _POSITION, "from": _POSITION, "to": _POSITION,
@@ -37,6 +38,7 @@ FIELD_TYPES: dict[str, dict] = {
     "stamp": _STR,
     "at_u": _INT,
     "side": {"type": "string", "enum": ["left", "right"]},
+    "plate_belt": _BOOL,
 }
 
 # Optional params each entry may carry, on top of its required ones — every
@@ -45,7 +47,7 @@ FIELD_TYPES: dict[str, dict] = {
 OPTIONAL: dict[str, list[str]] = {
     # skills
     "gather": ["count"],
-    "build_miner": ["resource", "output", "item", "count", "drill"],
+    "build_miner": ["resource", "output", "item", "count", "drill", "plate_belt"],
     "build_smelter": ["ore", "count", "item"],
     "build_assembler": ["count", "item"],
     "build_defense": ["count"],

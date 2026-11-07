@@ -14,6 +14,13 @@ local Stamps = require("scripts.stamps")
 
 AISkills = {}
 
+local DIR_VAL = {
+  north = defines.direction.north,
+  east  = defines.direction.east,
+  south = defines.direction.south,
+  west  = defines.direction.west,
+}
+
 local function inv_of(character)
   return character.get_inventory(defines.inventory.character_main)
 end
@@ -158,7 +165,7 @@ local function skill_build_miner(character, p)
     return false, "build_miner: output=field needs the electric-mining-drill tech"
   end
   if out_kind == "furnace" or out_kind == "chest" or is_electric then
-    local ok, detail = build_electric_miner(character, resource, want, out_kind)
+    local ok, detail = build_electric_miner(character, resource, want, out_kind, p)
     if ok ~= nil then return ok, detail end
   end
   if is_electric then
@@ -1579,18 +1586,46 @@ local function skill_connect_ports(character, p)
     end
 
     if (type(spec) == "string" and spec:match("^field")) or (type(spec) == "table" and spec.kind == "field") then
-      local idx = 1
-      if type(spec) == "table" and spec.id then idx = spec.id
-      elseif type(spec) == "string" and spec:match("^field:(%d+)$") then idx = tonumber(spec:match("^field:(%d+)$")) end
       local fields = storage.ai_player and storage.ai_player.fields or {}
-      local f = fields[idx] or fields[#fields]
-      if not f then return nil, string.format("connect_ports: field '%s' not found in storage.ai_player.fields", tostring(spec)) end
-      if f.ports and f.ports[port_name] then
-        local fp = f.ports[port_name]
-        return {name = "field", x = fp.x, y = fp.y, dir = fp.dir, kind = fp.kind or "belt", item = fp.item or f.resource}
+      local f = nil
+
+      -- Check for field:<resource> (e.g. field:iron-ore)
+      local res_match = (type(spec) == "string" and spec:match("^field:([%a%-]+)$"))
+      if res_match and not tonumber(res_match) then
+        for i = #fields, 1, -1 do
+          if fields[i].resource == res_match and fields[i].ports and (fields[i].ports[port_name] or fields[i].ports.plate_output) then
+            f = fields[i]
+            break
+          end
+        end
+        if not f then
+          return nil, string.format("connect_ports: no field found for resource '%s' with output port '%s'", res_match, tostring(port_name))
+        end
+      else
+        local idx = nil
+        if type(spec) == "table" and spec.id then idx = spec.id
+        elseif type(spec) == "string" and spec:match("^field:(%d+)$") then idx = tonumber(spec:match("^field:(%d+)$")) end
+        if idx then
+          for i = #fields, 1, -1 do
+            if fields[i].id == idx then f = fields[i]; break end
+          end
+          if not f then f = fields[idx] end
+        else
+          f = fields[#fields]
+        end
+        if not f then
+          return nil, string.format("connect_ports: field '%s' not found in storage.ai_player.fields", tostring(spec))
+        end
       end
-      local pos = f.plate_output or f.position
-      return {name = "field", x = pos.x, y = pos.y, dir = f.direction or defines.direction.north, kind = "belt", item = f.resource}
+
+      local fp = f.ports and (f.ports[port_name] or f.ports.plate_output)
+      if fp then
+        local pdir = fp.dir
+        if type(pdir) == "string" and DIR_VAL[pdir] then pdir = DIR_VAL[pdir] end
+        return {name = "field", x = fp.x, y = fp.y, dir = pdir or defines.direction.north, kind = fp.kind or "belt", item = fp.item or f.resource}
+      end
+
+      return nil, string.format("connect_ports: field '%s' has no port '%s'", tostring(spec), tostring(port_name))
     end
 
     local placed_stamps = storage.ai_player and storage.ai_player.placed_stamps or {}
@@ -1636,10 +1671,10 @@ local function skill_connect_ports(character, p)
   local t_label = type(to_bp) == "table" and (to_bp.name or to_bp.kind or "to") or tostring(to_bp)
 
   local function dir_step(d)
-    if d == defines.direction.north then return 0, -1
-    elseif d == defines.direction.east then return 1, 0
-    elseif d == defines.direction.south then return 0, 1
-    elseif d == defines.direction.west then return -1, 0
+    if d == defines.direction.north or d == "north" then return 0, -1
+    elseif d == defines.direction.east or d == "east" then return 1, 0
+    elseif d == defines.direction.south or d == "south" then return 0, 1
+    elseif d == defines.direction.west or d == "west" then return -1, 0
     end
     return 0, 0
   end
@@ -2071,7 +2106,7 @@ end
 
 -- Electric drill -> furnace -> inserter -> chest pairs (or electric drill -> chest for coal/stone).
 -- Returns nil (use burner drills instead) only when electric technology is not yet unlocked.
-function build_electric_miner(character, resource, want, out_kind)
+function build_electric_miner(character, resource, want, out_kind, opts)
   local force, inv = character.force, inv_of(character)
   local recipe = force.recipes["electric-mining-drill"]
   if not (recipe and recipe.enabled) then return nil end
@@ -2080,7 +2115,11 @@ function build_electric_miner(character, resource, want, out_kind)
   end
   local chest = chest_for(character, want)
   if out_kind == "field" then
-    local plan = AILayout.find_mining_field(character, resource, character.position, {rate = (want or 2) * 18.75, chest = chest})
+    local plan = AILayout.find_mining_field(character, resource, character.position, {
+      rate = (want or 2) * 18.75,
+      chest = chest,
+      plate_belt = opts and opts.plate_belt or false,
+    })
     if not plan then
       return false, "build_miner: no spot on the " .. resource .. " patch for an electric mining field"
     end
@@ -2093,11 +2132,25 @@ function build_electric_miner(character, resource, want, out_kind)
     local ap = storage.ai_player
     local remaining = AILayout.field_resource_remaining(surface, plan.bounds, resource)
     ap.fields = ap.fields or {}
-    ap.fields[#ap.fields + 1] = {
+    ap.next_field_id = (ap.next_field_id or 0) + 1
+    local field_rec = {
+      id = ap.next_field_id,
       resource = resource, surface = surface.name, bounds = plan.bounds, furnaces = plan.furnaces,
       position = {x = math.floor(plan.place[1].position.x), y = math.floor(plan.place[1].position.y)},
       initial = remaining, remaining = remaining, checked = game.tick,
     }
+    if plan.plate_output then
+      field_rec.ports = {
+        plate_output = {
+          x = plan.plate_output.x,
+          y = plan.plate_output.y,
+          dir = plan.plate_output.dir,
+          kind = plan.plate_output.kind or "belt",
+          item = plan.plate_output.item or ((resource == "copper-ore") and "copper-plate" or "iron-plate"),
+        }
+      }
+    end
+    ap.fields[#ap.fields + 1] = field_rec
     while #ap.fields > 12 do table.remove(ap.fields, 1) end
     return true, string.format("built electric mining field on %s (%d drills, %d furnaces, %d coal drill(s))",
       resource, plan.drills or 0, plan.furnaces or 0, plan.coal_drills or 0)

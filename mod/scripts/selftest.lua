@@ -387,11 +387,13 @@ CASES.trunk_feed = {
     -- Register field in storage.ai_player.fields
     storage.ai_player.fields = {
       {
+        id = 1,
         resource = "iron-ore",
         position = {x = src_wx, y = src_wy},
         plate_output = {x = b_wx, y = b_wy},
         direction = fwd_val,
         ports = {
+          plate_output = {x = b_wx, y = b_wy, dir = fwd_val, kind = "belt", item = "iron-plate"},
           plate_out = {x = b_wx, y = b_wy, dir = fwd_val, kind = "belt", item = "iron-plate"}
         }
       }

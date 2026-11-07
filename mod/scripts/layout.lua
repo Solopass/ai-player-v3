@@ -1049,7 +1049,8 @@ function AILayout.fields_report(surface)
       end
       local pct = (f.initial or 0) > 0 and math.floor(100 * f.remaining / f.initial) or 0
       out[#out + 1] = {resource = f.resource, position = f.position, furnaces = f.furnaces,
-                       remaining_pct = math.min(pct, 100)}
+                       remaining_pct = math.min(pct, 100),
+                       has_output = (f.ports ~= nil)}
     end
   end
   return out
@@ -1111,7 +1112,8 @@ function AILayout.find_mining_field(character, resource, center, opts)
         local px, py = AILayout.drop_point(drill, c.x, c.y, facing)
         local start_belt_x = math.floor(px) + 0.5
         local start_belt_y = math.floor(py) + 0.5
-        local total_span = n_drills * dw + 2 + n_furnaces * 2 + 1
+        local col_start = n_drills * dw + 2
+        local total_span = col_start + (n_furnaces - 1) * 2
         for step = 0, total_span do
           local bx = start_belt_x + ax * step
           local by = start_belt_y + ay * step
@@ -1165,22 +1167,25 @@ function AILayout.find_mining_field(character, resource, center, opts)
           local ch_x = bx + fx * 5
           local ch_y = by + fy * 5
 
+          local use_plate_belt = opts and opts.plate_belt
           if can_place(character, "inserter", in_x, in_y, facing)
              and can_place(character, "stone-furnace", fn_x, fn_y)
              and can_place(character, "inserter", out_x, out_y, facing)
-             and can_place(character, chest, ch_x, ch_y)
+             and (use_plate_belt or can_place(character, chest, ch_x, ch_y))
              and free(boxes, box(in_x, in_y, 1, 1)) and free(boxes, box(fn_x, fn_y, 2, 2))
-             and free(boxes, box(out_x, out_y, 1, 1)) and free(boxes, box(ch_x, ch_y, 1, 1)) then
+             and free(boxes, box(out_x, out_y, 1, 1)) and (use_plate_belt or free(boxes, box(ch_x, ch_y, 1, 1))) then
             place[#place + 1] = {name = "inserter", position = {x = in_x, y = in_y}, direction = facing,
                                  role = "furnace_in", from = {x = bx, y = by}, to = {x = fn_x, y = fn_y}}
             place[#place + 1] = {name = "stone-furnace", position = {x = fn_x, y = fn_y}, role = "furnace"}
             place[#place + 1] = {name = "inserter", position = {x = out_x, y = out_y}, direction = facing,
                                  role = "furnace_out", from = {x = fn_x, y = fn_y}, to = {x = ch_x, y = ch_y}}
-            place[#place + 1] = {name = chest, position = {x = ch_x, y = ch_y}, role = "chest"}
+            if not use_plate_belt then
+              place[#place + 1] = {name = chest, position = {x = ch_x, y = ch_y}, role = "chest"}
+              boxes[#boxes + 1] = box(ch_x, ch_y, 1, 1)
+            end
             boxes[#boxes + 1] = box(in_x, in_y, 1, 1)
             boxes[#boxes + 1] = box(fn_x, fn_y, 2, 2)
             boxes[#boxes + 1] = box(out_x, out_y, 1, 1)
-            boxes[#boxes + 1] = box(ch_x, ch_y, 1, 1)
             powered[#powered + 1] = {x = in_x, y = in_y, w = 1, h = 1}
             powered[#powered + 1] = {x = out_x, y = out_y, w = 1, h = 1}
 
@@ -1198,6 +1203,32 @@ function AILayout.find_mining_field(character, resource, center, opts)
             end
           else
             ok = false; break
+          end
+        end
+
+        local plate_out = nil
+        if ok and (opts and opts.plate_belt) then
+          local plate_span = col_start + n_furnaces * 2
+          for step = col_start, plate_span do
+            local pbx = start_belt_x + fx * 5 + ax * step
+            local pby = start_belt_y + fy * 5 + ay * step
+            if not can_place(character, "transport-belt", pbx, pby, flow) or not free(boxes, box(pbx, pby, 1, 1)) then
+              ok = false; break
+            end
+            place[#place + 1] = {name = "transport-belt", position = {x = pbx, y = pby}, direction = flow, role = "plate_belt"}
+            boxes[#boxes + 1] = box(pbx, pby, 1, 1)
+          end
+          if ok then
+            local last_pbx = start_belt_x + fx * 5 + ax * plate_span
+            local last_pby = start_belt_y + fy * 5 + ay * plate_span
+            local plate_item = (resource == "copper-ore") and "copper-plate" or "iron-plate"
+            plate_out = {
+              x = last_pbx,
+              y = last_pby,
+              dir = DIRS[flow],
+              kind = "belt",
+              item = plate_item,
+            }
           end
         end
       end
@@ -1252,6 +1283,9 @@ function AILayout.find_mining_field(character, resource, center, opts)
           furnaces = n_furnaces,
           coal_drills = coal and #coal.drills or 0,
           coal = coal ~= nil,
+          plate_belt = opts and opts.plate_belt or false,
+          plate_output = plate_out,
+          skip_flow_check = opts and opts.plate_belt or false,
         }
       end
     end
@@ -1500,7 +1534,7 @@ function AILayout.build(character, plan)
         undo(character, placed)
         return false, why
       end
-    elseif p.role == "inserter" or p.role == "boiler_inserter" then
+    elseif p.role == "inserter" or p.role == "boiler_inserter" or p.role == "furnace_in" or p.role == "furnace_out" then
       -- Which side an inserter picks from is easy to get backwards; check and flip.
       local function right()
         local pt, dt = e.pickup_position, e.drop_position

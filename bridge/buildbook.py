@@ -61,12 +61,9 @@ def _fields(p: dict) -> list[dict]:
 
 def _has_field(p: dict, resource: str) -> bool:
     for f in _fields(p):
-        if f.get("resource") == resource or f.get("name") == resource:
+        if (f.get("resource") == resource or f.get("name") == resource) and f.get("has_output"):
             return True
-    # Also check miners_by_resource
-    miners = (p.get("factory") or {}).get("miners_by_resource") or {}
-    needed = 3 if resource == "iron-ore" else 2
-    return miners.get(resource, 0) >= needed
+    return False
 
 
 def _placed_stamps(p: dict) -> list[dict]:
@@ -199,10 +196,10 @@ def _step_fields_done(p: dict) -> bool:
 
 def _step_fields_moves(p: dict) -> Iterator[tuple[dict, str, bool]]:
     if not _has_field(p, "iron-ore"):
-        yield ({"skill": "build_miner", "resource": "iron-ore", "output": "field"},
+        yield ({"skill": "build_miner", "resource": "iron-ore", "output": "field", "plate_belt": True},
                "build electric iron mining field with smelting", True)
     elif not _has_field(p, "copper-ore"):
-        yield ({"skill": "build_miner", "resource": "copper-ore", "output": "field"},
+        yield ({"skill": "build_miner", "resource": "copper-ore", "output": "field", "plate_belt": True},
                "build electric copper mining field with smelting", True)
 
 
@@ -249,11 +246,11 @@ def _step_trunks_done(p: dict) -> bool:
 
 def _step_trunks_moves(p: dict) -> Iterator[tuple[dict, str, bool]]:
     if not _has_trunk(p, "in_fe"):
-        yield ({"skill": "connect_ports", "from_bp": "field:1", "from_port": "plate_output",
+        yield ({"skill": "connect_ports", "from_bp": "field:iron-ore", "from_port": "plate_output",
                 "to_bp": "base", "to_port": "in_fe", "underground": True},
                "route iron trunk into bus head in_fe", True)
     elif not _has_trunk(p, "in_cu"):
-        yield ({"skill": "connect_ports", "from_bp": "field:2", "from_port": "plate_output",
+        yield ({"skill": "connect_ports", "from_bp": "field:copper-ore", "from_port": "plate_output",
                 "to_bp": "base", "to_port": "in_cu", "underground": True},
                "route copper trunk into bus head in_cu", True)
 
