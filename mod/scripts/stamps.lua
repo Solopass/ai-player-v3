@@ -328,6 +328,26 @@ Stamps.DEFINITIONS["lab_row"] = {
 }
 
 -- ---------------------------------------------------------------------------
+-- 7. red_feed: Copper feed loop around S so Fe and Cu enter gear_red on
+--    separate lanes. Fe side-loads from +v, Cu side-loads from -v head-on.
+-- ---------------------------------------------------------------------------
+local red_feed_ents = {
+  {name = "transport-belt", u = 0.5, v = -4.5, dir = "west",  role = "feed_cu_extend"},
+  {name = "transport-belt", u = 0.5, v = -5.5, dir = "north", role = "feed_cu_curve"},
+  {name = "transport-belt", u = 1.5, v = -5.5, dir = "north", role = "feed_cu_run"},
+  {name = "transport-belt", u = 2.5, v = -5.5, dir = "north", role = "feed_cu_run"},
+  {name = "transport-belt", u = 3.5, v = -5.5, dir = "east",  role = "feed_cu_turn"},
+  {name = "transport-belt", u = 2.5, v = -4.5, dir = "north", role = "feed_cu_headon"},
+}
+
+Stamps.DEFINITIONS["red_feed"] = {
+  length = 4,
+  depth = 6,
+  entities = red_feed_ents,
+  ports = {},
+}
+
+-- ---------------------------------------------------------------------------
 -- Stamp placement API
 -- ---------------------------------------------------------------------------
 function Stamps.plan(base, name, at_u, side)

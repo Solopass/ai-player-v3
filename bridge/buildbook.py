@@ -210,8 +210,10 @@ def _step_base_frame_done(p: dict) -> bool:
     return (
         p.get("base") is not None
         and _has_stamp(p, "bus_head", 0)
-        and _has_stamp(p, "bus_segment", 4)
-        and _has_stamp(p, "bus_segment", 18)
+        and _has_stamp(p, "tap_inner", 4)
+        and _has_stamp(p, "tap_outer", 8)
+        and _has_stamp(p, "bus_segment", 10)
+        and _has_stamp(p, "bus_segment", 24)
     )
 
 
@@ -223,13 +225,21 @@ def _step_base_frame_moves(p: dict) -> Iterator[tuple[dict, str, bool]]:
         yield ({"skill": "place_stamp", "stamp": "bus_head", "at_u": 0, "side": "left"},
                "place bus head stamp at u=0", True)
         return
-    if not _has_stamp(p, "bus_segment", 4):
-        yield ({"skill": "place_stamp", "stamp": "bus_segment", "at_u": 4, "side": "left"},
-               "place bus segment 1 at u=4", True)
+    if not _has_stamp(p, "tap_inner", 4):
+        yield ({"skill": "place_stamp", "stamp": "tap_inner", "at_u": 4, "side": "left"},
+               "place tap_inner at u=4", True)
         return
-    if not _has_stamp(p, "bus_segment", 18):
-        yield ({"skill": "place_stamp", "stamp": "bus_segment", "at_u": 18, "side": "left"},
-               "place bus segment 2 at u=18", True)
+    if not _has_stamp(p, "tap_outer", 8):
+        yield ({"skill": "place_stamp", "stamp": "tap_outer", "at_u": 8, "side": "left"},
+               "place tap_outer at u=8", True)
+        return
+    if not _has_stamp(p, "bus_segment", 10):
+        yield ({"skill": "place_stamp", "stamp": "bus_segment", "at_u": 10, "side": "left"},
+               "place bus segment 1 at u=10", True)
+        return
+    if not _has_stamp(p, "bus_segment", 24):
+        yield ({"skill": "place_stamp", "stamp": "bus_segment", "at_u": 24, "side": "left"},
+               "place bus segment 2 at u=24", True)
         return
 
 
@@ -250,36 +260,25 @@ def _step_trunks_moves(p: dict) -> Iterator[tuple[dict, str, bool]]:
 
 def _step_red_and_lab_done(p: dict) -> bool:
     return (
-        _has_stamp(p, "gear_red", 4)
-        and _has_stamp(p, "tap_outer", 4)
-        and _has_stamp(p, "tap_inner", 6)
-        and _has_feed(p, "tap_outer", "gear_red")
-        and _has_stamp(p, "lab_row", 18)
+        _has_stamp(p, "gear_red", 9)
+        and _has_stamp(p, "red_feed", 6)
+        and _has_stamp(p, "lab_row", 23)
         and _has_feed(p, "gear_red", "lab_row")
     )
 
 
 def _step_red_and_lab_moves(p: dict) -> Iterator[tuple[dict, str, bool]]:
-    if not _has_stamp(p, "gear_red", 4):
-        yield ({"skill": "place_stamp", "stamp": "gear_red", "at_u": 4, "side": "left"},
-               "place gear_red stamp in L1 at u=4", True)
+    if not _has_stamp(p, "gear_red", 9):
+        yield ({"skill": "place_stamp", "stamp": "gear_red", "at_u": 9, "side": "left"},
+               "place gear_red stamp in L1 at u=9", True)
         return
-    if not _has_stamp(p, "tap_outer", 4):
-        yield ({"skill": "place_stamp", "stamp": "tap_outer", "at_u": 4, "side": "left"},
-               "place tap_outer for iron at u=4", True)
+    if not _has_stamp(p, "red_feed", 6):
+        yield ({"skill": "place_stamp", "stamp": "red_feed", "at_u": 6, "side": "left"},
+               "place red_feed stamp at u=6", True)
         return
-    if not _has_stamp(p, "tap_inner", 6):
-        yield ({"skill": "place_stamp", "stamp": "tap_inner", "at_u": 6, "side": "left"},
-               "place tap_inner for copper at u=6", True)
-        return
-    if not _has_feed(p, "tap_outer", "gear_red"):
-        yield ({"skill": "connect_ports", "from_bp": "tap_outer", "from_port": "tap_fe",
-                "to_bp": "gear_red", "to_port": "in_fe_cu"},
-               "connect Fe tap into gear_red feed", True)
-        return
-    if not _has_stamp(p, "lab_row", 18):
-        yield ({"skill": "place_stamp", "stamp": "lab_row", "at_u": 18, "side": "left"},
-               "place lab_row stamp in L2 at u=18", True)
+    if not _has_stamp(p, "lab_row", 23):
+        yield ({"skill": "place_stamp", "stamp": "lab_row", "at_u": 23, "side": "left"},
+               "place lab_row stamp in L2 at u=23", True)
         return
     if not _has_feed(p, "gear_red", "lab_row"):
         yield ({"skill": "connect_ports", "from_bp": "gear_red", "from_port": "out_science",

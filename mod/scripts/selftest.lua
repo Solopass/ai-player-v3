@@ -648,6 +648,25 @@ CASES.stamp_gear_red = {
   end,
 }
 
+CASES.stamp_red_feed = {
+  delay = 30,
+  setup = function(c)
+    local facing = c.facing or "east"
+    c.base = {origin = {x = 0, y = 0}, dir = facing}
+    give(c.character, {["transport-belt"] = 20})
+  end,
+  run = function(c)
+    local ok, err = Stamps.place(c.character, c.base, "red_feed", 0, "left")
+    c.place_ok, c.place_err = ok, err
+    return {}
+  end,
+  check = function(c, add)
+    add("red_feed placed", c.place_ok == true, c.place_err or "ok")
+    local belts = c.surface.find_entities_filtered{type = "transport-belt"}
+    add("red_feed belts count", #belts == 6, string.format("got %d belts", #belts))
+  end,
+}
+
 CASES.stamp_lab_row = {
   delay = 10800,
   setup = function(c)

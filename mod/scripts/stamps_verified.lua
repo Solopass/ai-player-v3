@@ -4,6 +4,7 @@ return {
   ["bus_segment"] = true,
   ["gear_red"] = true,
   ["lab_row"] = true,
+  ["red_feed"] = true,
   ["tap_inner"] = true,
   ["tap_outer"] = true,
 }
